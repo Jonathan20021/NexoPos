@@ -1,0 +1,704 @@
+-- ============================================================
+--  NexoPOS — Esquema de base de datos
+--  Sistema multi-sucursal: Inventario, POS, RRHH, Finanzas
+--  MySQL / MariaDB · InnoDB · utf8mb4
+-- ============================================================
+SET FOREIGN_KEY_CHECKS = 0;
+SET NAMES utf8mb4;
+
+-- ===================== CONFIGURACIÓN =====================
+DROP TABLE IF EXISTS empresa;
+CREATE TABLE empresa (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(150) NOT NULL DEFAULT 'Mi Empresa',
+  rnc VARCHAR(30) NULL,
+  direccion VARCHAR(255) NULL,
+  telefono VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  moneda VARCHAR(10) NOT NULL DEFAULT 'RD$',
+  itbis_tasa DECIMAL(5,2) NOT NULL DEFAULT 18.00,
+  logo VARCHAR(255) NULL,
+  mensaje_ticket VARCHAR(255) NULL DEFAULT '¡Gracias por su compra!',
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== SUCURSALES =====================
+DROP TABLE IF EXISTS sucursales;
+CREATE TABLE sucursales (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL,
+  nombre VARCHAR(120) NOT NULL,
+  direccion VARCHAR(255) NULL,
+  telefono VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  encargado VARCHAR(120) NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sucursal_codigo (codigo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== ROLES Y PERMISOS =====================
+DROP TABLE IF EXISTS roles;
+CREATE TABLE roles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(80) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  es_super TINYINT(1) NOT NULL DEFAULT 0,
+  es_sistema TINYINT(1) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_rol_nombre (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS permisos;
+CREATE TABLE permisos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  clave VARCHAR(80) NOT NULL,
+  modulo VARCHAR(50) NOT NULL,
+  grupo VARCHAR(50) NOT NULL,
+  descripcion VARCHAR(150) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_permiso_clave (clave)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS rol_permisos;
+CREATE TABLE rol_permisos (
+  rol_id INT UNSIGNED NOT NULL,
+  permiso_id INT UNSIGNED NOT NULL,
+  PRIMARY KEY (rol_id, permiso_id),
+  KEY idx_rp_permiso (permiso_id),
+  CONSTRAINT fk_rp_rol FOREIGN KEY (rol_id) REFERENCES roles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rp_permiso FOREIGN KEY (permiso_id) REFERENCES permisos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== USUARIOS =====================
+DROP TABLE IF EXISTS usuarios;
+CREATE TABLE usuarios (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,           -- NULL = acceso a todas las sucursales
+  rol_id INT UNSIGNED NOT NULL,
+  nombre VARCHAR(80) NOT NULL,
+  apellido VARCHAR(80) NOT NULL,
+  usuario VARCHAR(60) NOT NULL,
+  email VARCHAR(120) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  telefono VARCHAR(40) NULL,
+  avatar VARCHAR(255) NULL,
+  comision_pct DECIMAL(5,2) NOT NULL DEFAULT 0,   -- % de comisión sobre sus ventas
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  ultimo_acceso DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_usuario (usuario),
+  UNIQUE KEY uq_email (email),
+  KEY idx_u_sucursal (sucursal_id),
+  KEY idx_u_rol (rol_id),
+  CONSTRAINT fk_u_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE SET NULL,
+  CONSTRAINT fk_u_rol FOREIGN KEY (rol_id) REFERENCES roles(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== AUDITORÍA =====================
+DROP TABLE IF EXISTS auditoria;
+CREATE TABLE auditoria (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id INT UNSIGNED NULL,
+  usuario_nombre VARCHAR(160) NULL,
+  sucursal_id INT UNSIGNED NULL,
+  modulo VARCHAR(50) NOT NULL,
+  accion VARCHAR(50) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  tabla_afectada VARCHAR(60) NULL,
+  registro_id VARCHAR(40) NULL,
+  datos_anteriores TEXT NULL,
+  datos_nuevos TEXT NULL,
+  ip VARCHAR(45) NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_audit_fecha (created_at),
+  KEY idx_audit_modulo (modulo),
+  KEY idx_audit_usuario (usuario_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== INVENTARIO: CATÁLOGOS =====================
+DROP TABLE IF EXISTS categorias;
+CREATE TABLE categorias (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(100) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  color VARCHAR(20) NOT NULL DEFAULT 'blue',
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_categoria (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS marcas;
+CREATE TABLE marcas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(100) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_marca (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS unidades;
+CREATE TABLE unidades (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(50) NOT NULL,
+  abreviatura VARCHAR(10) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS proveedores;
+CREATE TABLE proveedores (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL,
+  nombre VARCHAR(150) NOT NULL,
+  rnc VARCHAR(30) NULL,
+  contacto VARCHAR(120) NULL,
+  telefono VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  direccion VARCHAR(255) NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_proveedor_codigo (codigo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== PRODUCTOS =====================
+DROP TABLE IF EXISTS productos;
+CREATE TABLE productos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(40) NOT NULL,             -- SKU
+  codigo_barras VARCHAR(60) NULL,
+  nombre VARCHAR(180) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  categoria_id INT UNSIGNED NULL,
+  marca_id INT UNSIGNED NULL,
+  unidad_id INT UNSIGNED NULL,
+  tipo ENUM('producto','servicio') NOT NULL DEFAULT 'producto',
+  precio_compra DECIMAL(12,2) NOT NULL DEFAULT 0,
+  precio_venta DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis_aplica TINYINT(1) NOT NULL DEFAULT 1,
+  stock_minimo DECIMAL(12,3) NOT NULL DEFAULT 0,
+  imagen VARCHAR(255) NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_producto_codigo (codigo),
+  KEY idx_p_barras (codigo_barras),
+  KEY idx_p_categoria (categoria_id),
+  KEY idx_p_nombre (nombre),
+  CONSTRAINT fk_p_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
+  CONSTRAINT fk_p_marca FOREIGN KEY (marca_id) REFERENCES marcas(id) ON DELETE SET NULL,
+  CONSTRAINT fk_p_unidad FOREIGN KEY (unidad_id) REFERENCES unidades(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Stock por sucursal
+DROP TABLE IF EXISTS inventario_stock;
+CREATE TABLE inventario_stock (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  producto_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_stock (producto_id, sucursal_id),
+  KEY idx_st_sucursal (sucursal_id),
+  CONSTRAINT fk_st_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_st_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Kardex / movimientos de inventario
+DROP TABLE IF EXISTS movimientos_inventario;
+CREATE TABLE movimientos_inventario (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  producto_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  tipo ENUM('entrada','salida','ajuste','compra','venta','devolucion','transferencia_salida','transferencia_entrada') NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  stock_anterior DECIMAL(12,3) NOT NULL DEFAULT 0,
+  stock_nuevo DECIMAL(12,3) NOT NULL DEFAULT 0,
+  costo_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,
+  referencia_tipo VARCHAR(30) NULL,
+  referencia_id INT UNSIGNED NULL,
+  motivo VARCHAR(255) NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_mov_producto (producto_id),
+  KEY idx_mov_sucursal (sucursal_id),
+  KEY idx_mov_fecha (created_at),
+  CONSTRAINT fk_mov_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mov_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== COMPRAS =====================
+DROP TABLE IF EXISTS compras;
+CREATE TABLE compras (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  proveedor_id INT UNSIGNED NULL,
+  fecha DATE NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  estado ENUM('pendiente','recibida','anulada') NOT NULL DEFAULT 'recibida',
+  notas VARCHAR(255) NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_compra_numero (numero),
+  KEY idx_c_sucursal (sucursal_id),
+  CONSTRAINT fk_c_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_c_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS compra_detalles;
+CREATE TABLE compra_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  compra_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  costo_unitario DECIMAL(12,2) NOT NULL,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  subtotal DECIMAL(12,2) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_cd_compra (compra_id),
+  CONSTRAINT fk_cd_compra FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE CASCADE,
+  CONSTRAINT fk_cd_producto FOREIGN KEY (producto_id) REFERENCES productos(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== TRANSFERENCIAS ENTRE SUCURSALES =====================
+DROP TABLE IF EXISTS transferencias;
+CREATE TABLE transferencias (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  sucursal_origen_id INT UNSIGNED NOT NULL,
+  sucursal_destino_id INT UNSIGNED NOT NULL,
+  fecha DATE NOT NULL,
+  estado ENUM('pendiente','enviada','recibida','anulada') NOT NULL DEFAULT 'pendiente',
+  notas VARCHAR(255) NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_transf_numero (numero),
+  CONSTRAINT fk_t_origen FOREIGN KEY (sucursal_origen_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_t_destino FOREIGN KEY (sucursal_destino_id) REFERENCES sucursales(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS transferencia_detalles;
+CREATE TABLE transferencia_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  transferencia_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_td_transf (transferencia_id),
+  CONSTRAINT fk_td_transf FOREIGN KEY (transferencia_id) REFERENCES transferencias(id) ON DELETE CASCADE,
+  CONSTRAINT fk_td_producto FOREIGN KEY (producto_id) REFERENCES productos(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== CLIENTES =====================
+DROP TABLE IF EXISTS clientes;
+CREATE TABLE clientes (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL,
+  nombre VARCHAR(150) NOT NULL,
+  rnc_cedula VARCHAR(30) NULL,
+  telefono VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  direccion VARCHAR(255) NULL,
+  tipo ENUM('contado','credito') NOT NULL DEFAULT 'contado',
+  limite_credito DECIMAL(12,2) NOT NULL DEFAULT 0,
+  balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cliente_codigo (codigo),
+  KEY idx_cli_nombre (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Abonos / pagos de clientes a crédito (cuentas por cobrar)
+DROP TABLE IF EXISTS pagos_clientes;
+CREATE TABLE pagos_clientes (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cliente_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NULL,
+  monto DECIMAL(12,2) NOT NULL,
+  metodo_pago_id INT UNSIGNED NULL,
+  notas VARCHAR(255) NULL,
+  usuario_id INT UNSIGNED NULL,
+  fecha DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_pc_cliente (cliente_id),
+  CONSTRAINT fk_pc_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== POS / CAJA =====================
+DROP TABLE IF EXISTS metodos_pago;
+CREATE TABLE metodos_pago (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(50) NOT NULL,
+  afecta_caja TINYINT(1) NOT NULL DEFAULT 1,   -- efectivo afecta el conteo de caja
+  es_credito TINYINT(1) NOT NULL DEFAULT 0,    -- venta a crédito (genera cuenta por cobrar)
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS cajas;
+CREATE TABLE cajas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NOT NULL,
+  nombre VARCHAR(60) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  KEY idx_caja_sucursal (sucursal_id),
+  CONSTRAINT fk_caja_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS caja_sesiones;
+CREATE TABLE caja_sesiones (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  caja_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  usuario_id INT UNSIGNED NOT NULL,
+  monto_apertura DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_ventas DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_efectivo DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_tarjeta DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_otros DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_ingresos DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_egresos DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_devoluciones DECIMAL(12,2) NOT NULL DEFAULT 0,
+  efectivo_esperado DECIMAL(12,2) NOT NULL DEFAULT 0,
+  monto_cierre_real DECIMAL(12,2) NULL,
+  diferencia DECIMAL(12,2) NULL,
+  estado ENUM('abierta','cerrada') NOT NULL DEFAULT 'abierta',
+  notas VARCHAR(255) NULL,
+  abierta_at DATETIME NOT NULL,
+  cerrada_at DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_cs_sucursal (sucursal_id),
+  KEY idx_cs_estado (estado),
+  CONSTRAINT fk_cs_caja FOREIGN KEY (caja_id) REFERENCES cajas(id),
+  CONSTRAINT fk_cs_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_cs_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS caja_movimientos;
+CREATE TABLE caja_movimientos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  caja_sesion_id INT UNSIGNED NOT NULL,
+  tipo ENUM('ingreso','egreso') NOT NULL,
+  concepto VARCHAR(150) NOT NULL,
+  monto DECIMAL(12,2) NOT NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_cm_sesion (caja_sesion_id),
+  CONSTRAINT fk_cm_sesion FOREIGN KEY (caja_sesion_id) REFERENCES caja_sesiones(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Secuencias de NCF (comprobantes fiscales RD)
+DROP TABLE IF EXISTS ncf_secuencias;
+CREATE TABLE ncf_secuencias (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tipo VARCHAR(10) NOT NULL,               -- B01 (crédito fiscal), B02 (consumidor final)
+  descripcion VARCHAR(80) NULL,
+  prefijo VARCHAR(5) NOT NULL DEFAULT 'B',
+  secuencia_actual INT UNSIGNED NOT NULL DEFAULT 1,
+  secuencia_hasta INT UNSIGNED NOT NULL DEFAULT 99999999,
+  vencimiento DATE NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ncf_tipo (tipo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== VENTAS =====================
+DROP TABLE IF EXISTS ventas;
+CREATE TABLE ventas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  caja_sesion_id INT UNSIGNED NULL,
+  cliente_id INT UNSIGNED NULL,
+  usuario_id INT UNSIGNED NOT NULL,
+  fecha DATETIME NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  costo_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  tipo_comprobante ENUM('consumidor','credito_fiscal') NOT NULL DEFAULT 'consumidor',
+  ncf VARCHAR(20) NULL,
+  estado ENUM('completada','anulada','devuelta') NOT NULL DEFAULT 'completada',
+  notas VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_venta_numero (numero),
+  KEY idx_v_sucursal (sucursal_id),
+  KEY idx_v_fecha (fecha),
+  KEY idx_v_cliente (cliente_id),
+  KEY idx_v_sesion (caja_sesion_id),
+  CONSTRAINT fk_v_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_v_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE SET NULL,
+  CONSTRAINT fk_v_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS venta_detalles;
+CREATE TABLE venta_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  venta_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NULL,
+  descripcion VARCHAR(180) NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  precio_unitario DECIMAL(12,2) NOT NULL,
+  costo_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,
+  descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  subtotal DECIMAL(12,2) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_vd_venta (venta_id),
+  KEY idx_vd_producto (producto_id),
+  CONSTRAINT fk_vd_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_vd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS venta_pagos;
+CREATE TABLE venta_pagos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  venta_id INT UNSIGNED NOT NULL,
+  metodo_pago_id INT UNSIGNED NOT NULL,
+  monto DECIMAL(12,2) NOT NULL,
+  referencia VARCHAR(60) NULL,
+  PRIMARY KEY (id),
+  KEY idx_vp_venta (venta_id),
+  CONSTRAINT fk_vp_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_vp_metodo FOREIGN KEY (metodo_pago_id) REFERENCES metodos_pago(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS devoluciones;
+CREATE TABLE devoluciones (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  venta_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  usuario_id INT UNSIGNED NULL,
+  motivo VARCHAR(255) NULL,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_dev_numero (numero),
+  KEY idx_dev_venta (venta_id),
+  CONSTRAINT fk_dev_venta FOREIGN KEY (venta_id) REFERENCES ventas(id),
+  CONSTRAINT fk_dev_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS devolucion_detalles;
+CREATE TABLE devolucion_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  devolucion_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NULL,
+  descripcion VARCHAR(180) NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  precio_unitario DECIMAL(12,2) NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_dd_dev (devolucion_id),
+  CONSTRAINT fk_dd_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== RRHH =====================
+DROP TABLE IF EXISTS departamentos;
+CREATE TABLE departamentos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,
+  nombre VARCHAR(100) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_dep_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS puestos;
+CREATE TABLE puestos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  departamento_id INT UNSIGNED NULL,
+  nombre VARCHAR(100) NOT NULL,
+  salario_base DECIMAL(12,2) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_puesto_dep FOREIGN KEY (departamento_id) REFERENCES departamentos(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS empleados;
+CREATE TABLE empleados (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL,
+  sucursal_id INT UNSIGNED NULL,
+  departamento_id INT UNSIGNED NULL,
+  puesto_id INT UNSIGNED NULL,
+  usuario_id INT UNSIGNED NULL,
+  nombre VARCHAR(80) NOT NULL,
+  apellido VARCHAR(80) NOT NULL,
+  cedula VARCHAR(20) NOT NULL,
+  fecha_nacimiento DATE NULL,
+  genero ENUM('M','F','O') NULL,
+  telefono VARCHAR(40) NULL,
+  email VARCHAR(120) NULL,
+  direccion VARCHAR(255) NULL,
+  fecha_ingreso DATE NOT NULL,
+  fecha_salida DATE NULL,
+  tipo_contrato ENUM('indefinido','temporal','por_obra') NOT NULL DEFAULT 'indefinido',
+  salario DECIMAL(12,2) NOT NULL DEFAULT 0,
+  metodo_pago ENUM('efectivo','transferencia','cheque') NOT NULL DEFAULT 'efectivo',
+  banco VARCHAR(60) NULL,
+  cuenta_bancaria VARCHAR(40) NULL,
+  estado ENUM('activo','inactivo','vacaciones','licencia') NOT NULL DEFAULT 'activo',
+  foto VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_empleado_codigo (codigo),
+  UNIQUE KEY uq_empleado_cedula (cedula),
+  KEY idx_emp_sucursal (sucursal_id),
+  CONSTRAINT fk_emp_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE SET NULL,
+  CONSTRAINT fk_emp_dep FOREIGN KEY (departamento_id) REFERENCES departamentos(id) ON DELETE SET NULL,
+  CONSTRAINT fk_emp_puesto FOREIGN KEY (puesto_id) REFERENCES puestos(id) ON DELETE SET NULL,
+  CONSTRAINT fk_emp_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS asistencias;
+CREATE TABLE asistencias (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  empleado_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NULL,
+  fecha DATE NOT NULL,
+  hora_entrada TIME NULL,
+  hora_salida TIME NULL,
+  horas_trabajadas DECIMAL(5,2) NOT NULL DEFAULT 0,
+  horas_extra DECIMAL(5,2) NOT NULL DEFAULT 0,
+  estado ENUM('presente','ausente','tardanza','permiso','vacaciones','licencia') NOT NULL DEFAULT 'presente',
+  notas VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_asistencia (empleado_id, fecha),
+  KEY idx_asis_fecha (fecha),
+  CONSTRAINT fk_asis_empleado FOREIGN KEY (empleado_id) REFERENCES empleados(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS nominas;
+CREATE TABLE nominas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,
+  descripcion VARCHAR(120) NOT NULL,
+  tipo ENUM('mensual','quincenal','semanal') NOT NULL DEFAULT 'mensual',
+  fecha_desde DATE NOT NULL,
+  fecha_hasta DATE NOT NULL,
+  total_bruto DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total_deducciones DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total_neto DECIMAL(14,2) NOT NULL DEFAULT 0,
+  estado ENUM('borrador','procesada','pagada') NOT NULL DEFAULT 'borrador',
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_nom_sucursal (sucursal_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS nomina_detalles;
+CREATE TABLE nomina_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nomina_id INT UNSIGNED NOT NULL,
+  empleado_id INT UNSIGNED NOT NULL,
+  salario_base DECIMAL(12,2) NOT NULL DEFAULT 0,
+  dias_trabajados DECIMAL(5,2) NOT NULL DEFAULT 0,
+  horas_extra DECIMAL(6,2) NOT NULL DEFAULT 0,
+  monto_horas_extra DECIMAL(12,2) NOT NULL DEFAULT 0,
+  bonificaciones DECIMAL(12,2) NOT NULL DEFAULT 0,
+  comisiones DECIMAL(12,2) NOT NULL DEFAULT 0,
+  otros_ingresos DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_ingresos DECIMAL(12,2) NOT NULL DEFAULT 0,
+  afp DECIMAL(12,2) NOT NULL DEFAULT 0,
+  sfs DECIMAL(12,2) NOT NULL DEFAULT 0,
+  isr DECIMAL(12,2) NOT NULL DEFAULT 0,
+  otras_deducciones DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_deducciones DECIMAL(12,2) NOT NULL DEFAULT 0,
+  salario_neto DECIMAL(12,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_nd_nomina (nomina_id),
+  CONSTRAINT fk_nd_nomina FOREIGN KEY (nomina_id) REFERENCES nominas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_nd_empleado FOREIGN KEY (empleado_id) REFERENCES empleados(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS vacaciones;
+CREATE TABLE vacaciones (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  empleado_id INT UNSIGNED NOT NULL,
+  tipo ENUM('vacaciones','licencia') NOT NULL DEFAULT 'vacaciones',
+  subtipo VARCHAR(40) NULL,                  -- enfermedad, personal, maternidad, duelo...
+  fecha_solicitud DATE NOT NULL,
+  fecha_desde DATE NOT NULL,
+  fecha_hasta DATE NOT NULL,
+  dias INT NOT NULL DEFAULT 0,
+  con_goce TINYINT(1) NOT NULL DEFAULT 1,
+  estado ENUM('solicitada','aprobada','rechazada','disfrutada') NOT NULL DEFAULT 'solicitada',
+  motivo VARCHAR(255) NULL,
+  aprobado_por INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_vac_empleado (empleado_id),
+  CONSTRAINT fk_vac_empleado FOREIGN KEY (empleado_id) REFERENCES empleados(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== FINANZAS =====================
+DROP TABLE IF EXISTS categorias_financieras;
+CREATE TABLE categorias_financieras (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tipo ENUM('ingreso','gasto') NOT NULL,
+  nombre VARCHAR(100) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS cuentas_financieras;
+CREATE TABLE cuentas_financieras (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,
+  nombre VARCHAR(100) NOT NULL,
+  tipo ENUM('efectivo','banco','otro') NOT NULL DEFAULT 'efectivo',
+  balance DECIMAL(14,2) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_cuenta_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS transacciones;
+CREATE TABLE transacciones (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,
+  cuenta_id INT UNSIGNED NULL,
+  tipo ENUM('ingreso','gasto') NOT NULL,
+  categoria_id INT UNSIGNED NULL,
+  monto DECIMAL(14,2) NOT NULL,
+  descripcion VARCHAR(255) NULL,
+  referencia_tipo VARCHAR(30) NULL,          -- venta, compra, nomina, manual
+  referencia_id INT UNSIGNED NULL,
+  fecha DATE NOT NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tr_sucursal (sucursal_id),
+  KEY idx_tr_fecha (fecha),
+  KEY idx_tr_tipo (tipo),
+  CONSTRAINT fk_tr_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id) ON DELETE SET NULL,
+  CONSTRAINT fk_tr_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_financieras(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;

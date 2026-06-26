@@ -1,0 +1,38 @@
+# ============================================================
+#  NexoPOS — archivos que NUNCA deben subirse al repositorio
+# ============================================================
+
+# --- Credenciales / configuración local (¡crítico!) ---
+/config/config.local.php
+.env
+.env.*
+
+# --- Subidas de usuarios (logo, imágenes de productos) ---
+/assets/uploads/*
+!/assets/uploads/.gitkeep
+
+# --- Respaldos SQL generados ---
+respaldo_*.sql
+*.bak
+
+# --- Bloqueo de instalación (se genera en cada servidor) ---
+/install/installed.lock
+
+# --- Logs y temporales ---
+*.log
+/logs/
+*.cache
+*.tmp
+
+# --- Dependencias de desarrollo (Composer dev) ---
+# vendor/ SÍ se versiona para que el deploy en cPanel funcione sin ejecutar composer.
+/vendor/bin/
+
+# --- Sistema operativo / editores ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~

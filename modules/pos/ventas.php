@@ -1,0 +1,158 @@
+<?php
+require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
+require_perm('ventas.ver');
+
+if (isPost()) {
+    verify_csrf();
+    if (post('accion') === 'anular') {
+        require_perm('ventas.anular');
+        $id = postInt('id');
+        try {
+            tx(function () use ($id) {
+                $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$id]);
+                if (!$v || $v['estado'] !== 'completada') throw new RuntimeException('La venta no se puede anular.');
+                if (qVal("SELECT 1 FROM devoluciones WHERE venta_id = ? LIMIT 1", [$id])) throw new RuntimeException('La venta tiene devoluciones; no se puede anular.');
+                foreach (qAll("SELECT * FROM venta_detalles WHERE venta_id = ?", [$id]) as $d) {
+                    if ($d['producto_id']) {
+                        ajustarStock((int) $d['producto_id'], (int) $v['sucursal_id'], (float) $d['cantidad'], 'entrada', 'venta_anulada', $id, (float) $d['costo_unitario'], 'Anulación venta ' . $v['numero']);
+                    }
+                }
+                foreach (qAll("SELECT * FROM transacciones WHERE referencia_tipo='venta' AND referencia_id = ?", [$id]) as $tr) {
+                    if ($tr['cuenta_id']) q("UPDATE cuentas_financieras SET balance = balance - ? WHERE id = ?", [$tr['monto'], $tr['cuenta_id']]);
+                    q("DELETE FROM transacciones WHERE id = ?", [$tr['id']]);
+                }
+                dbUpdate('ventas', ['estado' => 'anulada'], 'id = ?', [$id]);
+            });
+            audit('ventas', 'anular', "Venta anulada #$id", ['tabla' => 'ventas', 'registro_id' => $id]);
+            flash('success', 'Venta anulada y stock revertido.');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/pos/ventas.php');
+    }
+}
+
+// ----- Detalle -----
+$verId = (int) get('ver');
+if ($verId) {
+    $v = qOne("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor, u.apellido AS vend_ape FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE v.id=?", [$verId]);
+    if (!$v) { flash('error', 'Venta no encontrada.'); redirect('modules/pos/ventas.php'); }
+    $det = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$verId]);
+    $pagos = qAll("SELECT vp.*, m.nombre AS metodo FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?", [$verId]);
+    layout_start('Venta ' . e($v['numero']), 'Detalle de la venta', '<a href="' . url('modules/pos/ventas.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a><a href="' . url('modules/pos/ticket.php?id=' . $verId . '&pdf=1') . '" target="_blank" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Factura PDF</a><a href="' . url('modules/pos/ticket.php?id=' . $verId) . '" target="_blank" class="btn btn-primary">' . icon('print', 'w-4 h-4') . ' Ticket</a>');
+    ?>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="card lg:col-span-2 overflow-hidden">
+        <table class="data-table">
+          <thead><tr><th>Producto</th><th class="text-center">Cant.</th><th class="text-right">Precio</th><th class="text-right">ITBIS</th><th class="text-right">Subtotal</th></tr></thead>
+          <tbody>
+            <?php foreach ($det as $d): ?><tr><td class="font-semibold text-slate-700"><?= e($d['descripcion']) ?></td><td class="text-center"><?= qty($d['cantidad']) ?></td><td class="text-right"><?= money($d['precio_unitario']) ?></td><td class="text-right text-slate-500"><?= money($d['itbis']) ?></td><td class="text-right font-bold text-slate-800"><?= money($d['subtotal']) ?></td></tr><?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <div class="card p-5 h-fit space-y-3">
+        <div class="flex items-center justify-between"><span class="text-xs text-slate-400">Estado</span><?= badgeFor($v['estado']) ?></div>
+        <div><p class="text-xs text-slate-400">Cliente</p><p class="font-semibold text-slate-700"><?= e($v['cliente'] ?: 'Cliente Genérico') ?></p></div>
+        <div><p class="text-xs text-slate-400">Sucursal</p><p class="font-semibold text-slate-700"><?= e($v['sucursal']) ?></p></div>
+        <div><p class="text-xs text-slate-400">Vendedor</p><p class="font-semibold text-slate-700"><?= e($v['vendedor'] . ' ' . $v['vend_ape']) ?></p></div>
+        <div><p class="text-xs text-slate-400">Fecha</p><p class="font-semibold text-slate-700"><?= fechaHora($v['fecha']) ?></p></div>
+        <?php if ($v['ncf']): ?><div><p class="text-xs text-slate-400">NCF (<?= $v['tipo_comprobante'] === 'credito_fiscal' ? 'Crédito Fiscal' : 'Consumidor' ?>)</p><p class="font-semibold text-slate-700"><?= e($v['ncf']) ?></p></div><?php endif; ?>
+        <div class="border-t border-slate-100 pt-3 space-y-1.5 text-sm">
+          <div class="flex justify-between text-slate-500"><span>Subtotal</span><span><?= money($v['subtotal']) ?></span></div>
+          <?php if ($v['descuento'] > 0): ?><div class="flex justify-between text-rose-600"><span>Descuento</span><span>−<?= money($v['descuento']) ?></span></div><?php endif; ?>
+          <div class="flex justify-between text-slate-500"><span>ITBIS</span><span><?= money($v['itbis']) ?></span></div>
+          <div class="flex justify-between text-lg font-extrabold text-slate-800 pt-1 border-t border-slate-100"><span>Total</span><span><?= money($v['total']) ?></span></div>
+        </div>
+        <div class="border-t border-slate-100 pt-3"><?php foreach ($pagos as $p): ?><div class="flex justify-between text-sm text-slate-500"><span><?= e($p['metodo']) ?></span><span><?= money($p['monto']) ?></span></div><?php endforeach; ?></div>
+      </div>
+    </div>
+    <?php layout_end(); return;
+}
+
+// ----- Listado -----
+[$scope, $sp] = sucursalScope('v.sucursal_id');
+$q = trim(get('q'));
+$estado = get('estado');
+$desde = get('desde');
+$hasta = get('hasta');
+$cond = [$scope];
+$params = $sp;
+if ($q !== '') { $cond[] = "(v.numero LIKE ? OR cl.nombre LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; }
+if (in_array($estado, ['completada', 'anulada', 'devuelta'], true)) { $cond[] = "v.estado = ?"; $params[] = $estado; }
+if ($desde) { $cond[] = "DATE(v.fecha) >= ?"; $params[] = $desde; }
+if ($hasta) { $cond[] = "DATE(v.fecha) <= ?"; $params[] = $hasta; }
+$where = implode(' AND ', $cond);
+
+if (export_solicitado()) {
+    $rows = qAll("SELECT v.numero, v.ncf, v.fecha, v.subtotal, v.itbis, v.total, v.estado, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE $where ORDER BY v.id DESC", $params);
+    export_tabla('ventas', ['Factura', 'NCF', 'Fecha', 'Cliente', 'Sucursal', 'Vendedor', 'Subtotal', 'ITBIS', 'Total', 'Estado'],
+        array_map(fn($r) => [$r['numero'], $r['ncf'], $r['fecha'], $r['cliente'] ?: 'Cliente Genérico', $r['sucursal'], $r['vendedor'], $r['subtotal'], $r['itbis'], $r['total'], $r['estado']], $rows));
+}
+
+$pagina = max(1, (int) get('p'));
+$pp = 25;
+$total = (int) qVal("SELECT COUNT(*) FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id WHERE $where", $params);
+$totalPag = max(1, (int) ceil($total / $pp));
+$offset = ($pagina - 1) * $pp;
+$ventas = qAll("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE $where ORDER BY v.id DESC LIMIT $pp OFFSET $offset", $params);
+
+$totVendido = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE $where AND v.estado='completada'", $params);
+
+layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format($total) . ' registros' : ''), export_buttons());
+?>
+
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+  <div class="card p-5"><p class="text-sm text-slate-400">Total vendido (filtro)</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($totVendido) ?></p></div>
+  <div class="card p-5"><p class="text-sm text-slate-400">Transacciones</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format($total) ?></p></div>
+  <div class="card p-5"><p class="text-sm text-slate-400">Ticket promedio</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($total > 0 ? $totVendido / max(1, $total) : 0) ?></p></div>
+</div>
+
+<div class="card overflow-hidden">
+  <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-5 gap-3">
+    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Factura o cliente..." class="input sm:col-span-2">
+    <select name="estado" class="select"><option value="">Todos</option><option value="completada" <?= $estado === 'completada' ? 'selected' : '' ?>>Completada</option><option value="anulada" <?= $estado === 'anulada' ? 'selected' : '' ?>>Anulada</option><option value="devuelta" <?= $estado === 'devuelta' ? 'selected' : '' ?>>Devuelta</option></select>
+    <input type="date" name="desde" value="<?= e($desde) ?>" class="input">
+    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" class="input"><button class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
+  </form>
+  <?php if (!$ventas): ?>
+    <?= empty_state('Sin ventas', 'No hay ventas que coincidan con los filtros.', 'receipt') ?>
+  <?php else: ?>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead><tr><th>Factura</th><th>Cliente</th><th>Sucursal</th><th>Vendedor</th><th>Fecha</th><th class="text-right">Total</th><th>Estado</th><th class="text-right">Acciones</th></tr></thead>
+        <tbody>
+          <?php foreach ($ventas as $v): ?>
+            <tr>
+              <td class="font-semibold text-slate-700"><?= e($v['numero']) ?><?php if ($v['ncf']): ?><br><span class="text-[11px] text-slate-400"><?= e($v['ncf']) ?></span><?php endif; ?></td>
+              <td class="text-slate-600"><?= e($v['cliente'] ?: 'Cliente Genérico') ?></td>
+              <td class="text-slate-500"><?= e($v['sucursal']) ?></td>
+              <td class="text-slate-500"><?= e($v['vendedor']) ?></td>
+              <td class="text-slate-500 whitespace-nowrap"><?= fechaHora($v['fecha']) ?></td>
+              <td class="text-right font-bold text-slate-800"><?= money($v['total']) ?></td>
+              <td><?= badgeFor($v['estado']) ?></td>
+              <td>
+                <div class="flex items-center justify-end gap-1">
+                  <a href="?ver=<?= (int) $v['id'] ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Ver"><?= icon('eye', 'w-4 h-4') ?></a>
+                  <a href="<?= e(url('modules/pos/ticket.php?id=' . (int) $v['id'])) ?>" target="_blank" class="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100" title="Ticket"><?= icon('print', 'w-4 h-4') ?></a>
+                  <?php if (can('ventas.anular') && $v['estado'] === 'completada'): ?>
+                    <form method="post" class="inline" onsubmit="return confirm('¿Anular la venta <?= e($v['numero']) ?>? Se revertirá el stock.')"><?= csrf_field() ?><input type="hidden" name="accion" value="anular"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Anular"><?= icon('x', 'w-4 h-4') ?></button></form>
+                  <?php endif; ?>
+                </div>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php if ($totalPag > 1): $qs = $_GET; ?>
+      <div class="flex items-center justify-between p-4 border-t border-slate-100 text-sm">
+        <span class="text-slate-400">Página <?= $pagina ?> de <?= $totalPag ?></span>
+        <div class="flex items-center gap-1">
+          <?php for ($i = max(1, $pagina - 2); $i <= min($totalPag, $pagina + 2); $i++): $qs['p'] = $i; ?><a href="?<?= e(http_build_query($qs)) ?>" class="px-3 py-1.5 rounded-lg font-semibold <?= $i === $pagina ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100' ?>"><?= $i ?></a><?php endfor; ?>
+        </div>
+      </div>
+    <?php endif; ?>
+  <?php endif; ?>
+</div>
+
+<?php layout_end(); ?>

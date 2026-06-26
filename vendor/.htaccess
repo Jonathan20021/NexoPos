@@ -1,0 +1,8 @@
+# Acceso web directo denegado. Las librerías solo se usan del lado del servidor.
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>

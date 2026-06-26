@@ -1,0 +1,56 @@
+# ============================================================
+#  NexoPOS — Seguridad (Apache)
+# ============================================================
+
+# Sin listado de directorios
+Options -Indexes
+
+# ----- Cabeceras de seguridad -----
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  Header always set X-XSS-Protection "1; mode=block"
+  # Descomenta cuando tengas HTTPS con certificado válido:
+  # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+</IfModule>
+
+# ----- Bloquear archivos sensibles por extensión / nombre -----
+<FilesMatch "\.(sql|md|json|lock|sh|ya?ml|ini|log|dist|bak|sample)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# config.local.php / *.local.php / *.example.php — credenciales y plantillas
+<FilesMatch "(\.local\.php|\.example\.php)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# ----- Bloquear dotfiles (.git, .env, .gitignore, .htaccess...) -----
+<FilesMatch "^\.">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Por si el directorio .git llegara a publicarse, devolver 404
+RedirectMatch 404 /\.git(/|$)
+
+# ----- Documento por defecto -----
+DirectoryIndex index.php
