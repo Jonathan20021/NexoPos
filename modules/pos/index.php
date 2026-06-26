@@ -42,7 +42,7 @@ $efectivoId = (int) (qVal("SELECT id FROM metodos_pago WHERE afecta_caja=1 AND a
 $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amber','rose'=>'badge-rose','indigo'=>'badge-indigo','cyan'=>'badge-cyan','sky'=>'badge-sky','pink'=>'badge-pink','violet'=>'badge-violet','slate'=>'badge-slate'];
 ?>
 
-<div x-data="pos()" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+<div x-data="pos()" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start pb-24 lg:pb-0">
 
   <!-- Productos -->
   <div class="lg:col-span-2 card p-4">
@@ -120,6 +120,16 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
       <div class="flex justify-between text-lg font-extrabold text-slate-800 pt-2 border-t border-slate-100"><span>Total</span><span x-text="fmt(total)"></span></div>
       <button @click="openPay()" :disabled="cart.length===0" class="btn btn-primary w-full py-3 text-base mt-1 disabled:opacity-50"><?= icon('cash', 'w-5 h-5') ?> Cobrar</button>
     </div>
+  </div>
+
+  <!-- Barra de cobro fija (solo móvil) -->
+  <div x-show="cart.length>0" x-transition style="display:none"
+       class="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 px-4 py-3 flex items-center gap-3 shadow-[0_-6px_24px_-10px_rgba(15,23,42,0.25)]">
+    <div class="flex-1 min-w-0">
+      <p class="text-xs text-slate-400" x-text="cart.reduce((s,i)=>s+i.cant,0) + ' artículo(s)'"></p>
+      <p class="text-lg font-extrabold text-slate-800 truncate" x-text="fmt(total)"></p>
+    </div>
+    <button @click="openPay()" class="btn btn-primary py-3 px-6 shrink-0"><?= icon('cash', 'w-5 h-5') ?> Cobrar</button>
   </div>
 
   <!-- Modal de cobro -->
