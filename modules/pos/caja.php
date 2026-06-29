@@ -204,8 +204,8 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
 
   <!-- Modal movimiento -->
   <div x-data="{open:false, tipo:'ingreso'}" @mov:new.window="open=true" @keydown.escape.window="open=false">
-    <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-      <div class="bg-white rounded-2xl shadow-pop w-full max-w-sm" @click.stop>
+    <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+      <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
         <form method="post">
           <?= csrf_field() ?><input type="hidden" name="accion" value="movimiento">
           <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">

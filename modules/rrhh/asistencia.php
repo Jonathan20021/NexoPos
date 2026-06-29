@@ -267,8 +267,8 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
 <div x-data="{open:false, form:{empleado_id:0, nombre:'', hora_entrada:'', hora_salida:'', estado:'presente', notas:''}}"
      @asis:detalle.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="registrar">

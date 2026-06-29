@@ -112,8 +112,8 @@ layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
 
 <?php if (can('inventario.ajustar')): ?>
 <div x-data="{open:false, form:{}}" @stock:ajustar.window="form=$event.detail; form.modo='exacta'; form.cantidad=$event.detail.cantidad; form.motivo=''; open=true" @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?><input type="hidden" name="accion" value="ajustar">
         <input type="hidden" name="producto_id" :value="form.producto_id"><input type="hidden" name="sucursal_id" :value="form.sucursal_id">

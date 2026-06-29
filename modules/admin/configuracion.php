@@ -248,8 +248,8 @@ layout_start('Configuración', 'Ajustes generales del sistema');
 <div x-data="{open:false, form:{id:0,tipo:'',descripcion:'',secuencia_actual:1,secuencia_hasta:1,vencimiento:'',activo:1}}"
      @ncf:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar_ncf">
@@ -295,8 +295,8 @@ layout_start('Configuración', 'Ajustes generales del sistema');
 <div x-data="{open:false, form:{nombre:'',afecta_caja:0}}"
      @mp:new.window="form={nombre:'',afecta_caja:0}; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="crear_metodo">

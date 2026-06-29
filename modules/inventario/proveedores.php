@@ -92,8 +92,8 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
 <div x-data="{open:false, form:{}}"
      @prov:new.window="form={id:0,nombre:'',rnc:'',contacto:'',telefono:'',email:'',direccion:'',activo:1}; open=true"
      @prov:edit.window="form=$event.detail; open=true" @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-lg" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
       <form method="post">
         <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar proveedor' : 'Nuevo proveedor'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>

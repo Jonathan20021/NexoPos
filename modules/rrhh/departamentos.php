@@ -261,8 +261,8 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
      @dep:new.window="form={id:0,nombre:'',descripcion:'',sucursal_id:'',activo:1}; open=true"
      @dep:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar_dep">
@@ -308,8 +308,8 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
      @puesto:new.window="form={id:0,departamento_id:'',nombre:'',salario_base:0,activo:1}; open=true"
      @puesto:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar_puesto">

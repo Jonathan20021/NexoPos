@@ -178,8 +178,8 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
      @prod:new.window="form={id:0,codigo:'<?= e($sigCodigo) ?>',codigo_barras:'',nombre:'',descripcion:'',categoria_id:'',marca_id:'',unidad_id:'',tipo:'producto',precio_compra:0,precio_venta:0,itbis_aplica:1,stock_minimo:0,imagen:'',activo:1}; open=true"
      @prod:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-2xl max-h-[92vh] overflow-y-auto" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
       <form method="post" enctype="multipart/form-data">
         <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="id" :value="form.id"><input type="hidden" name="imagen_actual" :value="form.imagen||''">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">

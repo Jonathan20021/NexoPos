@@ -133,8 +133,8 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
   </div>
 
   <!-- Modal de cobro -->
-  <div x-show="pay" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" @click.self="pay=false" @keydown.escape.window="pay=false">
-    <div class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="pay" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="pay=false" @keydown.escape.window="pay=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post" action="<?= e(url('modules/pos/guardar_venta.php')) ?>" @submit="document.getElementById('cartInput').value=JSON.stringify(cart.map(i=>({id:i.id,cant:i.cant})))">
         <?= csrf_field() ?>
         <input type="hidden" name="cart" id="cartInput">

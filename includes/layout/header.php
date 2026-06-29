@@ -73,6 +73,43 @@ tailwind.config = {
     .nav-section { @apply px-3 pt-5 pb-1.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-300; }
     .stat-trend-up { @apply text-emerald-600 bg-emerald-50; }
     .stat-trend-down { @apply text-rose-600 bg-rose-50; }
+    .modal-overlay {
+      @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40;
+      padding: 1rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .modal-panel {
+      width: 100%;
+      max-height: calc(100dvh - 2rem);
+      margin-block: auto;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+    .modal-panel > form {
+      min-height: 0;
+    }
+    .modal-panel > form > .border-b {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: white;
+    }
+    .modal-panel > form > .border-t:last-child {
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      background: white;
+    }
+  }
+  @media (max-width: 640px) {
+    .modal-overlay { align-items: flex-end; padding: .5rem; }
+    .modal-panel {
+      max-height: calc(100dvh - 1rem);
+      border-bottom-left-radius: 1rem;
+      border-bottom-right-radius: 1rem;
+    }
   }
   @media print {
     aside, header.sticky, footer, .no-print { display: none !important; }

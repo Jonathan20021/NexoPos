@@ -164,8 +164,8 @@ endif;
 </div>
 
 <!-- Modal nueva transferencia -->
-<div x-data="trfForm()" @trf:new.window="reset(); open=true" @keydown.escape.window="open=false" x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-start justify-center p-4 overflow-y-auto" @click.self="open=false">
-  <div class="bg-white rounded-2xl shadow-pop w-full max-w-2xl my-8" @click.stop>
+<div x-data="trfForm()" @trf:new.window="reset(); open=true" @keydown.escape.window="open=false" x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
     <form method="post" @submit="document.getElementById('trfLineas').value=JSON.stringify(lineas)">
       <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="lineas" id="trfLineas">
       <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Nueva transferencia</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>

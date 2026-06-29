@@ -164,8 +164,8 @@ layout_start('Roles y Permisos', 'Define qué puede hacer cada tipo de usuario',
      @rol:new.window="abrir({id:0,nombre:'',descripcion:'',activo:1,es_super:0,permisos:[]})"
      @rol:edit.window="abrir($event.detail)"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-3xl max-h-[90vh] flex flex-col" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-3xl flex flex-col" @click.stop>
       <form method="post" class="flex flex-col min-h-0">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar">

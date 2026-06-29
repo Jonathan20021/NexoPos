@@ -108,8 +108,8 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
 
 <!-- Modal marca -->
 <div x-data="{open:false, form:{}}" @marca:new.window="form={id:0,nombre:'',activo:1}; open=true" @marca:edit.window="form=$event.detail; open=true" @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div class="bg-white rounded-2xl shadow-pop w-full max-w-sm" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
       <form method="post"><?= csrf_field() ?><input type="hidden" name="accion" value="guardar_marca"><input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar marca':'Nueva marca'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
@@ -124,8 +124,8 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
 
 <!-- Modal unidad -->
 <div x-data="{open:false, form:{}}" @unidad:new.window="form={id:0,nombre:'',abreviatura:''}; open=true" @unidad:edit.window="form=$event.detail; open=true" @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div class="bg-white rounded-2xl shadow-pop w-full max-w-sm" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
       <form method="post"><?= csrf_field() ?><input type="hidden" name="accion" value="guardar_unidad"><input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar unidad':'Nueva unidad'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">

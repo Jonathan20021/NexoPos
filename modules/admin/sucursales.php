@@ -131,8 +131,8 @@ layout_start('Sucursales', 'Administra las sucursales de tu negocio', $acciones)
      @suc:new.window="form={id:0,codigo:'',nombre:'',direccion:'',telefono:'',email:'',encargado:'',activo:1}; open=true"
      @suc:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-lg" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar">

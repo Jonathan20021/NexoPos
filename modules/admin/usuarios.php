@@ -158,8 +158,8 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
      @usr:new.window="form={id:0,nombre:'',apellido:'',usuario:'',email:'',telefono:'',rol_id:'',sucursal_id:0,comision_pct:0,activo:1}; open=true"
      @usr:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-lg max-h-[90vh] overflow-y-auto" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar">

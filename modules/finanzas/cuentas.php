@@ -190,8 +190,8 @@ layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu nego
      @cta:new.window="form={id:0,nombre:'',tipo:'efectivo',sucursal_id:'',balance:0,activo:1}; isNew=true; open=true"
      @cta:edit.window="form=$event.detail; isNew=false; open=true"
      @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4" @click.self="open=false">
-    <div x-show="open" x-transition class="bg-white rounded-2xl shadow-pop w-full max-w-md" @click.stop>
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar">
