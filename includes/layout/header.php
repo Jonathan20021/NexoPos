@@ -110,6 +110,11 @@ tailwind.config = {
       border-bottom-left-radius: 1rem;
       border-bottom-right-radius: 1rem;
     }
+    input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
   }
   @media print {
     aside, header.sticky, footer, .no-print { display: none !important; }

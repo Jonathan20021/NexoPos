@@ -48,7 +48,7 @@ layout_start('Movimientos de inventario', 'Kardex: historial completo de entrada
     <input type="text" name="q" value="<?= e($q) ?>" placeholder="Buscar producto..." class="input">
     <select name="tipo" class="select"><option value="">Todos los tipos</option><?php foreach ($tipos as $t): ?><option value="<?= $t ?>" <?= $tipo === $t ? 'selected' : '' ?>><?= e($tipoBadge[$t][0] ?? $t) ?></option><?php endforeach; ?></select>
     <input type="date" name="desde" value="<?= e($desde) ?>" class="input" title="Desde">
-    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" class="input" title="Hasta"><button class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
+    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" class="input" title="Hasta"><button aria-label="Aplicar filtros" title="Filtrar" class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
   </form>
 
   <?php if (!$movs): ?>

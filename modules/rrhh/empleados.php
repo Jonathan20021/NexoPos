@@ -32,6 +32,8 @@ if (isPost()) {
         $banco         = trim(post('banco'));
         $cuenta        = trim(post('cuenta_bancaria'));
         $estado        = in_array(post('estado'), $estados, true) ? post('estado') : 'activo';
+        $dep = $departamentoId ? qOne("SELECT id, sucursal_id FROM departamentos WHERE id=? AND activo=1", [$departamentoId]) : null;
+        $puesto = $puestoId ? qOne("SELECT id, departamento_id FROM puestos WHERE id=? AND activo=1", [$puestoId]) : null;
 
         if ($id > 0) {
             $sucActual = qVal("SELECT sucursal_id FROM empleados WHERE id = ?", [$id]);
@@ -43,6 +45,18 @@ if (isPost()) {
             flash('error', 'Nombre, apellido y cédula son obligatorios.');
         } elseif ($fechaIngreso === '') {
             flash('error', 'La fecha de ingreso es obligatoria.');
+        } elseif ($salario < 0) {
+            flash('error', 'El salario no puede ser negativo.');
+        } elseif ($fechaNac !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaNac)) {
+            flash('error', 'La fecha de nacimiento no es válida.');
+        } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaIngreso)) {
+            flash('error', 'La fecha de ingreso no es válida.');
+        } elseif (($departamentoId && !$dep) || ($dep && $dep['sucursal_id'] !== null && !can_access_sucursal($dep['sucursal_id']))) {
+            flash('error', 'El departamento seleccionado no es válido para esta sucursal.');
+        } elseif ($puestoId && (!$puesto || !$departamentoId || (int) $puesto['departamento_id'] !== $departamentoId)) {
+            flash('error', 'El puesto seleccionado no corresponde al departamento.');
+        } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'El correo electrónico no es válido.');
         } elseif (qVal("SELECT 1 FROM empleados WHERE cedula = ? AND id <> ?", [$cedula, $id])) {
             flash('error', 'Ya existe un empleado con esa cédula.');
         } else {
@@ -88,9 +102,18 @@ if (isPost()) {
         $empEliminar = qOne("SELECT CONCAT(nombre,' ',apellido) AS nombre, sucursal_id FROM empleados WHERE id = ?", [$id]);
         if (!$empEliminar || !can_access_sucursal($empEliminar['sucursal_id'])) deny_access();
         $nombre = $empEliminar['nombre'];
-        q("DELETE FROM empleados WHERE id = ?", [$id]);
-        audit('rrhh_empleados', 'eliminar', "Empleado eliminado: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
-        flash('success', 'Empleado eliminado.');
+        $tieneHistorial = qVal("SELECT 1 FROM nomina_detalles WHERE empleado_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM asistencias WHERE empleado_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM vacaciones WHERE empleado_id=? LIMIT 1", [$id]);
+        if ($tieneHistorial) {
+            dbUpdate('empleados', ['estado' => 'inactivo'], 'id=?', [$id]);
+            audit('rrhh_empleados', 'editar', "Empleado desactivado para conservar historial: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
+            flash('warning', 'El empleado tiene historial; se marcó como inactivo en lugar de eliminarlo.');
+        } else {
+            q("DELETE FROM empleados WHERE id = ?", [$id]);
+            audit('rrhh_empleados', 'eliminar', "Empleado eliminado: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
+            flash('success', 'Empleado eliminado.');
+        }
         redirect('modules/rrhh/empleados.php');
     }
 }
@@ -246,7 +269,7 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar empleado' : 'Nuevo empleado'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

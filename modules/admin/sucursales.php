@@ -19,6 +19,8 @@ if (isPost()) {
 
         if ($codigo === '' || $nombre === '') {
             flash('error', 'El código y el nombre son obligatorios.');
+        } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'El correo electrónico no es válido.');
         } elseif (qVal("SELECT 1 FROM sucursales WHERE codigo = ? AND id <> ?", [$codigo, $id])) {
             flash('error', 'Ya existe una sucursal con ese código.');
         } else {
@@ -51,8 +53,20 @@ if (isPost()) {
         $id = postInt('id');
         $nUsuarios = (int) qVal("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ?", [$id]);
         $nVentas   = (int) qVal("SELECT COUNT(*) FROM ventas WHERE sucursal_id = ?", [$id]);
-        if ($nUsuarios > 0 || $nVentas > 0) {
-            flash('error', "No se puede eliminar: la sucursal tiene $nUsuarios usuario(s) y $nVentas venta(s) asociadas.");
+        $tieneHistorial = $nUsuarios > 0 || $nVentas > 0
+            || qVal("SELECT 1 FROM compras WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM caja_sesiones WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM devoluciones WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM transferencias WHERE sucursal_origen_id=? OR sucursal_destino_id=? LIMIT 1", [$id, $id])
+            || qVal("SELECT 1 FROM movimientos_inventario WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM pagos_clientes WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM asistencias WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM nominas WHERE sucursal_id=? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM transacciones WHERE sucursal_id=? LIMIT 1", [$id]);
+        if ($tieneHistorial) {
+            dbUpdate('sucursales', ['activo' => 0], 'id=?', [$id]);
+            audit('sucursales', 'editar', "Sucursal desactivada para conservar historial #$id", ['tabla' => 'sucursales', 'registro_id' => $id]);
+            flash('warning', 'La sucursal tiene operaciones registradas; se desactivó en lugar de eliminarla.');
         } else {
             $nombre = qVal("SELECT nombre FROM sucursales WHERE id = ?", [$id]);
             q("DELETE FROM sucursales WHERE id = ?", [$id]);
@@ -139,7 +153,7 @@ layout_start('Sucursales', 'Administra las sucursales de tu negocio', $acciones)
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar sucursal' : 'Nueva sucursal'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

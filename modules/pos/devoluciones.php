@@ -25,29 +25,74 @@ if (isPost()) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$ventaId]);
                 if (!$v || $v['estado'] === 'anulada') throw new RuntimeException('Venta no válida.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
-                $totalDev = 0; $lineas = []; $totVendido = 0; $totDevueltoNuevo = 0;
-                $detalles = qAll("SELECT * FROM venta_detalles WHERE venta_id = ?", [$ventaId]);
+                if ($motivo === '') throw new RuntimeException('Indica el motivo de la devolución.');
+                $totalDev = 0; $lineas = []; $totVendido = 0;
+                $factorVenta = (float) $v['subtotal'] > 0
+                    ? ((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal']
+                    : 1.0;
+                $detalles = qAll(
+                    "SELECT vd.*, p.tipo AS producto_tipo
+                     FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id
+                     WHERE vd.venta_id = ?",
+                    [$ventaId]
+                );
                 foreach ($detalles as $d) {
                     $totVendido += (float) $d['cantidad'];
                     $cant = (float) ($ret[$d['id']] ?? 0);
                     if ($cant <= 0) continue;
-                    $yaDev = (float) qVal("SELECT COALESCE(SUM(dd.cantidad),0) FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id WHERE de.venta_id=? AND dd.producto_id=?", [$ventaId, $d['producto_id']]);
+                    $yaDev = (float) qVal(
+                        "SELECT COALESCE(SUM(dd.cantidad),0)
+                         FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id
+                         WHERE de.venta_id=? AND (dd.venta_detalle_id=? OR (dd.venta_detalle_id IS NULL AND dd.producto_id <=> ? AND dd.descripcion=?))",
+                        [$ventaId, $d['id'], $d['producto_id'], $d['descripcion']]
+                    );
                     $maxDev = (float) $d['cantidad'] - $yaDev;
                     if ($cant > $maxDev) throw new RuntimeException('Cantidad a devolver excede lo vendido para «' . $d['descripcion'] . '».');
-                    $sub = round($cant * (float) $d['precio_unitario'], 2);
+                    // Reembolsa el importe realmente cobrado: descuento proporcional + ITBIS.
+                    $importeLineaCobrado = ((float) $d['subtotal'] * $factorVenta) + (float) $d['itbis'];
+                    $sub = round($importeLineaCobrado * ($cant / (float) $d['cantidad']), 2);
+                    $precioReembolso = round($sub / $cant, 2);
                     $totalDev += $sub;
-                    $lineas[] = ['pid' => $d['producto_id'], 'desc' => $d['descripcion'], 'cant' => $cant, 'precio' => (float) $d['precio_unitario'], 'costo' => (float) $d['costo_unitario'], 'sub' => $sub];
+                    $lineas[] = ['vdid' => $d['id'], 'pid' => $d['producto_id'], 'es_stock' => $d['producto_tipo'] === 'producto', 'desc' => $d['descripcion'], 'cant' => $cant, 'precio' => $precioReembolso, 'costo' => (float) $d['costo_unitario'], 'sub' => $sub];
                 }
                 if (!$lineas) throw new RuntimeException('Indica al menos una cantidad a devolver.');
                 $numero = nextNumero('devoluciones', 'numero', 'DEV');
                 $devId = dbInsert('devoluciones', ['numero' => $numero, 'venta_id' => $ventaId, 'sucursal_id' => $v['sucursal_id'], 'usuario_id' => current_user()['id'], 'motivo' => $motivo, 'total' => $totalDev]);
                 foreach ($lineas as $l) {
-                    dbInsert('devolucion_detalles', ['devolucion_id' => $devId, 'producto_id' => $l['pid'], 'descripcion' => $l['desc'], 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'subtotal' => $l['sub']]);
-                    if ($l['pid']) ajustarStock((int) $l['pid'], (int) $v['sucursal_id'], $l['cant'], 'devolucion', 'devolucion', $devId, $l['costo'], 'Devolución ' . $numero);
+                    dbInsert('devolucion_detalles', ['devolucion_id' => $devId, 'venta_detalle_id' => $l['vdid'], 'producto_id' => $l['pid'], 'descripcion' => $l['desc'], 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'subtotal' => $l['sub']]);
+                    if ($l['pid'] && $l['es_stock']) ajustarStock((int) $l['pid'], (int) $v['sucursal_id'], $l['cant'], 'devolucion', 'devolucion', $devId, $l['costo'], 'Devolución ' . $numero);
                 }
-                // Reembolso como gasto
-                $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE sucursal_id=? AND tipo='efectivo' AND activo=1 LIMIT 1", [$v['sucursal_id']]);
-                registrarTransaccion('gasto', $totalDev, ['sucursal_id' => $v['sucursal_id'], 'cuenta_id' => $cuenta['id'] ?? null, 'categoria_id' => categoriaFinancieraId('gasto', 'Devoluciones'), 'descripcion' => 'Devolución ' . $numero . ' (venta ' . $v['numero'] . ')', 'referencia_tipo' => 'devolucion', 'referencia_id' => $devId]);
+                $metodo = qOne(
+                    "SELECT m.afecta_caja, m.es_credito FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=? ORDER BY vp.id LIMIT 1",
+                    [$ventaId]
+                );
+                if (!$metodo) throw new RuntimeException('La venta no tiene un método de pago válido.');
+                if ((int) $metodo['es_credito'] === 1 && $totalDev > 0) {
+                    $cli = qOne("SELECT id, balance FROM clientes WHERE id=? FOR UPDATE", [$v['cliente_id']]);
+                    if (!$cli || round((float) $cli['balance'], 2) < round($totalDev, 2)) {
+                        throw new RuntimeException('El crédito ya tiene abonos aplicados y no cubre esta devolución. Revisa la cuenta del cliente.');
+                    }
+                    q("UPDATE clientes SET balance = balance - ? WHERE id = ?", [$totalDev, $cli['id']]);
+                } elseif ($totalDev > 0) {
+                    $tipoCuenta = (int) $metodo['afecta_caja'] === 1 ? 'efectivo' : 'banco';
+                    registrarTransaccion('gasto', $totalDev, [
+                        'sucursal_id' => $v['sucursal_id'],
+                        'cuenta_id' => cuentaFinancieraIdPorTipo($tipoCuenta, (int) $v['sucursal_id']),
+                        'categoria_id' => categoriaFinancieraId('gasto', 'Devoluciones'),
+                        'descripcion' => 'Devolución ' . $numero . ' (venta ' . $v['numero'] . ')',
+                        'referencia_tipo' => 'devolucion', 'referencia_id' => $devId,
+                    ]);
+                    if ((int) $metodo['afecta_caja'] === 1) {
+                        $sesionCaja = cajaSesionAbierta((int) $v['sucursal_id'], (int) current_user()['id']);
+                        if ($sesionCaja) {
+                            dbInsert('caja_movimientos', [
+                                'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'egreso',
+                                'concepto' => 'Reembolso ' . $numero, 'monto' => $totalDev,
+                                'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                            ]);
+                        }
+                    }
+                }
                 // ¿Devolución total?
                 $totDevuelto = (float) qVal("SELECT COALESCE(SUM(dd.cantidad),0) FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id WHERE de.venta_id=?", [$ventaId]);
                 if ($totDevuelto >= $totVendido) dbUpdate('ventas', ['estado' => 'devuelta'], 'id = ?', [$ventaId]);
@@ -77,12 +122,19 @@ if ($ventaId && can('devoluciones.crear')) {
         <table class="w-full text-sm">
           <thead class="bg-slate-50"><tr><th class="text-left px-4 py-2.5 text-xs font-semibold text-slate-400 uppercase">Producto</th><th class="px-2 py-2.5 text-xs font-semibold text-slate-400 uppercase text-center">Vendido</th><th class="px-2 py-2.5 text-xs font-semibold text-slate-400 uppercase text-center">Ya devuelto</th><th class="px-2 py-2.5 text-xs font-semibold text-slate-400 uppercase text-center w-32">Devolver</th></tr></thead>
           <tbody>
-            <?php foreach ($detalles as $d):
-              $yaDev = (float) qVal("SELECT COALESCE(SUM(dd.cantidad),0) FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id WHERE de.venta_id=? AND dd.producto_id=?", [$ventaId, $d['producto_id']]);
+            <?php $factorDev = (float) $v['subtotal'] > 0 ? (((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal']) : 1.0;
+            foreach ($detalles as $d):
+              $yaDev = (float) qVal(
+                  "SELECT COALESCE(SUM(dd.cantidad),0)
+                   FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id
+                   WHERE de.venta_id=? AND (dd.venta_detalle_id=? OR (dd.venta_detalle_id IS NULL AND dd.producto_id <=> ? AND dd.descripcion=?))",
+                  [$ventaId, $d['id'], $d['producto_id'], $d['descripcion']]
+              );
               $max = (float) $d['cantidad'] - $yaDev;
+              $unitReembolso = (float) $d['cantidad'] > 0 ? ((((float) $d['subtotal'] * $factorDev) + (float) $d['itbis']) / (float) $d['cantidad']) : 0;
             ?>
               <tr class="border-t border-slate-100">
-                <td class="px-4 py-2.5"><p class="font-semibold text-slate-700"><?= e($d['descripcion']) ?></p><p class="text-xs text-slate-400"><?= money($d['precio_unitario']) ?></p></td>
+                <td class="px-4 py-2.5"><p class="font-semibold text-slate-700"><?= e($d['descripcion']) ?></p><p class="text-xs text-slate-400">Reembolso unitario: <?= money($unitReembolso) ?></p></td>
                 <td class="px-2 py-2.5 text-center"><?= qty($d['cantidad']) ?></td>
                 <td class="px-2 py-2.5 text-center text-slate-400"><?= qty($yaDev) ?></td>
                 <td class="px-2 py-2.5 text-center"><input type="number" name="ret[<?= (int) $d['id'] ?>]" min="0" max="<?= $max ?>" step="0.001" value="0" <?= $max <= 0 ? 'disabled' : '' ?> class="input py-1.5 px-2 text-center w-24"></td>

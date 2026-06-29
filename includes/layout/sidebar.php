@@ -22,7 +22,7 @@ $lowStock = (int) qVal(
       <div class="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-lg shadow-lg shadow-blue-600/30">N</div>
     <?php endif; ?>
     <span class="text-xl font-extrabold text-slate-800 tracking-tight"><?= e(APP_NAME) ?></span>
-    <button @click="sidebar=false" class="ml-auto lg:hidden text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+    <button @click="sidebar=false" aria-label="Cerrar menú" title="Cerrar menú" class="ml-auto lg:hidden text-slate-400 hover:text-slate-700 p-2 -mr-2"><?= icon('x', 'w-5 h-5') ?></button>
   </div>
 
   <!-- Navegación -->

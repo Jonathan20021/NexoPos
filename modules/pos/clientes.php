@@ -22,6 +22,10 @@ if (isPost()) {
 
         if ($nombre === '') {
             flash('error', 'El nombre del cliente es obligatorio.');
+        } elseif ($limite < 0) {
+            flash('error', 'El límite de crédito no puede ser negativo.');
+        } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'El correo electrónico no es válido.');
         } else {
             $datos = [
                 'nombre'         => $nombre,
@@ -56,8 +60,11 @@ if (isPost()) {
             flash('error', 'El Cliente Genérico no se puede eliminar.');
         } else {
             $nVentas = (int) qVal("SELECT COUNT(*) FROM ventas WHERE cliente_id = ?", [$id]);
-            if ($nVentas > 0) {
-                flash('error', "No se puede eliminar: el cliente tiene $nVentas venta(s) registradas.");
+            $nPagos = (int) qVal("SELECT COUNT(*) FROM pagos_clientes WHERE cliente_id = ?", [$id]);
+            if ($nVentas > 0 || $nPagos > 0) {
+                dbUpdate('clientes', ['activo' => 0], 'id=?', [$id]);
+                audit('clientes', 'editar', "Cliente desactivado para conservar historial #$id", ['tabla' => 'clientes', 'registro_id' => $id]);
+                flash('warning', "El cliente tiene historial; se desactivó en lugar de eliminarlo.");
             } else {
                 $nombre = qVal("SELECT nombre FROM clientes WHERE id = ?", [$id]);
                 q("DELETE FROM clientes WHERE id = ?", [$id]);
@@ -173,7 +180,7 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar cliente' : 'Nuevo cliente'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2">

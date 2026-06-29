@@ -60,7 +60,7 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
       <?php if ($puedeCrear): ?><button onclick="<?= jsEvent('marca:new') ?>" class="btn btn-soft btn-sm"><?= icon('plus', 'w-4 h-4') ?> Nueva</button><?php endif; ?>
     </div>
     <?php if (!$marcas): ?><?= empty_state('Sin marcas', 'Agrega marcas para tus productos.', 'tag') ?><?php else: ?>
-    <table class="data-table">
+    <div class="overflow-x-auto"><table class="data-table min-w-[410px]">
       <thead><tr><th>Marca</th><th class="text-center">Productos</th><th>Estado</th><th class="text-right">Acciones</th></tr></thead>
       <tbody>
         <?php foreach ($marcas as $m): ?>
@@ -69,13 +69,13 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
           <td class="text-center"><span class="badge badge-slate"><?= (int) $m['productos'] ?></span></td>
           <td><?= $m['activo'] ? badge('Activa', 'emerald') : badge('Inactiva', 'slate') ?></td>
           <td><div class="flex items-center justify-end gap-1">
-            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('marca:edit', ['id'=>$m['id'],'nombre'=>$m['nombre'],'activo'=>$m['activo']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
-            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar marca?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_marca"><input type="hidden" name="id" value="<?= (int) $m['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
+            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('marca:edit', ['id'=>$m['id'],'nombre'=>$m['nombre'],'activo'=>$m['activo']]) ?>" aria-label="Editar marca" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
+            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar marca?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_marca"><input type="hidden" name="id" value="<?= (int) $m['id'] ?>"><button aria-label="Eliminar marca" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
           </div></td>
         </tr>
         <?php endforeach; ?>
       </tbody>
-    </table>
+    </table></div>
     <?php endif; ?>
   </div>
 
@@ -86,7 +86,7 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
       <?php if ($puedeCrear): ?><button onclick="<?= jsEvent('unidad:new') ?>" class="btn btn-soft btn-sm"><?= icon('plus', 'w-4 h-4') ?> Nueva</button><?php endif; ?>
     </div>
     <?php if (!$unidades): ?><?= empty_state('Sin unidades', 'Agrega unidades (Unidad, Libra, Galón...).', 'layers') ?><?php else: ?>
-    <table class="data-table">
+    <div class="overflow-x-auto"><table class="data-table min-w-[410px]">
       <thead><tr><th>Unidad</th><th>Abreviatura</th><th class="text-center">Productos</th><th class="text-right">Acciones</th></tr></thead>
       <tbody>
         <?php foreach ($unidades as $u): ?>
@@ -95,13 +95,13 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
           <td><span class="badge badge-indigo"><?= e($u['abreviatura']) ?></span></td>
           <td class="text-center"><span class="badge badge-slate"><?= (int) $u['productos'] ?></span></td>
           <td><div class="flex items-center justify-end gap-1">
-            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('unidad:edit', ['id'=>$u['id'],'nombre'=>$u['nombre'],'abreviatura'=>$u['abreviatura']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
-            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar unidad?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_unidad"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
+            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('unidad:edit', ['id'=>$u['id'],'nombre'=>$u['nombre'],'abreviatura'=>$u['abreviatura']]) ?>" aria-label="Editar unidad" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
+            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar unidad?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_unidad"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button aria-label="Eliminar unidad" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
           </div></td>
         </tr>
         <?php endforeach; ?>
       </tbody>
-    </table>
+    </table></div>
     <?php endif; ?>
   </div>
 </div>
@@ -111,7 +111,7 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
       <form method="post"><?= csrf_field() ?><input type="hidden" name="accion" value="guardar_marca"><input type="hidden" name="id" :value="form.id">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar marca':'Nueva marca'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar marca':'Nueva marca'"></h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
           <div><label class="label">Nombre *</label><input name="nombre" x-model="form.nombre" required class="input"></div>
           <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="activo" value="0"><input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600"> Activa</label>
@@ -127,7 +127,7 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
       <form method="post"><?= csrf_field() ?><input type="hidden" name="accion" value="guardar_unidad"><input type="hidden" name="id" :value="form.id">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar unidad':'Nueva unidad'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id?'Editar unidad':'Nueva unidad'"></h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
           <div><label class="label">Nombre *</label><input name="nombre" x-model="form.nombre" required class="input" placeholder="Ej. Libra"></div>
           <div><label class="label">Abreviatura *</label><input name="abreviatura" x-model="form.abreviatura" required maxlength="10" class="input" placeholder="Ej. LB"></div>

@@ -15,20 +15,33 @@ if (isPost()) {
                 $cli = qOne("SELECT nombre, balance FROM clientes WHERE id = ? FOR UPDATE", [$clienteId]);
                 if (!$cli) throw new RuntimeException('Cliente no válido.');
                 if ($monto <= 0) throw new RuntimeException('El monto del abono debe ser mayor a cero.');
-                if ($monto > (float) $cli['balance'] + 0.01) throw new RuntimeException('El abono no puede superar el balance pendiente (' . money($cli['balance']) . ').');
+                if (round($monto, 2) > round((float) $cli['balance'], 2)) throw new RuntimeException('El abono no puede superar el balance pendiente (' . money($cli['balance']) . ').');
                 $sid = current_sucursal_id();
+                if ($sid === null) throw new RuntimeException('Selecciona una sucursal antes de registrar el abono.');
+                $metodo = qOne("SELECT afecta_caja FROM metodos_pago WHERE id=? AND activo=1 AND es_credito=0", [$metodoId]);
+                if (!$metodo) throw new RuntimeException('Selecciona un método de pago válido.');
                 dbInsert('pagos_clientes', [
                     'cliente_id' => $clienteId, 'sucursal_id' => $sid, 'monto' => $monto,
                     'metodo_pago_id' => $metodoId, 'notas' => $notas ?: null,
                     'usuario_id' => current_user()['id'], 'fecha' => date('Y-m-d H:i:s'),
                 ]);
                 q("UPDATE clientes SET balance = balance - ? WHERE id = ?", [$monto, $clienteId]);
-                $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE " . ($sid ? 'sucursal_id=' . (int) $sid . ' AND ' : '') . "tipo='efectivo' AND activo=1 LIMIT 1");
+                $tipoCuenta = (int) $metodo['afecta_caja'] === 1 ? 'efectivo' : 'banco';
                 registrarTransaccion('ingreso', $monto, [
-                    'sucursal_id' => $sid, 'cuenta_id' => $cuenta['id'] ?? null,
+                    'sucursal_id' => $sid, 'cuenta_id' => cuentaFinancieraIdPorTipo($tipoCuenta, $sid),
                     'categoria_id' => categoriaFinancieraId('ingreso', 'Cobros a clientes'),
                     'descripcion' => 'Abono de ' . $cli['nombre'], 'referencia_tipo' => 'abono', 'referencia_id' => $clienteId,
                 ]);
+                if ((int) $metodo['afecta_caja'] === 1) {
+                    $sesionCaja = cajaSesionAbierta($sid, (int) current_user()['id']);
+                    if ($sesionCaja) {
+                        dbInsert('caja_movimientos', [
+                            'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'ingreso',
+                            'concepto' => 'Abono de ' . $cli['nombre'], 'monto' => $monto,
+                            'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                        ]);
+                    }
+                }
             });
             audit('clientes', 'editar', "Abono registrado al cliente #$clienteId por " . money($monto));
             flash('success', 'Abono registrado correctamente.');
@@ -113,7 +126,7 @@ layout_start('Cuentas por Cobrar', 'Clientes con crédito pendiente y registro d
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop>
       <form method="post"><?= csrf_field() ?><input type="hidden" name="accion" value="abono"><input type="hidden" name="cliente_id" :value="form.cliente_id">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Registrar abono</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Registrar abono</h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
           <div class="rounded-xl bg-slate-50 p-3"><p class="font-semibold text-slate-700" x-text="form.nombre"></p><p class="text-sm text-amber-600 font-semibold">Balance: <span x-text="'<?= e(setting('moneda', 'RD$')) ?> ' + Number(form.balance).toLocaleString('en-US',{minimumFractionDigits:2})"></span></p></div>
           <div><label class="label">Monto del abono *</label><input type="number" step="0.01" min="0.01" :max="form.balance" name="monto" x-model="form.monto" required class="input text-lg font-bold"></div>

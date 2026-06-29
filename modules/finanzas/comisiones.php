@@ -16,17 +16,37 @@ if (isPost()) {
     if (post('accion') === 'pagar') {
         require_perm('finanzas.crear');
         $vendId = postInt('vendedor_id');
-        $monto = postNum('monto');
-        $pdesde = post('desde'); $phasta = post('hasta');
+        $pdesde = trim(post('desde')); $phasta = trim(post('hasta'));
         try {
-            if ($monto <= 0) throw new RuntimeException('No hay comisión a pagar.');
-            $v = qOne("SELECT CONCAT(nombre,' ',apellido) AS nombre FROM usuarios WHERE id = ?", [$vendId]);
-            tx(function () use ($vendId, $monto, $pdesde, $phasta, $v) {
-                $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE tipo='efectivo' AND activo=1 LIMIT 1");
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $pdesde) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $phasta)) {
+                throw new RuntimeException('El periodo de comisión no es válido.');
+            }
+            if ($pdesde > $phasta) [$pdesde, $phasta] = [$phasta, $pdesde];
+            $v = qOne(
+                "SELECT u.id, CONCAT(u.nombre,' ',u.apellido) AS nombre, u.comision_pct,
+                        COALESCE(SUM(v.subtotal-v.descuento),0) AS base
+                 FROM usuarios u
+                 JOIN ventas v ON v.usuario_id=u.id AND v.estado='completada'
+                    AND v.fecha BETWEEN ? AND ? AND $scopeW
+                 WHERE u.id=? GROUP BY u.id",
+                array_merge([$pdesde . ' 00:00:00', $phasta . ' 23:59:59'], $scopeP, [$vendId])
+            );
+            $monto = $v ? round((float) $v['base'] * (float) $v['comision_pct'] / 100, 2) : 0.0;
+            if (!$v || $monto <= 0) throw new RuntimeException('No hay comisión válida para pagar en ese periodo.');
+            $descripcion = 'Comisión ' . $v['nombre'] . " [$pdesde:$phasta]";
+            tx(function () use ($vendId, $monto, $pdesde, $phasta, $v, $descripcion) {
+                // Serializa pagos del mismo vendedor y vuelve a comprobar dentro
+                // de la transacción para impedir duplicados por doble clic/concurrencia.
+                qOne("SELECT id FROM usuarios WHERE id=? FOR UPDATE", [$vendId]);
+                if (qOne("SELECT id FROM transacciones WHERE referencia_tipo='comision' AND referencia_id=? AND descripcion=? LIMIT 1 FOR UPDATE", [$vendId, $descripcion])) {
+                    throw new RuntimeException('La comisión de este vendedor y periodo ya fue pagada.');
+                }
+                $sidPago = current_sucursal_id();
+                $cuentaId = cuentaFinancieraIdPorTipo($sidPago === null ? 'banco' : 'efectivo', $sidPago);
                 registrarTransaccion('gasto', $monto, [
-                    'cuenta_id' => $cuenta['id'] ?? null,
+                    'sucursal_id' => $sidPago, 'cuenta_id' => $cuentaId,
                     'categoria_id' => categoriaFinancieraId('gasto', 'Comisiones'),
-                    'descripcion' => 'Comisión ' . ($v['nombre'] ?? '') . ' (' . fechaCorta($pdesde) . ' al ' . fechaCorta($phasta) . ')',
+                    'descripcion' => $descripcion,
                     'referencia_tipo' => 'comision', 'referencia_id' => $vendId, 'fecha' => $phasta,
                 ]);
             });
@@ -58,7 +78,8 @@ $totComision = array_sum(array_column($filas, 'comision'));
 
 // ¿Ya pagada la comisión del periodo? (busca un gasto de comisión por vendedor en el rango)
 $pagados = [];
-foreach (qAll("SELECT referencia_id FROM transacciones WHERE referencia_tipo='comision' AND fecha BETWEEN ? AND ?", [$desde, $hasta]) as $p) {
+[$scopePagos, $paramsPagos] = sucursalScope('sucursal_id');
+foreach (qAll("SELECT referencia_id FROM transacciones WHERE referencia_tipo='comision' AND descripcion LIKE ? AND $scopePagos", array_merge(['%[' . $desde . ':' . $hasta . ']'], $paramsPagos)) as $p) {
     $pagados[(int) $p['referencia_id']] = true;
 }
 

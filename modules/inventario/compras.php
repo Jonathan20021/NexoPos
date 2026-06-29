@@ -19,6 +19,10 @@ if (isPost()) {
             flash('error', 'Selecciona la sucursal y agrega al menos un producto.');
             redirect('modules/inventario/compras.php');
         }
+        if ($proveedorId && !qVal("SELECT 1 FROM proveedores WHERE id=? AND activo=1", [$proveedorId])) {
+            flash('error', 'El proveedor seleccionado no es válido.');
+            redirect('modules/inventario/compras.php');
+        }
         try {
             $compraId = tx(function () use ($proveedorId, $sucursalId, $fecha, $lineas, $tasaItbis) {
                 $subtotal = 0; $itbisTotal = 0; $det = [];
@@ -27,6 +31,7 @@ if (isPost()) {
                     $cant = (float) ($l['cantidad'] ?? 0);
                     $costo = (float) ($l['costo'] ?? 0);
                     if ($pid <= 0 || $cant <= 0) continue;
+                    if ($costo <= 0) throw new RuntimeException('El costo de compra debe ser mayor que cero.');
                     $p = qOne("SELECT id, itbis_aplica FROM productos WHERE id = ?", [$pid]);
                     if (!$p) throw new RuntimeException('Producto inválido en la compra.');
                     $base = round($costo * $cant, 2);
@@ -47,8 +52,7 @@ if (isPost()) {
                     ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero);
                     q("UPDATE productos SET precio_compra = ? WHERE id = ?", [$d['costo'], $d['pid']]);
                 }
-                $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE sucursal_id = ? AND tipo='efectivo' AND activo=1 LIMIT 1", [$sucursalId]);
-                registrarTransaccion('gasto', $total, ['sucursal_id' => $sucursalId, 'cuenta_id' => $cuenta['id'] ?? null, 'categoria_id' => categoriaFinancieraId('gasto', 'Compra de Mercancía'), 'descripcion' => 'Compra ' . $numero, 'referencia_tipo' => 'compra', 'referencia_id' => $compraId, 'fecha' => $fecha]);
+                registrarTransaccion('gasto', $total, ['sucursal_id' => $sucursalId, 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $sucursalId), 'categoria_id' => categoriaFinancieraId('gasto', 'Compra de Mercancía'), 'descripcion' => 'Compra ' . $numero, 'referencia_tipo' => 'compra', 'referencia_id' => $compraId, 'fecha' => $fecha]);
                 return $compraId;
             });
             audit('compras', 'crear', 'Compra registrada', ['tabla' => 'compras', 'registro_id' => $compraId]);
@@ -182,7 +186,7 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
   <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-3xl" @click.stop>
     <form method="post" @submit="document.getElementById('lineasInput').value=JSON.stringify(lineas)">
       <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="lineas" id="lineasInput">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Nueva compra</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Nueva compra</h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
       <div class="p-6 space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div><label class="label">Proveedor</label><select name="proveedor_id" class="select"><option value="">— Sin proveedor —</option><?php foreach ($proveedores as $p): ?><option value="<?= (int) $p['id'] ?>"><?= e($p['nombre']) ?></option><?php endforeach; ?></select></div>
@@ -201,9 +205,9 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
                 <tr class="border-t border-slate-100">
                   <td class="px-3 py-2 font-medium text-slate-700" x-text="l.nombre"></td>
                   <td class="px-2 py-2"><input type="number" step="0.001" min="0" x-model.number="l.cantidad" class="input py-1.5 px-2 text-sm"></td>
-                  <td class="px-2 py-2"><input type="number" step="0.01" min="0" x-model.number="l.costo" class="input py-1.5 px-2 text-sm"></td>
+                  <td class="px-2 py-2"><input type="number" step="0.01" min="0.01" x-model.number="l.costo" class="input py-1.5 px-2 text-sm"></td>
                   <td class="px-2 py-2 text-right font-semibold text-slate-700" x-text="fmt(l.cantidad*l.costo)"></td>
-                  <td class="px-2 py-2"><button type="button" @click="lineas.splice(i,1)" class="text-rose-400 hover:text-rose-600"><?= icon('trash', 'w-4 h-4') ?></button></td>
+                  <td class="px-2 py-2"><button type="button" @click="lineas.splice(i,1)" aria-label="Quitar producto" title="Quitar" class="text-rose-400 hover:text-rose-600 p-2"><?= icon('trash', 'w-4 h-4') ?></button></td>
                 </tr>
               </template>
               <tr x-show="lineas.length===0"><td colspan="5" class="text-center text-slate-400 py-6 text-sm">Agrega productos a la compra.</td></tr>

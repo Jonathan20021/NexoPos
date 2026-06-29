@@ -198,7 +198,7 @@ layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu nego
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar cuenta' : 'Nueva cuenta'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
           <div>

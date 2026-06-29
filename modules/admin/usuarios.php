@@ -18,17 +18,24 @@ if (isPost()) {
         $sucId    = postInt('sucursal_id');           // 0 = "Todas" -> NULL
         $password = (string) post('password');
         $activo   = postInt('activo', 1);
+        $comisionPct = postNum('comision_pct');
 
         if ($nombre === '' || $apellido === '' || $usuario === '' || $email === '') {
             flash('error', 'Nombre, apellido, usuario y email son obligatorios.');
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'El correo electrónico no es válido.');
         } elseif ($rolId <= 0 || !qVal("SELECT 1 FROM roles WHERE id = ?", [$rolId])) {
             flash('error', 'Debes seleccionar un rol válido.');
+        } elseif ($sucId > 0 && !qVal("SELECT 1 FROM sucursales WHERE id=? AND activo=1", [$sucId])) {
+            flash('error', 'La sucursal seleccionada no es válida.');
+        } elseif ($comisionPct < 0 || $comisionPct > 100) {
+            flash('error', 'La comisión debe estar entre 0% y 100%.');
         } elseif (qVal("SELECT 1 FROM usuarios WHERE usuario = ? AND id <> ?", [$usuario, $id])) {
             flash('error', 'Ya existe un usuario con ese nombre de usuario.');
         } elseif (qVal("SELECT 1 FROM usuarios WHERE email = ? AND id <> ?", [$email, $id])) {
             flash('error', 'Ya existe un usuario con ese email.');
-        } elseif ($id === 0 && $password === '') {
-            flash('error', 'La contraseña es obligatoria al crear el usuario.');
+        } elseif (($id === 0 || $password !== '') && strlen($password) < 6) {
+            flash('error', 'La contraseña debe tener al menos 6 caracteres.');
         } else {
             $datos = [
                 'nombre'      => $nombre,
@@ -38,7 +45,7 @@ if (isPost()) {
                 'telefono'    => $telefono ?: null,
                 'rol_id'      => $rolId,
                 'sucursal_id' => $sucId > 0 ? $sucId : null,
-                'comision_pct' => max(0, postNum('comision_pct')),
+                'comision_pct' => $comisionPct,
                 'activo'      => $activo,
             ];
             if ($id > 0) {
@@ -71,9 +78,18 @@ if (isPost()) {
             if ($usuario === null) {
                 flash('error', 'El usuario no existe.');
             } else {
-                q("DELETE FROM usuarios WHERE id = ?", [$id]);
-                audit('usuarios', 'eliminar', "Usuario eliminado: $usuario", ['tabla' => 'usuarios', 'registro_id' => $id]);
-                flash('success', 'Usuario eliminado.');
+                $tieneHistorial = qVal("SELECT 1 FROM ventas WHERE usuario_id=? LIMIT 1", [$id])
+                    || qVal("SELECT 1 FROM caja_sesiones WHERE usuario_id=? LIMIT 1", [$id])
+                    || qVal("SELECT 1 FROM empleados WHERE usuario_id=? LIMIT 1", [$id]);
+                if ($tieneHistorial) {
+                    dbUpdate('usuarios', ['activo' => 0], 'id=?', [$id]);
+                    audit('usuarios', 'editar', "Usuario desactivado para conservar historial: $usuario", ['tabla' => 'usuarios', 'registro_id' => $id]);
+                    flash('warning', 'El usuario tiene operaciones registradas; se desactivó en lugar de eliminarlo.');
+                } else {
+                    q("DELETE FROM usuarios WHERE id = ?", [$id]);
+                    audit('usuarios', 'eliminar', "Usuario eliminado: $usuario", ['tabla' => 'usuarios', 'registro_id' => $id]);
+                    flash('success', 'Usuario eliminado.');
+                }
             }
         }
         redirect('modules/admin/usuarios.php');
@@ -166,7 +182,7 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar usuario' : 'Nuevo usuario'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>

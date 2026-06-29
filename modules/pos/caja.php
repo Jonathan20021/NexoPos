@@ -51,6 +51,7 @@ if (isPost()) {
         if ($sesion) { flash('error', 'Ya tienes una caja abierta.'); redirect('modules/pos/caja.php'); }
         $cajaId = postInt('caja_id');
         $monto  = postNum('monto_apertura');
+        if ($monto < 0) { flash('error', 'El monto de apertura no puede ser negativo.'); redirect('modules/pos/caja.php'); }
         $caja = qOne("SELECT * FROM cajas WHERE id = ? AND sucursal_id = ?", [$cajaId, $sid]);
         if (!$caja) { flash('error', 'Caja inválida.'); redirect('modules/pos/caja.php'); }
         $nid = dbInsert('caja_sesiones', [
@@ -81,6 +82,7 @@ if (isPost()) {
         $t = totalesSesion((int) $sesion['id']);
         $esperado = (float) $sesion['monto_apertura'] + $t['efectivo'] + $t['ingresos'] - $t['egresos'];
         $real = postNum('monto_cierre_real');
+        if ($real < 0) { flash('error', 'El efectivo contado no puede ser negativo.'); redirect('modules/pos/caja.php'); }
         $dif = round($real - $esperado, 2);
         dbUpdate('caja_sesiones', [
             'total_ventas' => $t['total_ventas'], 'total_efectivo' => $t['efectivo'],
@@ -185,7 +187,7 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
         <label class="label">Efectivo contado (real)</label>
         <div class="relative mb-3">
           <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold"><?= e(setting('moneda', 'RD$')) ?></span>
-          <input type="number" step="0.01" name="monto_cierre_real" required class="input pl-12 text-lg font-bold" placeholder="0.00">
+          <input type="number" step="0.01" min="0" name="monto_cierre_real" required class="input pl-12 text-lg font-bold" placeholder="0.00">
         </div>
         <label class="label">Notas (opcional)</label>
         <textarea name="notas" rows="2" class="input mb-3" placeholder="Observaciones del cierre"></textarea>
@@ -210,7 +212,7 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
           <?= csrf_field() ?><input type="hidden" name="accion" value="movimiento">
           <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
             <h3 class="font-bold text-slate-800">Movimiento de efectivo</h3>
-            <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+            <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid grid-cols-2 gap-2">
@@ -249,7 +251,7 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
           <label class="label">Monto de apertura</label>
           <div class="relative">
             <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold"><?= e(setting('moneda', 'RD$')) ?></span>
-            <input type="number" step="0.01" name="monto_apertura" value="0.00" required class="input pl-12 text-lg font-bold">
+            <input type="number" step="0.01" min="0" name="monto_apertura" value="0.00" required class="input pl-12 text-lg font-bold">
           </div>
         </div>
         <button class="btn btn-primary w-full"><?= icon('check', 'w-4 h-4') ?> Abrir caja</button>

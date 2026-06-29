@@ -16,6 +16,12 @@ function ajustarStock(int $productoId, int $sucursalId, float $delta, string $ti
     $anterior = $row ? (float) $row['cantidad'] : 0.0;
     $nuevo = round($anterior + $delta, 3);
 
+    // La validación se hace después del FOR UPDATE para impedir stock negativo
+    // incluso cuando dos ventas/transferencias compiten al mismo tiempo.
+    if ($nuevo < 0) {
+        throw new RuntimeException('Stock insuficiente para completar la operación. Disponible: ' . qty($anterior) . '.');
+    }
+
     if ($row) {
         q("UPDATE inventario_stock SET cantidad = ? WHERE id = ?", [$nuevo, $row['id']]);
     } else {
@@ -56,6 +62,7 @@ function siguienteNCF(string $tipo): ?string
     if (!$row) return null;
     $sec = (int) $row['secuencia_actual'];
     if ($sec > (int) $row['secuencia_hasta']) return null;
+    if (!empty($row['vencimiento']) && $row['vencimiento'] < date('Y-m-d')) return null;
     $ncf = $row['tipo'] . str_pad((string) $sec, 8, '0', STR_PAD_LEFT);
     q("UPDATE ncf_secuencias SET secuencia_actual = secuencia_actual + 1 WHERE id = ?", [$row['id']]);
     return $ncf;
@@ -67,6 +74,9 @@ function siguienteNCF(string $tipo): ?string
  */
 function registrarTransaccion(string $tipo, float $monto, array $opts = []): int
 {
+    if (!in_array($tipo, ['ingreso', 'gasto'], true) || $monto <= 0) {
+        throw new InvalidArgumentException('La transacción financiera debe tener un tipo y monto válidos.');
+    }
     $cuentaId = $opts['cuenta_id'] ?? null;
     $id = dbInsert('transacciones', [
         'sucursal_id'     => $opts['sucursal_id'] ?? current_sucursal_id(),
@@ -88,12 +98,38 @@ function registrarTransaccion(string $tipo, float $monto, array $opts = []): int
     return $id;
 }
 
+/**
+ * Cuenta activa preferida por tipo. Prioriza la cuenta de la sucursal y usa
+ * una cuenta global como respaldo.
+ */
+function cuentaFinancieraIdPorTipo(string $tipo, ?int $sucursalId): ?int
+{
+    if (!in_array($tipo, ['efectivo', 'banco', 'otro'], true)) return null;
+    if ($sucursalId !== null) {
+        $id = qVal(
+            "SELECT id FROM cuentas_financieras
+             WHERE tipo = ? AND activo = 1 AND (sucursal_id = ? OR sucursal_id IS NULL)
+             ORDER BY sucursal_id IS NULL, id LIMIT 1",
+            [$tipo, $sucursalId]
+        );
+        return $id !== null ? (int) $id : null;
+    }
+    $id = qVal("SELECT id FROM cuentas_financieras WHERE tipo = ? AND activo = 1 AND sucursal_id IS NULL ORDER BY id LIMIT 1", [$tipo]);
+    return $id !== null ? (int) $id : null;
+}
+
 /** Busca el id de una categoría financiera por nombre (la crea si hace falta). */
 function categoriaFinancieraId(string $tipo, string $nombre): int
 {
-    $id = (int) qVal("SELECT id FROM categorias_financieras WHERE tipo = ? AND nombre = ?", [$tipo, $nombre]);
-    if (!$id) $id = dbInsert('categorias_financieras', ['tipo' => $tipo, 'nombre' => $nombre]);
-    return $id;
+    if (!in_array($tipo, ['ingreso', 'gasto'], true) || trim($nombre) === '') {
+        throw new InvalidArgumentException('La categoría financiera no es válida.');
+    }
+    q(
+        "INSERT INTO categorias_financieras (tipo, nombre) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)",
+        [$tipo, trim($nombre)]
+    );
+    return lastId();
 }
 
 /** Sesión de caja abierta del usuario en la sucursal (o null). */

@@ -15,6 +15,8 @@ if (isPost()) {
         $telefono = trim(post('telefono'));
         if ($nombre === '' || $apellido === '' || $email === '') {
             flash('error', 'Nombre, apellido y correo son obligatorios.');
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'El correo electrónico no es válido.');
         } elseif (qVal("SELECT 1 FROM usuarios WHERE email = ? AND id <> ?", [$email, $uid])) {
             flash('error', 'Ese correo ya está en uso por otro usuario.');
         } else {

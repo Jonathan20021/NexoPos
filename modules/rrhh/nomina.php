@@ -40,8 +40,12 @@ if (isPost()) {
         $sucActiva = current_sucursal_id();
         if ($sucActiva !== null) $sucFiltro = $sucActiva;
         elseif ($sucFiltro > 0) require_sucursal_access($sucFiltro);
-        if ($descripcion === '' || !$desde || !$hasta) {
+        if ($descripcion === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $desde) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hasta)) {
             flash('error', 'Completa descripción y fechas del periodo.');
+            redirect('modules/rrhh/nomina.php');
+        }
+        if ($desde > $hasta) {
+            flash('error', 'La fecha inicial no puede ser posterior a la fecha final.');
             redirect('modules/rrhh/nomina.php');
         }
         $cond = ["estado='activo'"]; $params = [];
@@ -88,8 +92,9 @@ if (isPost()) {
                 if (!$n || $n['estado'] !== 'procesada') throw new RuntimeException('La nómina no se puede pagar.');
                 if (!can_access_sucursal($n['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta nómina.');
                 dbUpdate('nominas', ['estado' => 'pagada'], 'id=?', [$id]);
-                $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE " . ($n['sucursal_id'] ? 'sucursal_id=' . (int) $n['sucursal_id'] . ' AND ' : '') . "tipo='efectivo' AND activo=1 LIMIT 1");
-                registrarTransaccion('gasto', (float) $n['total_neto'], ['sucursal_id' => $n['sucursal_id'], 'cuenta_id' => $cuenta['id'] ?? null, 'categoria_id' => categoriaFinancieraId('gasto', 'Nómina'), 'descripcion' => 'Pago de nómina: ' . $n['descripcion'], 'referencia_tipo' => 'nomina', 'referencia_id' => $id]);
+                if ((float) $n['total_neto'] > 0) {
+                    registrarTransaccion('gasto', (float) $n['total_neto'], ['sucursal_id' => $n['sucursal_id'], 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $n['sucursal_id'] !== null ? (int) $n['sucursal_id'] : null), 'categoria_id' => categoriaFinancieraId('gasto', 'Nómina'), 'descripcion' => 'Pago de nómina: ' . $n['descripcion'], 'referencia_tipo' => 'nomina', 'referencia_id' => $id]);
+                }
             });
             audit('rrhh_nomina', 'pagar', "Nómina pagada #$id", ['tabla' => 'nominas', 'registro_id' => $id]);
             flash('success', 'Nómina marcada como pagada y registrada en finanzas.');
@@ -211,7 +216,7 @@ layout_start('Nómina', 'Procesa la nómina con cálculo automático de TSS (AFP
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
       <form method="post">
         <?= csrf_field() ?><input type="hidden" name="accion" value="procesar">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Procesar nómina</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Procesar nómina</h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
           <div><label class="label">Descripción *</label><input name="descripcion" required class="input" placeholder="Ej. Nómina <?= e(fechaLarga(date('Y-m-d'))) ?>"></div>
           <div class="grid grid-cols-2 gap-4">

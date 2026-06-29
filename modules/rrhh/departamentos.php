@@ -2,6 +2,13 @@
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('rrhh_departamentos.ver');
 
+function puedeGestionarEstructuraSucursal($sucursalId): bool
+{
+    $u = current_user();
+    if (is_super() || $u['sucursal_id'] === null) return true;
+    return $sucursalId !== null && (int) $sucursalId === (int) $u['sucursal_id'];
+}
+
 // ---------- Acciones ----------
 if (isPost()) {
     verify_csrf();
@@ -14,6 +21,13 @@ if (isPost()) {
         $descripcion = trim(post('descripcion'));
         $sucursalId = postInt('sucursal_id') ?: null;
         $activo     = postInt('activo', 1);
+        if (!is_super() && current_user()['sucursal_id'] !== null && $sucursalId === null) {
+            $sucursalId = (int) current_user()['sucursal_id'];
+        }
+        $actual = $id > 0 ? qOne("SELECT sucursal_id FROM departamentos WHERE id=?", [$id]) : null;
+        if (($id > 0 && (!$actual || !puedeGestionarEstructuraSucursal($actual['sucursal_id']))) || !puedeGestionarEstructuraSucursal($sucursalId)) {
+            deny_access();
+        }
 
         if ($nombre === '') {
             flash('error', 'El nombre del departamento es obligatorio.');
@@ -42,11 +56,13 @@ if (isPost()) {
     if ($accion === 'eliminar_dep') {
         require_perm('rrhh_departamentos.eliminar');
         $id = postInt('id');
+        $depEliminar = qOne("SELECT nombre, sucursal_id FROM departamentos WHERE id=?", [$id]);
+        if (!$depEliminar || !puedeGestionarEstructuraSucursal($depEliminar['sucursal_id'])) deny_access();
         $nEmpleados = (int) qVal("SELECT COUNT(*) FROM empleados WHERE departamento_id = ?", [$id]);
         if ($nEmpleados > 0) {
             flash('error', "No se puede eliminar: $nEmpleados empleado(s) pertenecen a este departamento.");
         } else {
-            $nombre = qVal("SELECT nombre FROM departamentos WHERE id = ?", [$id]);
+            $nombre = $depEliminar['nombre'];
             q("DELETE FROM departamentos WHERE id = ?", [$id]);
             audit('rrhh_departamentos', 'eliminar', "Departamento eliminado: $nombre", ['tabla' => 'departamentos', 'registro_id' => $id]);
             flash('success', 'Departamento eliminado.');
@@ -61,9 +77,17 @@ if (isPost()) {
         $nombre        = trim(post('nombre'));
         $salarioBase   = postNum('salario_base');
         $activo        = postInt('activo', 1);
+        $depDestino = $departamentoId ? qOne("SELECT id, sucursal_id FROM departamentos WHERE id=?", [$departamentoId]) : null;
+        $puestoActual = $id > 0 ? qOne("SELECT p.id, d.sucursal_id FROM puestos p LEFT JOIN departamentos d ON d.id=p.departamento_id WHERE p.id=?", [$id]) : null;
+        if (($id > 0 && (!$puestoActual || !puedeGestionarEstructuraSucursal($puestoActual['sucursal_id'])))
+            || ($departamentoId && (!$depDestino || !puedeGestionarEstructuraSucursal($depDestino['sucursal_id'])))) {
+            deny_access();
+        }
 
         if ($nombre === '') {
             flash('error', 'El nombre del puesto es obligatorio.');
+        } elseif ($salarioBase < 0) {
+            flash('error', 'El salario base no puede ser negativo.');
         } else {
             $datos = [
                 'departamento_id' => $departamentoId,
@@ -89,11 +113,13 @@ if (isPost()) {
     if ($accion === 'eliminar_puesto') {
         require_perm('rrhh_departamentos.eliminar');
         $id = postInt('id');
+        $puestoEliminar = qOne("SELECT p.nombre, d.sucursal_id FROM puestos p LEFT JOIN departamentos d ON d.id=p.departamento_id WHERE p.id=?", [$id]);
+        if (!$puestoEliminar || !puedeGestionarEstructuraSucursal($puestoEliminar['sucursal_id'])) deny_access();
         $nEmpleados = (int) qVal("SELECT COUNT(*) FROM empleados WHERE puesto_id = ?", [$id]);
         if ($nEmpleados > 0) {
             flash('error', "No se puede eliminar: $nEmpleados empleado(s) ocupan este puesto.");
         } else {
-            $nombre = qVal("SELECT nombre FROM puestos WHERE id = ?", [$id]);
+            $nombre = $puestoEliminar['nombre'];
             q("DELETE FROM puestos WHERE id = ?", [$id]);
             audit('rrhh_departamentos', 'eliminar', "Puesto eliminado: $nombre", ['tabla' => 'puestos', 'registro_id' => $id]);
             flash('success', 'Puesto eliminado.');
@@ -103,7 +129,10 @@ if (isPost()) {
 }
 
 // ---------- Datos ----------
-$sucursales = qAll("SELECT id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre");
+$sucursales = sucursales_visibles();
+$sidEstructura = current_sucursal_id();
+$scopeEstructura = $sidEstructura === null ? '1=1' : '(d.sucursal_id IS NULL OR d.sucursal_id = ?)';
+$paramsEstructura = $sidEstructura === null ? [] : [$sidEstructura];
 
 $departamentos = qAll(
     "SELECT d.*, su.nombre AS sucursal,
@@ -111,7 +140,9 @@ $departamentos = qAll(
             (SELECT COUNT(*) FROM empleados e WHERE e.departamento_id = d.id) AS empleados
      FROM departamentos d
      LEFT JOIN sucursales su ON su.id = d.sucursal_id
-     ORDER BY d.nombre"
+     WHERE $scopeEstructura
+     ORDER BY d.nombre",
+    $paramsEstructura
 );
 
 $puestos = qAll(
@@ -119,10 +150,13 @@ $puestos = qAll(
             (SELECT COUNT(*) FROM empleados e WHERE e.puesto_id = p.id) AS empleados
      FROM puestos p
      LEFT JOIN departamentos d ON d.id = p.departamento_id
-     ORDER BY p.nombre"
+     WHERE $scopeEstructura
+     ORDER BY p.nombre",
+    $paramsEstructura
 );
 
-$depsParaSelect = qAll("SELECT id, nombre FROM departamentos ORDER BY nombre");
+$depsParaSelect = qAll("SELECT d.id, d.nombre FROM departamentos d WHERE $scopeEstructura ORDER BY d.nombre", $paramsEstructura);
+$defaultSucursal = current_sucursal_id() ?? '';
 
 layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal');
 ?>
@@ -257,8 +291,8 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
 </div>
 
 <!-- Modal Departamento -->
-<div x-data="{open:false, form:{id:0,nombre:'',descripcion:'',sucursal_id:'',activo:1}}"
-     @dep:new.window="form={id:0,nombre:'',descripcion:'',sucursal_id:'',activo:1}; open=true"
+<div x-data="{open:false, form:{id:0,nombre:'',descripcion:'',sucursal_id:<?= e(json_encode((string) $defaultSucursal)) ?>,activo:1}}"
+     @dep:new.window="form={id:0,nombre:'',descripcion:'',sucursal_id:<?= e(json_encode((string) $defaultSucursal)) ?>,activo:1}; open=true"
      @dep:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
@@ -269,7 +303,7 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar departamento' : 'Nuevo departamento'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
           <div>
@@ -283,7 +317,7 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
           <div>
             <label class="label">Sucursal</label>
             <select name="sucursal_id" x-model="form.sucursal_id" class="select">
-              <option value="">Todas</option>
+              <?php if (is_super() || current_user()['sucursal_id'] === null): ?><option value="">Todas</option><?php endif; ?>
               <?php foreach ($sucursales as $s): ?>
                 <option value="<?= (int) $s['id'] ?>"><?= e($s['nombre']) ?></option>
               <?php endforeach; ?>
@@ -316,7 +350,7 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar puesto' : 'Nuevo puesto'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
           <div>

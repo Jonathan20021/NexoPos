@@ -13,14 +13,29 @@ if (isPost()) {
                 if (!$v || $v['estado'] !== 'completada') throw new RuntimeException('La venta no se puede anular.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
                 if (qVal("SELECT 1 FROM devoluciones WHERE venta_id = ? LIMIT 1", [$id])) throw new RuntimeException('La venta tiene devoluciones; no se puede anular.');
-                foreach (qAll("SELECT * FROM venta_detalles WHERE venta_id = ?", [$id]) as $d) {
-                    if ($d['producto_id']) {
+                if ($v['caja_sesion_id'] && qVal("SELECT 1 FROM caja_sesiones WHERE id = ? AND estado = 'cerrada'", [$v['caja_sesion_id']])) {
+                    throw new RuntimeException('La caja de esta venta ya fue cerrada. Registra una devolución para mantener el cuadre.');
+                }
+                foreach (qAll("SELECT vd.*, p.tipo AS producto_tipo FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id WHERE vd.venta_id = ?", [$id]) as $d) {
+                    if ($d['producto_id'] && $d['producto_tipo'] === 'producto') {
                         ajustarStock((int) $d['producto_id'], (int) $v['sucursal_id'], (float) $d['cantidad'], 'entrada', 'venta_anulada', $id, (float) $d['costo_unitario'], 'Anulación venta ' . $v['numero']);
                     }
                 }
-                foreach (qAll("SELECT * FROM transacciones WHERE referencia_tipo='venta' AND referencia_id = ?", [$id]) as $tr) {
-                    if ($tr['cuenta_id']) q("UPDATE cuentas_financieras SET balance = balance - ? WHERE id = ?", [$tr['monto'], $tr['cuenta_id']]);
-                    q("DELETE FROM transacciones WHERE id = ?", [$tr['id']]);
+                $esCredito = (int) qVal(
+                    "SELECT COALESCE(MAX(m.es_credito),0) FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?",
+                    [$id]
+                ) === 1;
+                if ($esCredito) {
+                    $cli = qOne("SELECT id, balance FROM clientes WHERE id = ? FOR UPDATE", [$v['cliente_id']]);
+                    if (!$cli || round((float) $cli['balance'], 2) < round((float) $v['total'], 2)) {
+                        throw new RuntimeException('La venta a crédito ya tiene abonos aplicados. Usa una devolución para corregirla.');
+                    }
+                    q("UPDATE clientes SET balance = balance - ? WHERE id = ?", [$v['total'], $cli['id']]);
+                } else {
+                    foreach (qAll("SELECT * FROM transacciones WHERE referencia_tipo='venta' AND referencia_id = ?", [$id]) as $tr) {
+                        if ($tr['cuenta_id']) q("UPDATE cuentas_financieras SET balance = balance - ? WHERE id = ?", [$tr['monto'], $tr['cuenta_id']]);
+                        q("DELETE FROM transacciones WHERE id = ?", [$tr['id']]);
+                    }
                 }
                 dbUpdate('ventas', ['estado' => 'anulada'], 'id = ?', [$id]);
             });
@@ -114,7 +129,7 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
     <input type="text" name="q" value="<?= e($q) ?>" placeholder="Factura o cliente..." class="input sm:col-span-2">
     <select name="estado" class="select"><option value="">Todos</option><option value="completada" <?= $estado === 'completada' ? 'selected' : '' ?>>Completada</option><option value="anulada" <?= $estado === 'anulada' ? 'selected' : '' ?>>Anulada</option><option value="devuelta" <?= $estado === 'devuelta' ? 'selected' : '' ?>>Devuelta</option></select>
     <input type="date" name="desde" value="<?= e($desde) ?>" class="input">
-    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" class="input"><button class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
+    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" aria-label="Fecha final" class="input"><button aria-label="Aplicar filtros" title="Filtrar" class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
   </form>
   <?php if (!$ventas): ?>
     <?= empty_state('Sin ventas', 'No hay ventas que coincidan con los filtros.', 'receipt') ?>

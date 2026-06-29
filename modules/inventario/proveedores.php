@@ -77,8 +77,8 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
               <td><?= $p['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
-                  <?php if (can('proveedores.editar')): ?><button onclick="<?= jsEvent('prov:edit', ['id'=>$p['id'],'nombre'=>$p['nombre'],'rnc'=>$p['rnc'],'contacto'=>$p['contacto'],'telefono'=>$p['telefono'],'email'=>$p['email'],'direccion'=>$p['direccion'],'activo'=>$p['activo']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
-                  <?php if (can('proveedores.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar «<?= e($p['nombre']) ?>»?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
+                  <?php if (can('proveedores.editar')): ?><button onclick="<?= jsEvent('prov:edit', ['id'=>$p['id'],'nombre'=>$p['nombre'],'rnc'=>$p['rnc'],'contacto'=>$p['contacto'],'telefono'=>$p['telefono'],'email'=>$p['email'],'direccion'=>$p['direccion'],'activo'=>$p['activo']]) ?>" aria-label="Editar proveedor" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
+                  <?php if (can('proveedores.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar «<?= e($p['nombre']) ?>»?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>"><button aria-label="Eliminar proveedor" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
                 </div>
               </td>
             </tr>
@@ -96,7 +96,7 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
     <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
       <form method="post">
         <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="id" :value="form.id">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar proveedor' : 'Nuevo proveedor'"></h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar proveedor' : 'Nuevo proveedor'"></h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2"><label class="label">Nombre / Razón social *</label><input name="nombre" x-model="form.nombre" required class="input"></div>
           <div><label class="label">RNC</label><input name="rnc" x-model="form.rnc" class="input"></div>

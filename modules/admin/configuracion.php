@@ -9,6 +9,11 @@ if (isPost()) {
     $accion = post('accion');
 
     if ($accion === 'guardar_empresa') {
+        $itbisTasa = postNum('itbis_tasa');
+        if ($itbisTasa < 0 || $itbisTasa > 100) {
+            flash('error', 'La tasa de ITBIS debe estar entre 0% y 100%.');
+            redirect('modules/admin/configuracion.php?tab=empresa');
+        }
         $datos = [
             'nombre'         => trim(post('nombre')) ?: 'Mi Empresa',
             'rnc'            => trim(post('rnc')) ?: null,
@@ -16,7 +21,7 @@ if (isPost()) {
             'telefono'       => trim(post('telefono')) ?: null,
             'email'          => trim(post('email')) ?: null,
             'moneda'         => trim(post('moneda')) ?: 'RD$',
-            'itbis_tasa'     => postNum('itbis_tasa'),
+            'itbis_tasa'     => $itbisTasa,
             'mensaje_ticket' => trim(post('mensaje_ticket')) ?: null,
             'logo'           => guardar_imagen('logo', 'logo', setting('logo')),
         ];
@@ -30,11 +35,22 @@ if (isPost()) {
         $id = postInt('id');
         $seq = qOne("SELECT id, tipo FROM ncf_secuencias WHERE id = ?", [$id]);
         if ($seq) {
+            $actual = max(1, postInt('secuencia_actual', 1));
+            $hasta = max(1, postInt('secuencia_hasta', 1));
+            $vencimiento = trim(post('vencimiento')) ?: null;
+            if ($actual > $hasta) {
+                flash('error', 'La secuencia actual no puede superar la secuencia final.');
+                redirect('modules/admin/configuracion.php?tab=ncf');
+            }
+            if ($vencimiento !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $vencimiento)) {
+                flash('error', 'La fecha de vencimiento no es válida.');
+                redirect('modules/admin/configuracion.php?tab=ncf');
+            }
             $datos = [
                 'descripcion'      => trim(post('descripcion')) ?: null,
-                'secuencia_actual' => max(1, postInt('secuencia_actual', 1)),
-                'secuencia_hasta'  => max(1, postInt('secuencia_hasta', 1)),
-                'vencimiento'      => trim(post('vencimiento')) ?: null,
+                'secuencia_actual' => $actual,
+                'secuencia_hasta'  => $hasta,
+                'vencimiento'      => $vencimiento,
                 'activo'           => postInt('activo', 0),
             ];
             dbUpdate('ncf_secuencias', $datos, 'id = ?', [$id]);
@@ -58,9 +74,11 @@ if (isPost()) {
 
     if ($accion === 'crear_metodo') {
         $nombre = trim(post('nombre'));
-        $afecta = postInt('afecta_caja', 0);
+        $afecta = postInt('afecta_caja', 0) ? 1 : 0;
         if ($nombre === '') {
             flash('error', 'El nombre del método de pago es obligatorio.');
+        } elseif (qVal("SELECT 1 FROM metodos_pago WHERE nombre=?", [$nombre])) {
+            flash('error', 'Ya existe un método de pago con ese nombre.');
         } else {
             $nid = dbInsert('metodos_pago', ['nombre' => $nombre, 'afecta_caja' => $afecta, 'activo' => 1]);
             audit('configuracion', 'crear', "Método de pago creado: $nombre", ['tabla' => 'metodos_pago', 'registro_id' => $nid]);
@@ -256,7 +274,7 @@ layout_start('Configuración', 'Ajustes generales del sistema');
         <input type="hidden" name="id" :value="form.id">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800">Editar secuencia <span class="font-mono" x-text="form.tipo"></span></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
           <div>
@@ -302,7 +320,7 @@ layout_start('Configuración', 'Ajustes generales del sistema');
         <input type="hidden" name="accion" value="crear_metodo">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800">Nuevo método de pago</h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
           <div>

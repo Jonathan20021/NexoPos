@@ -117,7 +117,7 @@ layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
       <form method="post">
         <?= csrf_field() ?><input type="hidden" name="accion" value="ajustar">
         <input type="hidden" name="producto_id" :value="form.producto_id"><input type="hidden" name="sucursal_id" :value="form.sucursal_id">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Ajustar stock</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Ajustar stock</h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
         <div class="p-6 space-y-4">
           <div class="rounded-xl bg-slate-50 p-3"><p class="font-semibold text-slate-700" x-text="form.nombre"></p><p class="text-sm text-slate-400" x-text="form.sucursal + ' · Stock actual: ' + form.cantidad"></p></div>
           <div>

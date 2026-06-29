@@ -49,8 +49,16 @@ try {
         $itbisTotal = round($itbisBruto * $factor, 2);
         $total = round(($subtotal - $descuento) + $itbisTotal, 2);
 
+        $metodo = qOne("SELECT id, nombre, afecta_caja, es_credito FROM metodos_pago WHERE id = ? AND activo = 1", [$metodoId]);
+        if (!$metodo) throw new RuntimeException('Método de pago no válido o inactivo.');
+        $cli = qOne("SELECT id, nombre, balance, limite_credito FROM clientes WHERE id = ? AND activo = 1 FOR UPDATE", [$clienteId]);
+        if (!$cli) throw new RuntimeException('Cliente no válido o inactivo.');
+
         // 2) NCF
         $ncf = siguienteNCF($comprobante === 'credito_fiscal' ? 'B01' : 'B02');
+        if ($ncf === null) {
+            throw new RuntimeException('No hay una secuencia NCF activa, vigente y disponible para este comprobante.');
+        }
 
         // 3) Cabecera
         $numero = nextNumero('ventas', 'numero', 'VTA');
@@ -77,26 +85,26 @@ try {
         dbInsert('venta_pagos', ['venta_id' => $ventaId, 'metodo_pago_id' => $metodoId, 'monto' => $total]);
 
         // 6) Crédito vs contado
-        $metodo = qOne("SELECT es_credito FROM metodos_pago WHERE id = ?", [$metodoId]);
-        $esCredito = $metodo && (int) $metodo['es_credito'] === 1;
+        $esCredito = (int) $metodo['es_credito'] === 1;
 
         if ($esCredito) {
             // Venta a crédito: genera cuenta por cobrar, no entra efectivo
             if ($clienteId <= 1) throw new RuntimeException('Selecciona un cliente registrado para una venta a crédito.');
-            $cli = qOne("SELECT nombre, balance, limite_credito FROM clientes WHERE id = ? FOR UPDATE", [$clienteId]);
-            if (!$cli) throw new RuntimeException('Cliente no válido.');
             if ((float) $cli['limite_credito'] > 0 && ((float) $cli['balance'] + $total) > (float) $cli['limite_credito']) {
                 throw new RuntimeException('La venta supera el límite de crédito de ' . $cli['nombre'] . ' (límite ' . money($cli['limite_credito']) . ', balance ' . money($cli['balance']) . ').');
             }
             q("UPDATE clientes SET balance = balance + ? WHERE id = ?", [$total, $clienteId]);
         } else {
             // Contado: registra el ingreso en finanzas
-            $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE sucursal_id = ? AND tipo = 'efectivo' AND activo = 1 LIMIT 1", [$sid]);
-            registrarTransaccion('ingreso', $total, [
-                'sucursal_id' => $sid, 'cuenta_id' => $cuenta['id'] ?? null,
-                'categoria_id' => categoriaFinancieraId('ingreso', 'Ventas'),
-                'descripcion' => 'Venta ' . $numero, 'referencia_tipo' => 'venta', 'referencia_id' => $ventaId,
-            ]);
+            $tipoCuenta = (int) $metodo['afecta_caja'] === 1 ? 'efectivo' : 'banco';
+            $cuentaId = cuentaFinancieraIdPorTipo($tipoCuenta, $sid);
+            if ($total > 0) {
+                registrarTransaccion('ingreso', $total, [
+                    'sucursal_id' => $sid, 'cuenta_id' => $cuentaId,
+                    'categoria_id' => categoriaFinancieraId('ingreso', 'Ventas'),
+                    'descripcion' => 'Venta ' . $numero, 'referencia_tipo' => 'venta', 'referencia_id' => $ventaId,
+                ]);
+            }
         }
 
         return $ventaId;

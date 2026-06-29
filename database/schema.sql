@@ -195,6 +195,7 @@ CREATE TABLE productos (
   KEY idx_p_barras (codigo_barras),
   KEY idx_p_categoria (categoria_id),
   KEY idx_p_nombre (nombre),
+  CONSTRAINT chk_producto_valores_no_negativos CHECK (precio_compra >= 0 AND precio_venta >= 0 AND stock_minimo >= 0),
   CONSTRAINT fk_p_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_marca FOREIGN KEY (marca_id) REFERENCES marcas(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_unidad FOREIGN KEY (unidad_id) REFERENCES unidades(id) ON DELETE SET NULL
@@ -210,6 +211,7 @@ CREATE TABLE inventario_stock (
   PRIMARY KEY (id),
   UNIQUE KEY uq_stock (producto_id, sucursal_id),
   KEY idx_st_sucursal (sucursal_id),
+  CONSTRAINT chk_stock_no_negativo CHECK (cantidad >= 0),
   CONSTRAINT fk_st_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
   CONSTRAINT fk_st_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -272,6 +274,7 @@ CREATE TABLE compra_detalles (
   subtotal DECIMAL(12,2) NOT NULL,
   PRIMARY KEY (id),
   KEY idx_cd_compra (compra_id),
+  CONSTRAINT chk_compra_detalle_valores CHECK (cantidad > 0 AND costo_unitario > 0 AND itbis >= 0 AND subtotal >= 0),
   CONSTRAINT fk_cd_compra FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE CASCADE,
   CONSTRAINT fk_cd_producto FOREIGN KEY (producto_id) REFERENCES productos(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -302,6 +305,7 @@ CREATE TABLE transferencia_detalles (
   cantidad DECIMAL(12,3) NOT NULL,
   PRIMARY KEY (id),
   KEY idx_td_transf (transferencia_id),
+  CONSTRAINT chk_transferencia_cantidad_positiva CHECK (cantidad > 0),
   CONSTRAINT fk_td_transf FOREIGN KEY (transferencia_id) REFERENCES transferencias(id) ON DELETE CASCADE,
   CONSTRAINT fk_td_producto FOREIGN KEY (producto_id) REFERENCES productos(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -323,7 +327,8 @@ CREATE TABLE clientes (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_cliente_codigo (codigo),
-  KEY idx_cli_nombre (nombre)
+  KEY idx_cli_nombre (nombre),
+  CONSTRAINT chk_cliente_credito_no_negativo CHECK (limite_credito >= 0 AND balance >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Abonos / pagos de clientes a crédito (cuentas por cobrar)
@@ -351,7 +356,8 @@ CREATE TABLE metodos_pago (
   afecta_caja TINYINT(1) NOT NULL DEFAULT 1,   -- efectivo afecta el conteo de caja
   es_credito TINYINT(1) NOT NULL DEFAULT 0,    -- venta a crédito (genera cuenta por cobrar)
   activo TINYINT(1) NOT NULL DEFAULT 1,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_metodo_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DROP TABLE IF EXISTS cajas;
@@ -469,6 +475,7 @@ CREATE TABLE venta_detalles (
   PRIMARY KEY (id),
   KEY idx_vd_venta (venta_id),
   KEY idx_vd_producto (producto_id),
+  CONSTRAINT chk_venta_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND costo_unitario >= 0 AND descuento >= 0 AND itbis >= 0 AND subtotal >= 0),
   CONSTRAINT fk_vd_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
   CONSTRAINT fk_vd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -507,6 +514,7 @@ DROP TABLE IF EXISTS devolucion_detalles;
 CREATE TABLE devolucion_detalles (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   devolucion_id INT UNSIGNED NOT NULL,
+  venta_detalle_id INT UNSIGNED NULL,
   producto_id INT UNSIGNED NULL,
   descripcion VARCHAR(180) NOT NULL,
   cantidad DECIMAL(12,3) NOT NULL,
@@ -514,7 +522,10 @@ CREATE TABLE devolucion_detalles (
   subtotal DECIMAL(12,2) NOT NULL,
   PRIMARY KEY (id),
   KEY idx_dd_dev (devolucion_id),
-  CONSTRAINT fk_dd_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(id) ON DELETE CASCADE
+  KEY idx_dd_venta_detalle (venta_detalle_id),
+  CONSTRAINT chk_devolucion_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND subtotal >= 0),
+  CONSTRAINT fk_dd_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(id) ON DELETE CASCADE,
+  CONSTRAINT fk_dd_venta_detalle FOREIGN KEY (venta_detalle_id) REFERENCES venta_detalles(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== RRHH =====================
@@ -664,7 +675,8 @@ CREATE TABLE categorias_financieras (
   tipo ENUM('ingreso','gasto') NOT NULL,
   nombre VARCHAR(100) NOT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cat_fin_tipo_nombre (tipo, nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DROP TABLE IF EXISTS cuentas_financieras;
@@ -697,6 +709,7 @@ CREATE TABLE transacciones (
   KEY idx_tr_sucursal (sucursal_id),
   KEY idx_tr_fecha (fecha),
   KEY idx_tr_tipo (tipo),
+  CONSTRAINT chk_transaccion_monto_positivo CHECK (monto > 0),
   CONSTRAINT fk_tr_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id) ON DELETE SET NULL,
   CONSTRAINT fk_tr_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_financieras(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

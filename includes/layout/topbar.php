@@ -7,7 +7,7 @@ $sucActiva = current_sucursal_id();
 $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
 ?>
 <header class="sticky top-0 z-20 h-16 bg-white/90 backdrop-blur border-b border-slate-200 flex items-center gap-3 px-4 sm:px-6">
-  <button @click="sidebar=true" class="lg:hidden text-slate-500 hover:text-slate-800 -ml-1"><?= icon('menu', 'w-6 h-6') ?></button>
+  <button @click="sidebar=true" aria-label="Abrir menú" title="Abrir menú" class="lg:hidden text-slate-500 hover:text-slate-800 -ml-1 p-2 -my-2"><?= icon('menu', 'w-6 h-6') ?></button>
 
   <!-- Buscador -->
   <form action="<?= e(url('modules/inventario/productos.php')) ?>" method="get" class="hidden sm:flex items-center gap-2 bg-slate-100 rounded-xl px-3.5 h-10 w-72 max-w-full focus-within:ring-2 focus-within:ring-blue-500/20 transition">
@@ -23,7 +23,7 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
         <input type="hidden" name="redir" value="<?= e($redir) ?>">
         <div class="relative">
           <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"><?= icon('store', 'w-4 h-4') ?></span>
-          <select name="s" onchange="this.form.submit()" class="appearance-none bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 h-10 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer">
+          <select name="s" aria-label="Cambiar sucursal" onchange="this.form.submit()" class="appearance-none bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 h-10 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer">
             <?php if (is_super() || $u['sucursal_id'] === null): ?>
               <option value="" <?= $sucActiva === null ? 'selected' : '' ?>>Todas las sucursales</option>
             <?php endif; ?>

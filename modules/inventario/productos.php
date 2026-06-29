@@ -10,9 +10,20 @@ if (isPost()) {
         $id = postInt('id');
         $codigo = trim(post('codigo'));
         $nombre = trim(post('nombre'));
+        $precioCompra = postNum('precio_compra');
         $precioVenta = postNum('precio_venta');
+        $stockMinimo = postNum('stock_minimo');
+        $categoriaId = postInt('categoria_id') ?: null;
+        $marcaId = postInt('marca_id') ?: null;
+        $unidadId = postInt('unidad_id') ?: null;
         if ($codigo === '' || $nombre === '') {
             flash('error', 'Código y nombre son obligatorios.');
+        } elseif ($precioCompra < 0 || $precioVenta < 0 || $stockMinimo < 0) {
+            flash('error', 'Precios y stock mínimo no pueden ser negativos.');
+        } elseif (($categoriaId && !qVal("SELECT 1 FROM categorias WHERE id=?", [$categoriaId]))
+            || ($marcaId && !qVal("SELECT 1 FROM marcas WHERE id=?", [$marcaId]))
+            || ($unidadId && !qVal("SELECT 1 FROM unidades WHERE id=?", [$unidadId]))) {
+            flash('error', 'Categoría, marca o unidad no válidas.');
         } elseif (qVal("SELECT 1 FROM productos WHERE codigo = ? AND id <> ?", [$codigo, $id])) {
             flash('error', 'Ya existe un producto con ese código (SKU).');
         } else {
@@ -21,14 +32,14 @@ if (isPost()) {
                 'codigo_barras' => trim(post('codigo_barras')) ?: null,
                 'nombre' => $nombre,
                 'descripcion' => trim(post('descripcion')) ?: null,
-                'categoria_id' => postInt('categoria_id') ?: null,
-                'marca_id' => postInt('marca_id') ?: null,
-                'unidad_id' => postInt('unidad_id') ?: null,
+                'categoria_id' => $categoriaId,
+                'marca_id' => $marcaId,
+                'unidad_id' => $unidadId,
                 'tipo' => post('tipo') === 'servicio' ? 'servicio' : 'producto',
-                'precio_compra' => postNum('precio_compra'),
+                'precio_compra' => $precioCompra,
                 'precio_venta' => $precioVenta,
                 'itbis_aplica' => postInt('itbis_aplica', 0) ? 1 : 0,
-                'stock_minimo' => postNum('stock_minimo'),
+                'stock_minimo' => $stockMinimo,
                 'activo' => postInt('activo', 0) ? 1 : 0,
                 'imagen' => guardar_imagen('imagen', 'productos', post('imagen_actual') ?: null),
             ];
@@ -57,10 +68,14 @@ if (isPost()) {
         require_perm('productos.eliminar');
         $id = postInt('id');
         $nombre = qVal("SELECT nombre FROM productos WHERE id = ?", [$id]);
-        if (qVal("SELECT 1 FROM venta_detalles WHERE producto_id = ? LIMIT 1", [$id])) {
+        $tieneHistorial = qVal("SELECT 1 FROM venta_detalles WHERE producto_id = ? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM compra_detalles WHERE producto_id = ? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM transferencia_detalles WHERE producto_id = ? LIMIT 1", [$id])
+            || qVal("SELECT 1 FROM movimientos_inventario WHERE producto_id = ? LIMIT 1", [$id]);
+        if ($tieneHistorial) {
             dbUpdate('productos', ['activo' => 0], 'id = ?', [$id]);
-            audit('productos', 'editar', "Producto desactivado (tiene ventas): $nombre", ['tabla' => 'productos', 'registro_id' => $id]);
-            flash('warning', 'El producto tiene ventas registradas; se desactivó en lugar de eliminarlo.');
+            audit('productos', 'editar', "Producto desactivado (tiene historial): $nombre", ['tabla' => 'productos', 'registro_id' => $id]);
+            flash('warning', 'El producto tiene movimientos registrados; se desactivó para conservar el historial.');
         } else {
             q("DELETE FROM productos WHERE id = ?", [$id]);
             audit('productos', 'eliminar', "Producto eliminado: $nombre", ['tabla' => 'productos', 'registro_id' => $id]);
@@ -184,7 +199,7 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
         <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="id" :value="form.id"><input type="hidden" name="imagen_actual" :value="form.imagen||''">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white">
           <h3 class="font-bold text-slate-800" x-text="form.id ? 'Editar producto' : 'Nuevo producto'"></h3>
-          <button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div><label class="label">Código / SKU *</label><input name="codigo" x-model="form.codigo" required class="input"></div>
@@ -205,9 +220,9 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
           <div><label class="label">Marca</label><select name="marca_id" x-model="form.marca_id" class="select"><option value="">— Sin marca —</option><?php foreach ($marcas as $m): ?><option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Unidad</label><select name="unidad_id" x-model="form.unidad_id" class="select"><option value="">— Unidad —</option><?php foreach ($unidades as $u): ?><option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option><?php endforeach; ?></select></div>
           <div><label class="label">Tipo</label><select name="tipo" x-model="form.tipo" class="select"><option value="producto">Producto (controla stock)</option><option value="servicio">Servicio</option></select></div>
-          <div><label class="label">Precio de compra</label><input type="number" step="0.01" name="precio_compra" x-model="form.precio_compra" class="input"></div>
-          <div><label class="label">Precio de venta *</label><input type="number" step="0.01" name="precio_venta" x-model="form.precio_venta" required class="input"></div>
-          <div><label class="label">Stock mínimo</label><input type="number" step="0.001" name="stock_minimo" x-model="form.stock_minimo" class="input"></div>
+          <div><label class="label">Precio de compra</label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input"></div>
+          <div><label class="label">Precio de venta *</label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input"></div>
+          <div><label class="label">Stock mínimo</label><input type="number" step="0.001" min="0" name="stock_minimo" x-model="form.stock_minimo" class="input"></div>
           <div class="flex flex-col justify-end gap-2 pb-1">
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="itbis_aplica" value="0"><input type="checkbox" name="itbis_aplica" value="1" :checked="form.itbis_aplica==1" class="rounded border-slate-300 text-blue-600"> Aplica ITBIS (18%)</label>
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="activo" value="0"><input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600"> Producto activo</label>

@@ -88,7 +88,7 @@ try {
             . '<h1 class="text-xl font-bold text-slate-800">Base de datos no encontrada</h1>'
             . '<p class="text-slate-500 mt-2 text-sm">El sistema aún no está instalado. Ejecuta el instalador para crear la base de datos y los datos iniciales.</p>'
             . '<a href="' . e($instalarUrl) . '" class="inline-flex mt-6 items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-2.5 rounded-xl transition">Ejecutar instalador</a>'
-            . '<p class="text-xs text-slate-400 mt-4">' . e($e->getMessage()) . '</p>'
+            . (APP_ENV === 'production' ? '' : '<p class="text-xs text-slate-400 mt-4">' . e($e->getMessage()) . '</p>')
             . '</div></body></html>';
         exit;
     }

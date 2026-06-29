@@ -168,7 +168,7 @@ endif;
   <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
     <form method="post" @submit="document.getElementById('trfLineas').value=JSON.stringify(lineas)">
       <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="lineas" id="trfLineas">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Nueva transferencia</h3><button type="button" @click="open=false" class="text-slate-400 hover:text-slate-700"><?= icon('x', 'w-5 h-5') ?></button></div>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">Nueva transferencia</h3><button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
       <div class="p-6 space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div><label class="label">Origen *</label><select name="sucursal_origen_id" x-model.number="origen" required class="select"><?php foreach ($sucursales as $s): ?><option value="<?= (int) $s['id'] ?>"><?= e($s['nombre']) ?></option><?php endforeach; ?></select></div>
@@ -183,7 +183,7 @@ endif;
         <div class="border border-slate-200 rounded-xl overflow-hidden">
           <table class="w-full text-sm"><thead class="bg-slate-50"><tr><th class="text-left px-3 py-2 text-xs font-semibold text-slate-400 uppercase">Producto</th><th class="px-2 py-2 text-xs font-semibold text-slate-400 uppercase w-28">Cantidad</th><th class="w-10"></th></tr></thead>
             <tbody>
-              <template x-for="(l,i) in lineas" :key="i"><tr class="border-t border-slate-100"><td class="px-3 py-2 font-medium text-slate-700" x-text="l.nombre"></td><td class="px-2 py-2"><input type="number" step="0.001" min="0" x-model.number="l.cantidad" class="input py-1.5 px-2 text-sm"></td><td class="px-2 py-2"><button type="button" @click="lineas.splice(i,1)" class="text-rose-400 hover:text-rose-600"><?= icon('trash', 'w-4 h-4') ?></button></td></tr></template>
+              <template x-for="(l,i) in lineas" :key="i"><tr class="border-t border-slate-100"><td class="px-3 py-2 font-medium text-slate-700" x-text="l.nombre"></td><td class="px-2 py-2"><input type="number" step="0.001" min="0.001" x-model.number="l.cantidad" aria-label="Cantidad a transferir" class="input py-1.5 px-2 text-sm"></td><td class="px-2 py-2"><button type="button" @click="lineas.splice(i,1)" aria-label="Quitar producto" title="Quitar" class="text-rose-400 hover:text-rose-600 p-2"><?= icon('trash', 'w-4 h-4') ?></button></td></tr></template>
               <tr x-show="lineas.length===0"><td colspan="3" class="text-center text-slate-400 py-6 text-sm">Agrega productos a transferir.</td></tr>
             </tbody>
           </table>
