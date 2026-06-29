@@ -1,9 +1,15 @@
 <?php
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_login();
+if (!isPost()) {
+    http_response_code(405);
+    header('Allow: POST');
+    exit('Método no permitido.');
+}
+verify_csrf();
 
 $u = current_user();
-$s = $_GET['s'] ?? '';
+$s = post('s');
 
 // Solo super admin o usuarios "todas las sucursales" pueden cambiar libremente.
 if (is_super() || $u['sucursal_id'] === null) {
@@ -13,9 +19,6 @@ if (is_super() || $u['sucursal_id'] === null) {
 }
 
 // Redirección segura (solo rutas locales)
-$redir = $_GET['redir'] ?? '';
-if (!is_string($redir) || $redir === '' || $redir[0] !== '/' || strpos($redir, '//') === 0) {
-    $redir = url('modules/dashboard/index.php');
-}
+$redir = local_redirect_target(post('redir'));
 header('Location: ' . $redir);
 exit;

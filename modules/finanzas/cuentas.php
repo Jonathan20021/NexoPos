@@ -22,6 +22,14 @@ if (isPost()) {
 
         // Validar que la sucursal exista (si se indicó una)
         $sucOk = $sucId === null || qVal("SELECT 1 FROM sucursales WHERE id = ?", [$sucId]);
+        $orig = $id > 0 ? qOne("SELECT id, sucursal_id FROM cuentas_financieras WHERE id = ?", [$id]) : null;
+
+        if ($id > 0 && (!$orig || !can_access_sucursal($orig['sucursal_id']))) {
+            deny_access();
+        }
+        if (!can_access_sucursal($sucId)) {
+            deny_access();
+        }
 
         if ($nombre === '') {
             flash('error', 'El nombre de la cuenta es obligatorio.');
@@ -63,11 +71,15 @@ if (isPost()) {
     if ($accion === 'eliminar') {
         require_perm('finanzas.eliminar');
         $id = postInt('id');
+        $cuenta = qOne("SELECT nombre, sucursal_id FROM cuentas_financieras WHERE id = ?", [$id]);
+        if (!$cuenta || !can_access_sucursal($cuenta['sucursal_id'])) {
+            deny_access();
+        }
         $enUso = (int) qVal("SELECT COUNT(*) FROM transacciones WHERE cuenta_id = ?", [$id]);
         if ($enUso > 0) {
             flash('error', "No se puede eliminar: la cuenta tiene $enUso transacción(es) asociada(s). Desactívala en su lugar.");
         } else {
-            $nombre = qVal("SELECT nombre FROM cuentas_financieras WHERE id = ?", [$id]);
+            $nombre = $cuenta['nombre'];
             q("DELETE FROM cuentas_financieras WHERE id = ?", [$id]);
             audit('finanzas', 'eliminar', "Cuenta financiera eliminada: $nombre", ['tabla' => 'cuentas_financieras', 'registro_id' => $id]);
             flash('success', 'Cuenta eliminada.');
@@ -80,8 +92,10 @@ if (isPost()) {
  *  Listado
  * ============================================================ */
 $q = trim(get('q'));
-$where = $q !== '' ? "WHERE cf.nombre LIKE ?" : '';
-$params = $q !== '' ? ['%' . $q . '%'] : [];
+[$scopeCuenta, $scopeCuentaParams] = sucursalScope('cf.sucursal_id');
+$params = $scopeCuentaParams;
+$where = "WHERE $scopeCuenta";
+if ($q !== '') { $where .= " AND cf.nombre LIKE ?"; $params[] = '%' . $q . '%'; }
 
 $cuentas = qAll(
     "SELECT cf.*, su.nombre AS sucursal,
@@ -93,7 +107,7 @@ $cuentas = qAll(
     $params
 );
 
-$balanceTotal = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM cuentas_financieras WHERE activo = 1");
+$balanceTotal = (float) qVal("SELECT COALESCE(SUM(cf.balance),0) FROM cuentas_financieras cf WHERE cf.activo = 1 AND $scopeCuenta", $scopeCuentaParams);
 $sucursales = sucursales_visibles();
 
 $acciones = can('finanzas.crear') ? btn_nuevo('cta:new', 'Nueva cuenta') : '';
@@ -203,7 +217,7 @@ layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu nego
             <div>
               <label class="label">Sucursal</label>
               <select name="sucursal_id" x-model="form.sucursal_id" class="select">
-                <option value="">Todas</option>
+                <?php if (is_super() || current_user()['sucursal_id'] === null): ?><option value="">Todas</option><?php endif; ?>
                 <?php foreach ($sucursales as $s): ?>
                   <option value="<?= (int) $s['id'] ?>"><?= e($s['nombre']) ?></option>
                 <?php endforeach; ?>

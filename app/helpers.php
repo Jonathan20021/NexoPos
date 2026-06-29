@@ -178,8 +178,9 @@ function csrf_field(): string
 function verify_csrf(): void
 {
     $t = $_POST['_csrf'] ?? '';
-    if (!hash_equals($_SESSION['csrf'] ?? '', $t)) {
-        http_response_code(419);
+    $sessionToken = $_SESSION['csrf'] ?? '';
+    if (!is_string($t) || $t === '' || !is_string($sessionToken) || $sessionToken === '' || !hash_equals($sessionToken, $t)) {
+        http_response_code(403);
         die('Token de seguridad inválido. Recarga la página e intenta de nuevo.');
     }
 }
@@ -220,9 +221,26 @@ function redirect(string $path): void
     exit;
 }
 
+/**
+ * Acepta solo destinos locales absolutos. Evita redirecciones externas por
+ * barras invertidas, URLs relativas al protocolo o caracteres de control.
+ */
+function local_redirect_target($target, ?string $fallback = null): string
+{
+    $fallback ??= url('modules/dashboard/index.php');
+    if (!is_string($target) || $target === '' || $target[0] !== '/') {
+        return $fallback;
+    }
+    $decoded = rawurldecode($target);
+    if (str_starts_with($decoded, '//') || str_contains($decoded, '\\') || preg_match('/[\x00-\x1F\x7F]/', $decoded)) {
+        return $fallback;
+    }
+    return $target;
+}
+
 function back(): void
 {
-    $ref = $_SERVER['HTTP_REFERER'] ?? url('modules/dashboard/index.php');
+    $ref = local_redirect_target($_SERVER['HTTP_REFERER'] ?? '');
     header('Location: ' . $ref);
     exit;
 }

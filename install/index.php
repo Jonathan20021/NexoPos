@@ -349,8 +349,20 @@ try {
     $yaInstalado = false;
 }
 
+// Una instalación existente solo puede reemplazarla un superadministrador
+// autenticado. El primer despliegue (sin tablas) sigue disponible públicamente.
+if (!$cli && $yaInstalado && !is_super()) {
+    $bloqueado = true;
+    http_response_code(403);
+    $errores[] = 'La reinstalación requiere iniciar sesión como superadministrador.';
+}
+
 $produccion = $cli ? in_array('--produccion', $argv ?? [], true) : (post('produccion') === 'si');
 $debeInstalar = $cli || (isPost() && post('confirmar') === 'si');
+
+if (!$cli && isPost()) {
+    verify_csrf();
+}
 
 if ($bloqueado && !$cli) {
     $errores[] = 'El sistema ya está instalado. Por seguridad, elimina la carpeta /install del servidor.';
@@ -385,6 +397,7 @@ if ($cli) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Instalador · <?= e(APP_NAME) ?></title>
+<link rel="icon" href="<?= e(asset('favicon.svg')) ?>" type="image/svg+xml">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -428,7 +441,9 @@ if ($cli) {
       <div class="rounded-xl bg-rose-50 border border-rose-200 p-3 mb-4 text-sm text-rose-700">⚠ <?= e($er) ?></div>
     <?php endforeach; ?>
     <p class="text-slate-600 text-sm mb-5">Este asistente creará la base de datos <code class="bg-slate-100 px-1.5 py-0.5 rounded">«<?= e(DB_NAME) ?>»</code>, todas las tablas y datos de ejemplo (sucursales, productos, empleados y ventas de demostración).</p>
+    <?php if (!$bloqueado): ?>
     <form method="post" class="space-y-4">
+      <?= csrf_field() ?>
       <input type="hidden" name="confirmar" value="si">
       <label class="flex items-start gap-2 text-sm text-slate-700 bg-blue-50 border border-blue-200 rounded-xl p-3">
         <input type="checkbox" name="produccion" value="si" class="mt-0.5">
@@ -443,6 +458,7 @@ if ($cli) {
       <?php endif; ?>
       <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5 py-3 rounded-xl transition shadow-lg shadow-blue-600/30">Instalar ahora</button>
     </form>
+    <?php endif; ?>
   <?php endif; ?>
   <p class="text-xs text-slate-400 mt-6 text-center">PHP <?= PHP_VERSION ?> · <?= e(DB_HOST) ?></p>
 </div>

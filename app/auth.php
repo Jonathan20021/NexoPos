@@ -33,6 +33,34 @@ function set_sucursal_activa($id): void
     $_SESSION['sucursal_activa'] = $id === '' ? '' : (int) $id;
 }
 
+/** Indica si el usuario actual puede operar datos de una sucursal concreta. */
+function can_access_sucursal($sucursalId): bool
+{
+    $u = current_user();
+    if (!$u) return false;
+    if (is_super() || $u['sucursal_id'] === null) {
+        return $sucursalId === null || (int) $sucursalId > 0;
+    }
+    if ($sucursalId === null || (int) $sucursalId <= 0) return false;
+    return (int) $u['sucursal_id'] === (int) $sucursalId;
+}
+
+function deny_access(): void
+{
+    http_response_code(403);
+    require __DIR__ . '/../modules/auth/403.php';
+    exit;
+}
+
+/** Detiene una lectura directa que intente salir del alcance de sucursal. */
+function require_sucursal_access($sucursalId): void
+{
+    require_login();
+    if (!can_access_sucursal($sucursalId)) {
+        deny_access();
+    }
+}
+
 function can(string $perm): bool
 {
     if (is_super()) return true;

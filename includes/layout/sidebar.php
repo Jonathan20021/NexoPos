@@ -56,7 +56,10 @@ $lowStock = (int) qVal(
         <p class="text-sm font-semibold text-slate-700 truncate"><?= e(($u['nombre'] ?? '') . ' ' . ($u['apellido'] ?? '')) ?></p>
         <p class="text-xs text-slate-400 truncate"><?= e($u['rol_nombre'] ?? '') ?></p>
       </div>
-      <a href="<?= e(url('modules/auth/logout.php')) ?>" title="Cerrar sesión" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"><?= icon('logout', 'w-[18px] h-[18px]') ?></a>
+      <form method="post" action="<?= e(url('modules/auth/logout.php')) ?>">
+        <?= csrf_field() ?>
+        <button type="submit" title="Cerrar sesión" class="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"><?= icon('logout', 'w-[18px] h-[18px]') ?></button>
+      </form>
     </div>
   </div>
 </aside>

@@ -28,7 +28,9 @@ if (isPost()) {
 
         // Validaciones
         $catOk = $catId > 0 && qVal("SELECT 1 FROM categorias_financieras WHERE id = ? AND tipo = ?", [$catId, $tipo]);
-        $cuentaOk = $cuentaId === 0 || qVal("SELECT 1 FROM cuentas_financieras WHERE id = ?", [$cuentaId]);
+        $cuentaSel = $cuentaId > 0 ? qOne("SELECT id, sucursal_id FROM cuentas_financieras WHERE id = ?", [$cuentaId]) : null;
+        $cuentaOk = $cuentaId === 0 || ($cuentaSel && can_access_sucursal($cuentaSel['sucursal_id']));
+        if ($cuentaSel && $sucId === null) $sucId = (int) $cuentaSel['sucursal_id'];
 
         if ($monto <= 0) {
             flash('error', 'El monto debe ser mayor que cero.');
@@ -48,6 +50,7 @@ if (isPost()) {
                     flash('error', 'Solo se pueden editar los movimientos manuales.');
                     redirect('modules/finanzas/index.php');
                 }
+                require_sucursal_access($orig['sucursal_id']);
                 tx(function () use ($orig, $id, $tipo, $catIdDb, $cuentaIdDb, $monto, $desc, $fecha) {
                     // 1) Revertir el efecto del movimiento anterior en su cuenta (si tenía)
                     if (!empty($orig['cuenta_id'])) {
@@ -100,6 +103,7 @@ if (isPost()) {
         } elseif ($t['referencia_tipo'] !== 'manual') {
             flash('error', 'Solo se pueden eliminar los movimientos manuales.');
         } else {
+            require_sucursal_access($t['sucursal_id']);
             tx(function () use ($t, $id) {
                 // Revertir el balance de la cuenta: ingreso resta, gasto suma
                 if (!empty($t['cuenta_id'])) {
@@ -162,7 +166,8 @@ if (export_solicitado()) {
 
 /* ---------- Catálogos para el modal ---------- */
 $catsFin = qAll("SELECT id, tipo, nombre FROM categorias_financieras WHERE activo = 1 ORDER BY tipo, nombre");
-$cuentas = qAll("SELECT id, nombre, tipo FROM cuentas_financieras WHERE activo = 1 ORDER BY nombre");
+[$scopeCuenta, $paramsCuenta] = sucursalScope('sucursal_id');
+$cuentas = qAll("SELECT id, nombre, tipo FROM cuentas_financieras WHERE activo = 1 AND $scopeCuenta ORDER BY nombre", $paramsCuenta);
 
 // JSON para el filtrado por tipo en el modal (Alpine)
 $catsJson = array_map(fn($c) => ['id' => (int) $c['id'], 'tipo' => $c['tipo'], 'nombre' => $c['nombre']], $catsFin);

@@ -33,6 +33,12 @@ if (isPost()) {
         $cuenta        = trim(post('cuenta_bancaria'));
         $estado        = in_array(post('estado'), $estados, true) ? post('estado') : 'activo';
 
+        if ($id > 0) {
+            $sucActual = qVal("SELECT sucursal_id FROM empleados WHERE id = ?", [$id]);
+            if (!can_access_sucursal($sucActual)) deny_access();
+        }
+        if (!can_access_sucursal($sucursalId)) deny_access();
+
         if ($nombre === '' || $apellido === '' || $cedula === '') {
             flash('error', 'Nombre, apellido y cédula son obligatorios.');
         } elseif ($fechaIngreso === '') {
@@ -79,7 +85,9 @@ if (isPost()) {
     if ($accion === 'eliminar') {
         require_perm('rrhh_empleados.eliminar');
         $id = postInt('id');
-        $nombre = qVal("SELECT CONCAT(nombre,' ',apellido) FROM empleados WHERE id = ?", [$id]);
+        $empEliminar = qOne("SELECT CONCAT(nombre,' ',apellido) AS nombre, sucursal_id FROM empleados WHERE id = ?", [$id]);
+        if (!$empEliminar || !can_access_sucursal($empEliminar['sucursal_id'])) deny_access();
+        $nombre = $empEliminar['nombre'];
         q("DELETE FROM empleados WHERE id = ?", [$id]);
         audit('rrhh_empleados', 'eliminar', "Empleado eliminado: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
         flash('success', 'Empleado eliminado.');
@@ -88,7 +96,7 @@ if (isPost()) {
 }
 
 // ---------- Catálogos para selects ----------
-$sucursales    = qAll("SELECT id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre");
+$sucursales    = sucursales_visibles();
 $departamentos = qAll("SELECT id, nombre FROM departamentos WHERE activo = 1 ORDER BY nombre");
 $puestos       = qAll("SELECT id, nombre, departamento_id, salario_base FROM puestos WHERE activo = 1 ORDER BY nombre");
 $puestosSalario = [];
@@ -223,7 +231,7 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
 <!-- Modal crear/editar -->
 <div x-data="{
         open:false,
-        salarios: <?= json_encode($puestosSalario, JSON_UNESCAPED_UNICODE) ?>,
+        salarios: <?= e(json_encode($puestosSalario, JSON_UNESCAPED_UNICODE)) ?>,
         form:{id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'},
         sugerirSalario(){ const s = this.salarios[this.form.puesto_id]; if (s && (!this.form.salario || parseFloat(this.form.salario) === 0)) this.form.salario = s; }
      }"

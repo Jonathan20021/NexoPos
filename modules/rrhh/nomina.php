@@ -37,6 +37,9 @@ if (isPost()) {
         $tipo = in_array(post('tipo'), ['mensual', 'quincenal', 'semanal'], true) ? post('tipo') : 'mensual';
         $desde = post('fecha_desde'); $hasta = post('fecha_hasta');
         $sucFiltro = postInt('sucursal_id');
+        $sucActiva = current_sucursal_id();
+        if ($sucActiva !== null) $sucFiltro = $sucActiva;
+        elseif ($sucFiltro > 0) require_sucursal_access($sucFiltro);
         if ($descripcion === '' || !$desde || !$hasta) {
             flash('error', 'Completa descripción y fechas del periodo.');
             redirect('modules/rrhh/nomina.php');
@@ -83,6 +86,7 @@ if (isPost()) {
             tx(function () use ($id) {
                 $n = qOne("SELECT * FROM nominas WHERE id=? FOR UPDATE", [$id]);
                 if (!$n || $n['estado'] !== 'procesada') throw new RuntimeException('La nómina no se puede pagar.');
+                if (!can_access_sucursal($n['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta nómina.');
                 dbUpdate('nominas', ['estado' => 'pagada'], 'id=?', [$id]);
                 $cuenta = qOne("SELECT id FROM cuentas_financieras WHERE " . ($n['sucursal_id'] ? 'sucursal_id=' . (int) $n['sucursal_id'] . ' AND ' : '') . "tipo='efectivo' AND activo=1 LIMIT 1");
                 registrarTransaccion('gasto', (float) $n['total_neto'], ['sucursal_id' => $n['sucursal_id'], 'cuenta_id' => $cuenta['id'] ?? null, 'categoria_id' => categoriaFinancieraId('gasto', 'Nómina'), 'descripcion' => 'Pago de nómina: ' . $n['descripcion'], 'referencia_tipo' => 'nomina', 'referencia_id' => $id]);
@@ -96,7 +100,8 @@ if (isPost()) {
     if ($accion === 'eliminar') {
         require_perm('rrhh_nomina.procesar');
         $id = postInt('id');
-        $n = qOne("SELECT estado, descripcion FROM nominas WHERE id=?", [$id]);
+        $n = qOne("SELECT estado, descripcion, sucursal_id FROM nominas WHERE id=?", [$id]);
+        if ($n && !can_access_sucursal($n['sucursal_id'])) deny_access();
         if ($n && $n['estado'] !== 'pagada') {
             q("DELETE FROM nominas WHERE id=?", [$id]);
             audit('rrhh_nomina', 'eliminar', "Nómina eliminada: " . ($n['descripcion'] ?? ''), ['tabla' => 'nominas', 'registro_id' => $id]);
@@ -113,6 +118,7 @@ $verId = (int) get('ver');
 if ($verId) {
     $n = qOne("SELECT n.*, s.nombre AS sucursal, u.nombre AS usuario FROM nominas n LEFT JOIN sucursales s ON s.id=n.sucursal_id LEFT JOIN usuarios u ON u.id=n.usuario_id WHERE n.id=?", [$verId]);
     if (!$n) { flash('error', 'Nómina no encontrada.'); redirect('modules/rrhh/nomina.php'); }
+    require_sucursal_access($n['sucursal_id']);
     $det = qAll("SELECT nd.*, e.nombre, e.apellido, e.cedula, p.nombre AS puesto FROM nomina_detalles nd JOIN empleados e ON e.id=nd.empleado_id LEFT JOIN puestos p ON p.id=e.puesto_id WHERE nd.nomina_id=? ORDER BY e.nombre", [$verId]);
     if (export_solicitado()) {
         export_tabla('nomina_' . $n['id'], ['Empleado', 'Cédula', 'Puesto', 'Salario', 'AFP', 'SFS', 'ISR', 'Deducciones', 'Neto'],
@@ -158,7 +164,8 @@ if ($verId) {
 }
 
 // ----- Listado -----
-$nominas = qAll("SELECT n.*, s.nombre AS sucursal, (SELECT COUNT(*) FROM nomina_detalles WHERE nomina_id=n.id) AS empleados FROM nominas n LEFT JOIN sucursales s ON s.id=n.sucursal_id ORDER BY n.id DESC LIMIT 60");
+[$scopeNomina, $paramsNomina] = sucursalScope('n.sucursal_id');
+$nominas = qAll("SELECT n.*, s.nombre AS sucursal, (SELECT COUNT(*) FROM nomina_detalles WHERE nomina_id=n.id) AS empleados FROM nominas n LEFT JOIN sucursales s ON s.id=n.sucursal_id WHERE $scopeNomina ORDER BY n.id DESC LIMIT 60", $paramsNomina);
 $sucursales = sucursales_visibles();
 
 $acciones = can('rrhh_nomina.procesar') ? '<button onclick="' . jsEvent('nom:new') . '" class="btn btn-primary">' . icon('plus', 'w-4 h-4') . ' Procesar nómina</button>' : '';

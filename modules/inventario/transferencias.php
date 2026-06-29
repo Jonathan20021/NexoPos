@@ -16,6 +16,11 @@ if (isPost()) {
             flash('error', 'Selecciona origen y destino distintos y agrega productos.');
             redirect('modules/inventario/transferencias.php');
         }
+        require_sucursal_access($origen);
+        if (!qVal("SELECT 1 FROM sucursales WHERE id=? AND activo=1", [$destino])) {
+            flash('error', 'La sucursal de destino no es válida.');
+            redirect('modules/inventario/transferencias.php');
+        }
         try {
             $tid = tx(function () use ($origen, $destino, $fecha, $lineas) {
                 $det = [];
@@ -52,6 +57,7 @@ if (isPost()) {
             tx(function () use ($id) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('La transferencia no se puede recibir.');
+                if (!can_access_sucursal($t['sucursal_destino_id'])) throw new RuntimeException('Solo la sucursal de destino puede recibir esta transferencia.');
                 foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$id]) as $d) {
                     ajustarStock((int) $d['producto_id'], (int) $t['sucursal_destino_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia', $id, 0, 'Transferencia ' . $t['numero'] . ' (entrada)');
                 }
@@ -70,6 +76,7 @@ if (isPost()) {
             tx(function () use ($id) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('Solo se pueden anular transferencias enviadas (no recibidas).');
+                if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede anular esta transferencia.');
                 foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$id]) as $d) {
                     ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia_anulada', $id, 0, 'Anulación transferencia ' . $t['numero']);
                 }
@@ -87,6 +94,9 @@ $verId = (int) get('ver');
 if ($verId) {
     $t = qOne("SELECT t.*, so.nombre AS origen, sd.nombre AS destino, u.nombre AS usuario FROM transferencias t JOIN sucursales so ON so.id=t.sucursal_origen_id JOIN sucursales sd ON sd.id=t.sucursal_destino_id LEFT JOIN usuarios u ON u.id=t.usuario_id WHERE t.id=?", [$verId]);
     if (!$t) { flash('error', 'Transferencia no encontrada.'); redirect('modules/inventario/transferencias.php'); }
+    if (!can_access_sucursal($t['sucursal_origen_id']) && !can_access_sucursal($t['sucursal_destino_id'])) {
+        deny_access();
+    }
     $det = qAll("SELECT td.*, p.nombre AS producto, p.codigo FROM transferencia_detalles td JOIN productos p ON p.id=td.producto_id WHERE td.transferencia_id=?", [$verId]);
     layout_start('Transferencia ' . e($t['numero']), 'Detalle', '<a href="' . url('modules/inventario/transferencias.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>');
     ?>
@@ -137,10 +147,10 @@ endif;
               <td>
                 <div class="flex items-center justify-end gap-1">
                   <a href="?ver=<?= (int) $t['id'] ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Ver"><?= icon('eye', 'w-4 h-4') ?></a>
-                  <?php if (can('transferencias.recibir') && $t['estado'] === 'enviada'): ?>
+                  <?php if (can('transferencias.recibir') && can_access_sucursal($t['sucursal_destino_id']) && $t['estado'] === 'enviada'): ?>
                     <form method="post" class="inline" onsubmit="return confirm('¿Confirmar recepción? Se agregará el stock al destino.')"><?= csrf_field() ?><input type="hidden" name="accion" value="recibir"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50" title="Recibir"><?= icon('check', 'w-4 h-4') ?></button></form>
                   <?php endif; ?>
-                  <?php if (can('transferencias.anular') && $t['estado'] === 'enviada'): ?>
+                  <?php if (can('transferencias.anular') && can_access_sucursal($t['sucursal_origen_id']) && $t['estado'] === 'enviada'): ?>
                     <form method="post" class="inline" onsubmit="return confirm('¿Anular la transferencia? El stock volverá al origen.')"><?= csrf_field() ?><input type="hidden" name="accion" value="anular"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Anular"><?= icon('x', 'w-4 h-4') ?></button></form>
                   <?php endif; ?>
                 </div>

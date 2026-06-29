@@ -11,6 +11,7 @@ if (isPost()) {
             tx(function () use ($id) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$id]);
                 if (!$v || $v['estado'] !== 'completada') throw new RuntimeException('La venta no se puede anular.');
+                if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
                 if (qVal("SELECT 1 FROM devoluciones WHERE venta_id = ? LIMIT 1", [$id])) throw new RuntimeException('La venta tiene devoluciones; no se puede anular.');
                 foreach (qAll("SELECT * FROM venta_detalles WHERE venta_id = ?", [$id]) as $d) {
                     if ($d['producto_id']) {
@@ -37,6 +38,7 @@ $verId = (int) get('ver');
 if ($verId) {
     $v = qOne("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor, u.apellido AS vend_ape FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE v.id=?", [$verId]);
     if (!$v) { flash('error', 'Venta no encontrada.'); redirect('modules/pos/ventas.php'); }
+    require_sucursal_access($v['sucursal_id']);
     $det = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$verId]);
     $pagos = qAll("SELECT vp.*, m.nombre AS metodo FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?", [$verId]);
     layout_start('Venta ' . e($v['numero']), 'Detalle de la venta', '<a href="' . url('modules/pos/ventas.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a><a href="' . url('modules/pos/ticket.php?id=' . $verId . '&pdf=1') . '" target="_blank" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Factura PDF</a><a href="' . url('modules/pos/ticket.php?id=' . $verId) . '" target="_blank" class="btn btn-primary">' . icon('print', 'w-4 h-4') . ' Ticket</a>');

@@ -8,7 +8,8 @@ if (isPost()) {
 
     if ($accion === 'buscar') {
         $numero = trim(post('numero'));
-        $v = qOne("SELECT id FROM ventas WHERE numero = ? AND estado='completada'", [$numero]);
+        [$scopeVenta, $scopeParams] = sucursalScope('sucursal_id');
+        $v = qOne("SELECT id FROM ventas WHERE numero = ? AND estado='completada' AND $scopeVenta", array_merge([$numero], $scopeParams));
         if ($v) redirect('modules/pos/devoluciones.php?venta_id=' . (int) $v['id']);
         flash('error', 'No se encontró una venta completada con ese número.');
         redirect('modules/pos/devoluciones.php');
@@ -23,6 +24,7 @@ if (isPost()) {
             $devId = tx(function () use ($ventaId, $motivo, $ret) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$ventaId]);
                 if (!$v || $v['estado'] === 'anulada') throw new RuntimeException('Venta no válida.');
+                if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
                 $totalDev = 0; $lineas = []; $totVendido = 0; $totDevueltoNuevo = 0;
                 $detalles = qAll("SELECT * FROM venta_detalles WHERE venta_id = ?", [$ventaId]);
                 foreach ($detalles as $d) {
@@ -65,6 +67,7 @@ $ventaId = (int) get('venta_id');
 if ($ventaId && can('devoluciones.crear')) {
     $v = qOne("SELECT v.*, cl.nombre AS cliente, su.nombre AS sucursal FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN sucursales su ON su.id=v.sucursal_id WHERE v.id=?", [$ventaId]);
     if (!$v) { flash('error', 'Venta no encontrada.'); redirect('modules/pos/devoluciones.php'); }
+    require_sucursal_access($v['sucursal_id']);
     $detalles = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$ventaId]);
     layout_start('Nueva devolución', 'Venta ' . e($v['numero']) . ' · ' . e($v['cliente'] ?: 'Cliente Genérico'), '<a href="' . url('modules/pos/devoluciones.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Cancelar</a>');
     ?>

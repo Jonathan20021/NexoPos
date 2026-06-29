@@ -40,7 +40,7 @@ try {
             $subtotal   += $base;
             $itbisBruto += $itbis;
             $costoTotal += (float) $p['precio_compra'] * $cant;
-            $lineas[] = ['pid' => $pid, 'nombre' => $p['nombre'], 'cant' => $cant, 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis];
+            $lineas[] = ['pid' => $pid, 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant, 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis];
         }
         if (!$lineas) throw new RuntimeException('No hay líneas válidas en la venta.');
 
@@ -68,7 +68,7 @@ try {
                 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'costo_unitario' => $l['costo'],
                 'descuento' => 0, 'itbis' => round($l['itbis'] * $factor, 2), 'subtotal' => $l['base'],
             ]);
-            if (true) { // producto: descuenta stock (servicios no llegan aquí desde el POS)
+            if ($l['tipo'] === 'producto') {
                 ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], 'Venta ' . $numero);
             }
         }

@@ -7,6 +7,7 @@ $v = qOne("SELECT v.*, su.nombre AS sucursal, su.direccion AS suc_dir, su.telefo
            FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id
            WHERE v.id=?", [$id]);
 if (!$v) { http_response_code(404); die('Venta no encontrada'); }
+require_sucursal_access($v['sucursal_id']);
 $det = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$id]);
 $pagos = qAll("SELECT vp.*, m.nombre AS metodo FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?", [$id]);
 $emp = $GLOBALS['empresa'];

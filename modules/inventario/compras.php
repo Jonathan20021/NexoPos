@@ -12,6 +12,7 @@ if (isPost()) {
         require_perm('compras.crear');
         $proveedorId = postInt('proveedor_id') ?: null;
         $sucursalId  = postInt('sucursal_id');
+        require_sucursal_access($sucursalId);
         $fecha       = post('fecha') ?: date('Y-m-d');
         $lineas      = json_decode(post('lineas', '[]'), true);
         if (!$sucursalId || !is_array($lineas) || count($lineas) === 0) {
@@ -65,6 +66,7 @@ if (isPost()) {
             tx(function () use ($id) {
                 $c = qOne("SELECT * FROM compras WHERE id = ? FOR UPDATE", [$id]);
                 if (!$c || $c['estado'] !== 'recibida') throw new RuntimeException('La compra no se puede anular.');
+                if (!can_access_sucursal($c['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta compra.');
                 foreach (qAll("SELECT * FROM compra_detalles WHERE compra_id = ?", [$id]) as $d) {
                     if (stockActual((int) $d['producto_id'], (int) $c['sucursal_id']) < $d['cantidad']) {
                         throw new RuntimeException('No se puede anular: ya se vendió parte de la mercancía.');
@@ -94,6 +96,7 @@ $verId = (int) get('ver');
 if ($verId) {
     $compra = qOne("SELECT c.*, p.nombre AS proveedor, s.nombre AS sucursal, u.nombre AS usuario FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id LEFT JOIN usuarios u ON u.id=c.usuario_id WHERE c.id=?", [$verId]);
     if (!$compra) { flash('error', 'Compra no encontrada.'); redirect('modules/inventario/compras.php'); }
+    require_sucursal_access($compra['sucursal_id']);
     $detalles = qAll("SELECT cd.*, pr.nombre AS producto, pr.codigo FROM compra_detalles cd JOIN productos pr ON pr.id=cd.producto_id WHERE cd.compra_id=?", [$verId]);
     layout_start('Compra ' . e($compra['numero']), 'Detalle de la compra', '<a href="' . url('modules/inventario/compras.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>');
     ?>

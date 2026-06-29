@@ -11,6 +11,7 @@ if (isPost()) {
         $modo = post('modo');
         $cantidad = postNum('cantidad');
         $motivo = trim(post('motivo'));
+        require_sucursal_access($suc);
         if ($pid <= 0 || $suc <= 0 || $motivo === '') {
             flash('error', 'Completa todos los campos del ajuste.');
         } else {

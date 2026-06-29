@@ -18,7 +18,8 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
   <div class="flex items-center gap-2 sm:gap-3 ml-auto">
     <!-- Selector de sucursal -->
     <?php if ($puedeCambiarSuc): ?>
-      <form action="<?= e(url('modules/admin/cambiar_sucursal.php')) ?>" method="get" class="hidden md:block">
+      <form action="<?= e(url('modules/admin/cambiar_sucursal.php')) ?>" method="post" class="hidden md:block">
+        <?= csrf_field() ?>
         <input type="hidden" name="redir" value="<?= e($redir) ?>">
         <div class="relative">
           <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"><?= icon('store', 'w-4 h-4') ?></span>
@@ -67,7 +68,10 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
         <?php if (can('configuracion.ver')): ?>
         <a href="<?= e(url('modules/admin/configuracion.php')) ?>" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50"><?= icon('settings', 'w-4 h-4') ?> Configuración</a>
         <?php endif; ?>
-        <a href="<?= e(url('modules/auth/logout.php')) ?>" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-rose-600 hover:bg-rose-50"><?= icon('logout', 'w-4 h-4') ?> Cerrar sesión</a>
+        <form method="post" action="<?= e(url('modules/auth/logout.php')) ?>">
+          <?= csrf_field() ?>
+          <button type="submit" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-rose-600 hover:bg-rose-50"><?= icon('logout', 'w-4 h-4') ?> Cerrar sesión</button>
+        </form>
       </div>
     </div>
   </div>
