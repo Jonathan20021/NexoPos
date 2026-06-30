@@ -8,6 +8,12 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
 ?>
 <header class="sticky top-0 z-20 h-16 bg-white/90 backdrop-blur border-b border-slate-200 flex items-center gap-3 px-4 sm:px-6">
   <button @click="sidebar=true" aria-label="Abrir menú" title="Abrir menú" class="lg:hidden text-slate-500 hover:text-slate-800 -ml-1 p-2 -my-2"><?= icon('menu', 'w-6 h-6') ?></button>
+  <button @click="toggleSidebar()" :aria-label="sidebarCollapsed ? 'Expandir menú' : 'Contraer menú'"
+          :title="sidebarCollapsed ? 'Expandir menú' : 'Contraer menú'" :aria-expanded="(!sidebarCollapsed).toString()"
+          class="hidden lg:flex w-10 h-10 -ml-1 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-4 focus:ring-blue-500/10 transition">
+    <span x-show="!sidebarCollapsed"><?= icon('arrow-left', 'w-5 h-5') ?></span>
+    <span x-show="sidebarCollapsed" style="display:none"><?= icon('arrow-right', 'w-5 h-5') ?></span>
+  </button>
 
   <!-- Buscador -->
   <form action="<?= e(url('modules/inventario/productos.php')) ?>" method="get" class="hidden sm:flex items-center gap-2 bg-slate-100 rounded-xl px-3.5 h-10 w-72 max-w-full focus-within:ring-2 focus-within:ring-blue-500/20 transition">

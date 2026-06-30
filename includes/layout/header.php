@@ -116,6 +116,50 @@ tailwind.config = {
       font-size: 16px !important;
     }
   }
+  @media (min-width: 1024px) {
+    .app-sidebar {
+      width: 260px;
+      transition: width 200ms cubic-bezier(.22, 1, .36, 1);
+    }
+    .app-shell {
+      padding-left: 260px;
+      transition: padding-left 200ms cubic-bezier(.22, 1, .36, 1);
+    }
+    .sidebar-is-collapsed .app-sidebar { width: 80px; }
+    .sidebar-is-collapsed .app-shell { padding-left: 80px; }
+    .sidebar-is-collapsed .sidebar-brand { justify-content: center; padding-inline: 12px; }
+    .sidebar-is-collapsed .sidebar-brand-name,
+    .sidebar-is-collapsed .sidebar-section-label,
+    .sidebar-is-collapsed .sidebar-link-label,
+    .sidebar-is-collapsed .sidebar-user-copy,
+    .sidebar-is-collapsed .sidebar-logout { display: none; }
+    .sidebar-is-collapsed .sidebar-nav { padding-inline: 12px; }
+    .sidebar-is-collapsed .sidebar-nav-group + .sidebar-nav-group {
+      border-top: 1px solid rgb(241 245 249);
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+    .sidebar-is-collapsed .nav-link {
+      justify-content: center;
+      min-height: 44px;
+      padding-inline: 10px;
+    }
+    .sidebar-is-collapsed .nav-link > svg { width: 20px; height: 20px; }
+    .sidebar-is-collapsed .sidebar-stock-badge {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      min-width: 15px;
+      height: 15px;
+      padding-inline: 3px;
+      font-size: 9px;
+    }
+    .sidebar-is-collapsed .sidebar-user { justify-content: center; padding-inline: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .app-sidebar,
+    .app-shell { transition-duration: 0.01ms !important; }
+  }
   @media print {
     aside, header.sticky, footer, .no-print { display: none !important; }
     .lg\:pl-\[260px\] { padding-left: 0 !important; }
@@ -127,14 +171,31 @@ tailwind.config = {
 </style>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
 </head>
-<body class="h-full bg-slate-100 text-slate-700" x-data="{ sidebar:false }">
-<div class="min-h-full">
+<body class="h-full bg-slate-100 text-slate-700" x-data="{
+  sidebar:false,
+  sidebarCollapsed:false,
+  sidebarTooltip:{visible:false,label:'',top:0},
+  init(){
+    try { this.sidebarCollapsed = localStorage.getItem('nexopos.sidebarCollapsed') === '1'; } catch (e) {}
+  },
+  toggleSidebar(){
+    this.sidebarCollapsed = !this.sidebarCollapsed;
+    this.sidebarTooltip.visible = false;
+    try { localStorage.setItem('nexopos.sidebarCollapsed', this.sidebarCollapsed ? '1' : '0'); } catch (e) {}
+  },
+  showSidebarTooltip(label, el){
+    if (!this.sidebarCollapsed || window.innerWidth < 1024) return;
+    const rect = el.getBoundingClientRect();
+    this.sidebarTooltip = {visible:true, label, top:rect.top + rect.height / 2};
+  }
+}">
+<div class="min-h-full" :class="{'sidebar-is-collapsed': sidebarCollapsed}">
   <?php include __DIR__ . '/sidebar.php'; ?>
 
   <!-- Overlay móvil -->
   <div x-show="sidebar" @click="sidebar=false" x-transition.opacity class="fixed inset-0 bg-slate-900/40 z-30 lg:hidden" style="display:none"></div>
 
-  <div class="lg:pl-[260px] flex flex-col min-h-screen">
+  <div class="app-shell flex flex-col min-h-screen">
     <?php include __DIR__ . '/topbar.php'; ?>
 
     <main class="flex-1">
