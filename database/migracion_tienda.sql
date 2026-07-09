@@ -104,6 +104,21 @@ SET @s := IF(@c=0,
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 -- ---------------------------------------------------------------------------
+-- 3c) Confirmación de pago.
+--
+--     Un pedido con link de pago no puede avanzar a «listo» ni «entregado», ni
+--     facturarse, hasta que alguien confirme que el cliente realmente pagó.
+-- ---------------------------------------------------------------------------
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pedidos' AND COLUMN_NAME='pago_confirmado_at');
+SET @s := IF(@c=0,
+  'ALTER TABLE pedidos
+     ADD COLUMN pago_confirmado_at DATETIME NULL AFTER link_pago_enviado_at,
+     ADD COLUMN pago_confirmado_por INT UNSIGNED NULL AFTER pago_confirmado_at',
+  'SELECT ''pedidos.pago_confirmado_at ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- ---------------------------------------------------------------------------
 -- 4) PERMISOS del módulo de pedidos.
 -- ---------------------------------------------------------------------------
 INSERT INTO permisos (clave, modulo, grupo, descripcion)

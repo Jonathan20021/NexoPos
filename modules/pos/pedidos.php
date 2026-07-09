@@ -5,6 +5,25 @@ require_perm('pedidos.ver');
 
 $emp = $GLOBALS['empresa'] ?: [];
 
+/** Orden de avance de un pedido. `cancelado` queda fuera: no es un avance. */
+function pedidoRango(string $estado): int
+{
+    return ['pendiente' => 1, 'confirmado' => 2, 'listo' => 3, 'entregado' => 4][$estado] ?? 0;
+}
+
+/**
+ * Un pedido con link de pago no puede marcarse «listo» ni «entregado» mientras
+ * no se confirme el cobro. Sin esto, se entrega mercancía sin haber cobrado.
+ * Cancelar siempre se permite.
+ */
+function pedidoPuedeAvanzar(array $p, string $nuevo): bool
+{
+    if ($nuevo === 'cancelado') return true;
+    if ($p['metodo_pago'] !== 'link_pago') return true;
+    if ($p['pago_confirmado_at']) return true;
+    return pedidoRango($nuevo) < 3;
+}
+
 if (isPost()) {
     verify_csrf();
 
@@ -59,6 +78,9 @@ if (isPost()) {
                 if (!can_access_sucursal($ped['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de este pedido.');
                 if ($ped['venta_id']) throw new RuntimeException("El pedido {$ped['numero']} ya fue facturado.");
                 if (in_array($ped['estado'], ['cancelado'], true)) throw new RuntimeException('Un pedido cancelado no se puede facturar.');
+                if ($ped['metodo_pago'] === 'link_pago' && !$ped['pago_confirmado_at']) {
+                    throw new RuntimeException('El cliente eligió pagar con link y el pago no está confirmado. Confírmalo antes de facturar.');
+                }
 
                 $sid = (int) $ped['sucursal_id'];
 
@@ -176,8 +198,11 @@ if (isPost()) {
     }
 
     /**
-     * Abre WhatsApp con el mensaje ya escrito y deja constancia del envío.
-     * La marca de «enviado» se pone AQUÍ, no al guardar el link: guardar no es enviar.
+     * Deja constancia de que se le abrió WhatsApp al cliente.
+     *
+     * Lo llama un fetch() desde el enlace de WhatsApp, no un <form>: la cabecera
+     * CSP de la app declara `form-action 'self'`, que en Chrome bloquea cualquier
+     * formulario con target="_blank". El enlace <a> no está sujeto a esa directiva.
      */
     if (post('accion') === 'whatsapp') {
         require_perm('pedidos.gestionar');
@@ -187,9 +212,6 @@ if (isPost()) {
             if (!$p) throw new RuntimeException('Pedido no encontrado.');
             require_sucursal_access($p['sucursal_id']);
 
-            $wa = wa_link($p['cliente_telefono'], mensajePedido($p, $emp));
-            if ($wa === '') throw new RuntimeException('El pedido no tiene un teléfono válido para WhatsApp.');
-
             // Solo se marca como enviado cuando el mensaje realmente lleva el link de pago.
             if ($p['metodo_pago'] === 'link_pago' && linkPagoPedido($p, $emp)) {
                 dbUpdate('pedidos', ['link_pago_enviado_at' => date('Y-m-d H:i:s')], 'id = ?', [$id]);
@@ -197,12 +219,41 @@ if (isPost()) {
             } else {
                 audit('pedidos', 'whatsapp', "Mensaje de WhatsApp abierto: {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
             }
-            header('Location: ' . $wa);
+            http_response_code(204);
             exit;
         } catch (Throwable $e) {
-            flash('error', $e->getMessage());
-            redirect('modules/pos/pedidos.php');
+            http_response_code(422);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo $e->getMessage();
+            exit;
         }
+    }
+
+    /**
+     * Confirma que el cliente ya pagó con el link. Es la condición para poder
+     * avanzar el pedido o facturarlo: nadie entrega mercancía sin cobrar.
+     */
+    if (post('accion') === 'confirmar_pago') {
+        require_perm('pedidos.gestionar');
+        $id = postInt('id');
+        try {
+            $p = qOne("SELECT * FROM pedidos WHERE id = ?", [$id]);
+            if (!$p) throw new RuntimeException('Pedido no encontrado.');
+            require_sucursal_access($p['sucursal_id']);
+            if ($p['metodo_pago'] !== 'link_pago') throw new RuntimeException('Este pedido se paga al retirar: el cobro se registra al facturar.');
+            if ($p['pago_confirmado_at']) throw new RuntimeException("El pago de {$p['numero']} ya estaba confirmado.");
+            if (!$p['link_pago_enviado_at']) throw new RuntimeException('Envíale primero el link de pago por WhatsApp.');
+
+            dbUpdate('pedidos', [
+                'pago_confirmado_at'  => date('Y-m-d H:i:s'),
+                'pago_confirmado_por' => current_user()['id'],
+            ], 'id = ?', [$id]);
+            audit('pedidos', 'confirmar_pago', "Pago confirmado del pedido {$p['numero']} (" . money($p['total']) . ')', ['tabla' => 'pedidos', 'registro_id' => $id]);
+            flash('success', "Pago de {$p['numero']} confirmado. Ya puedes marcarlo listo y facturarlo.");
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/pos/pedidos.php');
     }
 
     if (post('accion') === 'estado') {
@@ -216,6 +267,9 @@ if (isPost()) {
             if (!$p) throw new RuntimeException('Pedido no encontrado.');
             require_sucursal_access($p['sucursal_id']);
             if ($p['estado'] === 'entregado') throw new RuntimeException('Un pedido entregado ya no cambia de estado.');
+            if (!pedidoPuedeAvanzar($p, $nuevo)) {
+                throw new RuntimeException("El cliente eligió pagar con link. Confirma que ya pagó antes de marcar el pedido como «{$nuevo}».");
+            }
             dbUpdate('pedidos', ['estado' => $nuevo], 'id = ?', [$id]);
             audit('pedidos', 'estado', "Pedido {$p['numero']}: {$p['estado']} → $nuevo", ['tabla' => 'pedidos', 'registro_id' => $id]);
             flash('success', "Pedido {$p['numero']} marcado como $nuevo.");
@@ -369,8 +423,10 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                 <?php $linkEfectivo = linkPagoPedido($p, $emp); ?>
                 <?php if ($p['metodo_pago'] === 'link_pago'): ?>
                   <span class="text-xs font-semibold text-blue-600 block">Link de pago</span>
-                  <?php if ($p['link_pago_enviado_at']): ?>
-                    <span class="text-xs text-emerald-600">Enviado <?= e(substr((string) $p['link_pago_enviado_at'], 0, 10)) ?></span>
+                  <?php if ($p['pago_confirmado_at']): ?>
+                    <span class="text-xs font-semibold text-emerald-600">Pagado <?= e(substr((string) $p['pago_confirmado_at'], 0, 10)) ?></span>
+                  <?php elseif ($p['link_pago_enviado_at']): ?>
+                    <span class="text-xs text-amber-600">Enviado, sin cobrar</span>
                   <?php elseif ($p['link_pago']): ?>
                     <span class="text-xs text-amber-600">Cargado, sin enviar</span>
                   <?php elseif ($linkEfectivo): ?>
@@ -394,10 +450,12 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
               <td>
                 <div class="flex items-center justify-end gap-1">
                   <?php if (can('pedidos.gestionar') && can('pos.vender') && !$p['venta_id'] && $p['estado'] !== 'cancelado'): ?>
-                    <button type="button"
-                            onclick="<?= jsEvent('pedido:facturar', ['id' => (int) $p['id'], 'numero' => $p['numero'], 'total' => money($p['total']), 'cliente' => $p['cliente_nombre'], 'sucursal' => $p['sucursal'], 'documento' => (string) $p['cliente_documento'], 'metodo' => $p['metodo_pago']]) ?>"
-                            class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                            title="Convertir el pedido en venta"
+                    <?php $sinCobrar = $p['metodo_pago'] === 'link_pago' && !$p['pago_confirmado_at']; ?>
+                    <button type="button" <?= $sinCobrar ? 'disabled' : '' ?>
+                            <?= $sinCobrar ? '' : 'onclick="' . jsEvent('pedido:facturar', ['id' => (int) $p['id'], 'numero' => $p['numero'], 'total' => money($p['total']), 'cliente' => $p['cliente_nombre'], 'sucursal' => $p['sucursal'], 'documento' => (string) $p['cliente_documento'], 'metodo' => $p['metodo_pago']]) . '"' ?>
+                            class="p-2 rounded-lg transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                   <?= $sinCobrar ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 cursor-pointer' ?>"
+                            title="<?= $sinCobrar ? 'Confirma el pago antes de facturar' : 'Convertir el pedido en venta' ?>"
                             aria-label="Facturar el pedido <?= e($p['numero']) ?>"><?= icon('receipt', 'w-4 h-4') ?></button>
                   <?php endif; ?>
 
@@ -410,23 +468,31 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                             aria-label="Link de pago del pedido <?= e($p['numero']) ?>"><?= icon('wallet', 'w-4 h-4') ?></button>
                   <?php endif; ?>
 
-                  <?php if ($wa && can('pedidos.gestionar')): ?>
-                    <?php
-                      // Envía de verdad: pasa por el servidor para dejar constancia y
-                      // luego redirige a wa.me, que se abre en otra pestaña.
-                      $esperaLink = $p['metodo_pago'] === 'link_pago' && !$p['link_pago_enviado_at'] && $linkEfectivo;
-                    ?>
-                    <form method="post" target="_blank" class="inline"
-                          onsubmit="setTimeout(function () { window.location.reload(); }, 1500)">
+                  <?php if ($wa): ?>
+                    <?php $esperaLink = $p['metodo_pago'] === 'link_pago' && !$p['link_pago_enviado_at'] && $linkEfectivo; ?>
+                    <a href="<?= e($wa) ?>" target="_blank" rel="noopener"
+                       <?php if (can('pedidos.gestionar')): ?>data-wa-pedido="<?= (int) $p['id'] ?>"<?php endif; ?>
+                       class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm font-semibold transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                              <?= $esperaLink ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'text-emerald-700 hover:bg-emerald-50' ?>"
+                       title="Abrir WhatsApp con el mensaje ya escrito para <?= e($p['cliente_nombre']) ?>"
+                       aria-label="Enviar WhatsApp a <?= e($p['cliente_nombre']) ?>">
+                      <?= icon('phone', 'w-4 h-4') ?>
+                      <span class="hidden xl:inline"><?= $esperaLink ? 'Enviar link' : 'WhatsApp' ?></span>
+                    </a>
+                  <?php endif; ?>
+
+                  <?php if (can('pedidos.gestionar') && $p['metodo_pago'] === 'link_pago' && !$p['pago_confirmado_at'] && $p['estado'] !== 'cancelado'): ?>
+                    <form method="post" class="inline"
+                          onsubmit="return confirm('¿Confirmas que <?= e($p['cliente_nombre']) ?> ya pagó <?= e(money($p['total'])) ?>?')">
                       <?= csrf_field() ?>
-                      <input type="hidden" name="accion" value="whatsapp">
+                      <input type="hidden" name="accion" value="confirmar_pago">
                       <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
-                      <button class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm font-semibold transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
-                                     <?= $esperaLink ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'text-emerald-700 hover:bg-emerald-50' ?>"
-                              title="Abrir WhatsApp con el mensaje ya escrito para <?= e($p['cliente_nombre']) ?>"
-                              aria-label="Enviar WhatsApp a <?= e($p['cliente_nombre']) ?>">
-                        <?= icon('phone', 'w-4 h-4') ?>
-                        <span class="hidden xl:inline"><?= $esperaLink ? 'Enviar link' : 'WhatsApp' ?></span>
+                      <button class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                              <?= $p['link_pago_enviado_at'] ? '' : 'disabled' ?>
+                              title="<?= $p['link_pago_enviado_at'] ? 'Marcar el pago como recibido' : 'Envíale primero el link de pago por WhatsApp' ?>"
+                              aria-label="Confirmar el pago del pedido <?= e($p['numero']) ?>">
+                        <?= icon('check', 'w-4 h-4') ?>
+                        <span class="hidden xl:inline">Confirmar pago</span>
                       </button>
                     </form>
                   <?php endif; ?>
@@ -445,7 +511,10 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                       <select id="estado_<?= (int) $p['id'] ?>" name="estado" onchange="this.form.submit()"
                               class="select py-1.5 text-xs cursor-pointer">
                         <?php foreach ($estadoBadge as $k => [$lbl, $_]): ?>
-                          <option value="<?= $k ?>" <?= $p['estado'] === $k ? 'selected' : '' ?>><?= $lbl ?></option>
+                          <?php $bloqueado = !pedidoPuedeAvanzar($p, $k); ?>
+                          <option value="<?= $k ?>" <?= $p['estado'] === $k ? 'selected' : '' ?> <?= $bloqueado ? 'disabled' : '' ?>>
+                            <?= $lbl ?><?= $bloqueado ? ' — falta confirmar el pago' : '' ?>
+                          </option>
                         <?php endforeach; ?>
                       </select>
                       <noscript><button class="btn btn-ghost btn-sm">Guardar</button></noscript>
@@ -604,5 +673,35 @@ $sinLink = empty($emp['link_pago'])
     </form>
   </div>
 </div>
+
+<script>
+/**
+ * Al abrir WhatsApp, deja constancia del envío.
+ *
+ * Se usa fetch() y no un <form>: la cabecera CSP declara `form-action 'self'`,
+ * que en Chrome bloquea cualquier formulario con target="_blank". Un <a> no cae
+ * bajo esa directiva, y `connect-src 'self'` sí permite este fetch.
+ *
+ * Si el fetch falla, WhatsApp se abre igual: no bloqueamos el envío por no poder
+ * anotarlo.
+ */
+document.querySelectorAll('a[data-wa-pedido]').forEach(function (a) {
+  a.addEventListener('click', function () {
+    var datos = new URLSearchParams({
+      _csrf: <?= json_encode(csrf_token()) ?>,
+      accion: 'whatsapp',
+      id: a.dataset.waPedido,
+    });
+    fetch(window.location.pathname, {
+      method: 'POST',
+      body: datos,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+      .then(function (r) { if (r.ok) window.location.reload(); })
+      .catch(function () { /* el enlace ya se abrió; no interrumpimos al usuario */ });
+  });
+});
+</script>
 
 <?php layout_end(); ?>

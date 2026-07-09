@@ -590,6 +590,9 @@ CREATE TABLE pedidos (
   -- Cada pedido lleva su propio enlace: el monto cambia en cada venta.
   link_pago VARCHAR(500) NULL,
   link_pago_enviado_at DATETIME NULL,
+  -- Sin esta confirmación un pedido con link de pago no avanza ni se factura.
+  pago_confirmado_at DATETIME NULL,
+  pago_confirmado_por INT UNSIGNED NULL,
   subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
