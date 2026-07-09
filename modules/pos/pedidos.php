@@ -22,12 +22,14 @@ if (isPost()) {
                 }
                 if (mb_strlen($link) > 500) throw new RuntimeException('El link de pago es demasiado largo.');
             }
+            // Guardar un link NO es enviarlo. La marca de envío se pone al abrir
+            // WhatsApp, y se limpia aquí porque un link nuevo aún no se ha enviado.
             dbUpdate('pedidos', [
                 'link_pago' => $link ?: null,
-                'link_pago_enviado_at' => $link ? date('Y-m-d H:i:s') : null,
+                'link_pago_enviado_at' => null,
             ], 'id = ?', [$id]);
             audit('pedidos', 'link', "Link de pago actualizado en {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
-            flash('success', $link ? "Link de pago guardado en {$p['numero']}. Ya puedes enviarlo por WhatsApp." : "Link de pago eliminado de {$p['numero']}.");
+            flash('success', $link ? "Link de pago guardado en {$p['numero']}. Falta enviárselo al cliente por WhatsApp." : "Link de pago eliminado de {$p['numero']}.");
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -167,6 +169,36 @@ if (isPost()) {
             audit('pedidos', 'facturar', "Pedido facturado como venta #$ventaId", ['tabla' => 'pedidos', 'registro_id' => $id]);
             flash('success', 'Pedido facturado. Se emitió el NCF y se descontó el inventario.');
             redirect('modules/pos/ticket.php?id=' . $ventaId . '&print=1');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+            redirect('modules/pos/pedidos.php');
+        }
+    }
+
+    /**
+     * Abre WhatsApp con el mensaje ya escrito y deja constancia del envío.
+     * La marca de «enviado» se pone AQUÍ, no al guardar el link: guardar no es enviar.
+     */
+    if (post('accion') === 'whatsapp') {
+        require_perm('pedidos.gestionar');
+        $id = postInt('id');
+        try {
+            $p = qOne("SELECT p.*, s.nombre AS sucursal FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id WHERE p.id = ?", [$id]);
+            if (!$p) throw new RuntimeException('Pedido no encontrado.');
+            require_sucursal_access($p['sucursal_id']);
+
+            $wa = wa_link($p['cliente_telefono'], mensajePedido($p, $emp));
+            if ($wa === '') throw new RuntimeException('El pedido no tiene un teléfono válido para WhatsApp.');
+
+            // Solo se marca como enviado cuando el mensaje realmente lleva el link de pago.
+            if ($p['metodo_pago'] === 'link_pago' && linkPagoPedido($p, $emp)) {
+                dbUpdate('pedidos', ['link_pago_enviado_at' => date('Y-m-d H:i:s')], 'id = ?', [$id]);
+                audit('pedidos', 'whatsapp', "Link de pago enviado por WhatsApp: {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            } else {
+                audit('pedidos', 'whatsapp', "Mensaje de WhatsApp abierto: {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            }
+            header('Location: ' . $wa);
+            exit;
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
             redirect('modules/pos/pedidos.php');
@@ -337,8 +369,10 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                 <?php $linkEfectivo = linkPagoPedido($p, $emp); ?>
                 <?php if ($p['metodo_pago'] === 'link_pago'): ?>
                   <span class="text-xs font-semibold text-blue-600 block">Link de pago</span>
-                  <?php if ($p['link_pago']): ?>
+                  <?php if ($p['link_pago_enviado_at']): ?>
                     <span class="text-xs text-emerald-600">Enviado <?= e(substr((string) $p['link_pago_enviado_at'], 0, 10)) ?></span>
+                  <?php elseif ($p['link_pago']): ?>
+                    <span class="text-xs text-amber-600">Cargado, sin enviar</span>
                   <?php elseif ($linkEfectivo): ?>
                     <span class="text-xs text-slate-400">Usa el genérico</span>
                   <?php else: ?>
@@ -376,11 +410,25 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                             aria-label="Link de pago del pedido <?= e($p['numero']) ?>"><?= icon('wallet', 'w-4 h-4') ?></button>
                   <?php endif; ?>
 
-                  <?php if ($wa): ?>
-                    <a href="<?= e($wa) ?>" target="_blank" rel="noopener"
-                       class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                       title="Escribir al cliente por WhatsApp"
-                       aria-label="Escribir a <?= e($p['cliente_nombre']) ?> por WhatsApp"><?= icon('phone', 'w-4 h-4') ?></a>
+                  <?php if ($wa && can('pedidos.gestionar')): ?>
+                    <?php
+                      // Envía de verdad: pasa por el servidor para dejar constancia y
+                      // luego redirige a wa.me, que se abre en otra pestaña.
+                      $esperaLink = $p['metodo_pago'] === 'link_pago' && !$p['link_pago_enviado_at'] && $linkEfectivo;
+                    ?>
+                    <form method="post" target="_blank" class="inline"
+                          onsubmit="setTimeout(function () { window.location.reload(); }, 1500)">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="accion" value="whatsapp">
+                      <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
+                      <button class="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm font-semibold transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                                     <?= $esperaLink ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'text-emerald-700 hover:bg-emerald-50' ?>"
+                              title="Abrir WhatsApp con el mensaje ya escrito para <?= e($p['cliente_nombre']) ?>"
+                              aria-label="Enviar WhatsApp a <?= e($p['cliente_nombre']) ?>">
+                        <?= icon('phone', 'w-4 h-4') ?>
+                        <span class="hidden xl:inline"><?= $esperaLink ? 'Enviar link' : 'WhatsApp' ?></span>
+                      </button>
+                    </form>
                   <?php endif; ?>
 
                   <a href="<?= e(url('tienda/pedido.php?token=' . $p['token'])) ?>" target="_blank" rel="noopener"
