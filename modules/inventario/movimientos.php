@@ -23,11 +23,7 @@ if (export_solicitado()) {
         array_map(fn($r) => [$r['created_at'], $r['codigo'], $r['producto'], $r['sucursal'], $r['tipo'], $r['cantidad'], $r['stock_anterior'], $r['stock_nuevo'], $r['motivo'], $r['usuario'] ?: 'Sistema'], $rows));
 }
 
-$pagina = max(1, (int) get('p'));
-$porPagina = 40;
-$total = (int) qVal("SELECT COUNT(*) FROM movimientos_inventario m JOIN productos p ON p.id=m.producto_id WHERE $where", $params);
-$totalPag = max(1, (int) ceil($total / $porPagina));
-$offset = ($pagina - 1) * $porPagina;
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM movimientos_inventario m JOIN productos p ON p.id=m.producto_id WHERE $where", $params), 40);
 
 $movs = qAll(
     "SELECT m.*, p.nombre AS producto, p.codigo, su.nombre AS sucursal, u.nombre AS usuario
@@ -35,7 +31,7 @@ $movs = qAll(
      JOIN productos p ON p.id=m.producto_id
      JOIN sucursales su ON su.id=m.sucursal_id
      LEFT JOIN usuarios u ON u.id=m.usuario_id
-     WHERE $where ORDER BY m.id DESC LIMIT $porPagina OFFSET $offset", $params
+     WHERE $where ORDER BY m.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params
 );
 
 $tipoBadge = ['entrada'=>['Entrada','emerald'],'compra'=>['Compra','emerald'],'transferencia_entrada'=>['Transf. entrada','sky'],'devolucion'=>['Devolución','sky'],'salida'=>['Salida','rose'],'venta'=>['Venta','rose'],'transferencia_salida'=>['Transf. salida','amber'],'ajuste'=>['Ajuste','violet']];
@@ -46,7 +42,8 @@ layout_start('Movimientos de inventario', 'Kardex: historial completo de entrada
 <div class="card overflow-hidden">
   <?php $selSuc = selectSucursalFiltro(); ?>
   <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-<?= $selSuc ? '5' : '4' ?> gap-3">
-    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Buscar producto..." aria-label="Buscar producto" class="input">
+    <input type="hidden" name="p" value="1">
+    <input type="search" name="q" data-buscar value="<?= e($q) ?>" placeholder="Buscar producto..." aria-label="Buscar producto" autocomplete="off" class="input">
     <?= $selSuc ?>
     <select name="tipo" aria-label="Tipo de movimiento" class="select cursor-pointer"><option value="">Todos los tipos</option><?php foreach ($tipos as $t): ?><option value="<?= $t ?>" <?= $tipo === $t ? 'selected' : '' ?>><?= e($tipoBadge[$t][0] ?? $t) ?></option><?php endforeach; ?></select>
     <input type="date" name="desde" value="<?= e($desde) ?>" class="input" title="Desde">
@@ -78,17 +75,7 @@ layout_start('Movimientos de inventario', 'Kardex: historial completo de entrada
         </tbody>
       </table>
     </div>
-    <?php if ($totalPag > 1):
-      $qs = $_GET; ?>
-      <div class="flex items-center justify-between p-4 border-t border-slate-100 text-sm">
-        <span class="text-slate-400"><?= number_format($total) ?> movimientos</span>
-        <div class="flex items-center gap-1">
-          <?php for ($i = max(1, $pagina - 2); $i <= min($totalPag, $pagina + 2); $i++): $qs['p'] = $i; ?>
-            <a href="?<?= e(http_build_query($qs)) ?>" class="px-3 py-1.5 rounded-lg font-semibold <?= $i === $pagina ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100' ?>"><?= $i ?></a>
-          <?php endfor; ?>
-        </div>
-      </div>
-    <?php endif; ?>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

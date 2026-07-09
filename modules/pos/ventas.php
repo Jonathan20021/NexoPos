@@ -129,15 +129,15 @@ if (export_solicitado()) {
         array_map(fn($r) => [$r['numero'], $r['ncf'], $r['fecha'], $r['cliente'] ?: 'Cliente Genérico', $r['sucursal'], $r['vendedor'], $r['subtotal'], $r['itbis'], $r['total'], $r['estado']], $rows));
 }
 
-$pagina = max(1, (int) get('p'));
-$pp = 25;
-$total = (int) qVal("SELECT COUNT(*) FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id WHERE $where", $params);
-$totalPag = max(1, (int) ceil($total / $pp));
-$offset = ($pagina - 1) * $pp;
-$ventas = qAll("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE $where ORDER BY v.id DESC LIMIT $pp OFFSET $offset", $params);
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id WHERE $where", $params), 25);
+$ventas = qAll("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE $where ORDER BY v.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
-$totVendido = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE $where AND v.estado='completada'", $params);
+// El JOIN a clientes es obligatorio: $where puede filtrar por cl.nombre.
+$totVendido = (float) qVal(
+    "SELECT COALESCE(SUM(v.total),0) FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id
+      WHERE $where AND v.estado='completada'", $params);
 
+$total = $pg['total'];   // total del filtro actual, no de la página
 layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format($total) . ' registros' : ''), export_buttons());
 ?>
 
@@ -150,7 +150,8 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
 <div class="card overflow-hidden">
   <?php $selSuc = selectSucursalFiltro(); ?>
   <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-<?= $selSuc ? '6' : '5' ?> gap-3">
-    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Factura o cliente..." aria-label="Buscar factura o cliente" class="input sm:col-span-2">
+    <input type="hidden" name="p" value="1">
+    <input type="search" name="q" data-buscar value="<?= e($q) ?>" placeholder="Factura o cliente..." aria-label="Buscar factura o cliente" autocomplete="off" class="input sm:col-span-2">
     <?= $selSuc ?>
     <select name="estado" aria-label="Estado" class="select cursor-pointer"><option value="">Todos</option><option value="completada" <?= $estado === 'completada' ? 'selected' : '' ?>>Completada</option><option value="anulada" <?= $estado === 'anulada' ? 'selected' : '' ?>>Anulada</option><option value="devuelta" <?= $estado === 'devuelta' ? 'selected' : '' ?>>Devuelta</option></select>
     <input type="date" name="desde" value="<?= e($desde) ?>" aria-label="Fecha inicial" class="input">
@@ -189,14 +190,7 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
         </tbody>
       </table>
     </div>
-    <?php if ($totalPag > 1): $qs = $_GET; ?>
-      <div class="flex items-center justify-between p-4 border-t border-slate-100 text-sm">
-        <span class="text-slate-400">Página <?= $pagina ?> de <?= $totalPag ?></span>
-        <div class="flex items-center gap-1">
-          <?php for ($i = max(1, $pagina - 2); $i <= min($totalPag, $pagina + 2); $i++): $qs['p'] = $i; ?><a href="?<?= e(http_build_query($qs)) ?>" class="px-3 py-1.5 rounded-lg font-semibold <?= $i === $pagina ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100' ?>"><?= $i ?></a><?php endfor; ?>
-        </div>
-      </div>
-    <?php endif; ?>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

@@ -49,7 +49,8 @@ if (isPost()) {
 $q = trim(get('q'));
 $where = $q !== '' ? "WHERE nombre LIKE ? OR rnc LIKE ? OR contacto LIKE ?" : '';
 $params = $q !== '' ? ["%$q%", "%$q%", "%$q%"] : [];
-$proveedores = qAll("SELECT * FROM proveedores $where ORDER BY nombre", $params);
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM proveedores $where", $params), 25);
+$proveedores = qAll("SELECT * FROM proveedores $where ORDER BY nombre LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
 $acciones = can('proveedores.crear') ? btn_nuevo('prov:new', 'Nuevo proveedor') : '';
 layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
@@ -58,7 +59,7 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
     <?= search_box('Buscar proveedor...') ?>
-    <span class="text-sm text-slate-400"><?= count($proveedores) ?> proveedores</span>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> proveedores</span>
   </div>
   <?php if (!$proveedores): ?>
     <?= empty_state('Sin proveedores', 'Registra tus suplidores para gestionar compras.', 'briefcase', can('proveedores.crear') ? btn_nuevo('prov:new', 'Nuevo proveedor') : '') ?>
@@ -86,6 +87,7 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

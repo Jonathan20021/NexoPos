@@ -104,6 +104,7 @@ if (export_solicitado()) {
         array_map(fn($r) => [$r['codigo'], $r['codigo_barras'], $r['nombre'], $r['categoria'], $r['marca'], $r['precio_compra'], $r['precio_venta'], $r['stock_minimo'], $r['stock']], $rows));
 }
 
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM productos p $where", $params), 25);
 $productos = qAll(
     "SELECT p.*, c.nombre AS categoria, c.color AS cat_color, m.nombre AS marca, u.abreviatura AS unidad,
             $stockExpr AS stock
@@ -111,7 +112,7 @@ $productos = qAll(
      LEFT JOIN categorias c ON c.id=p.categoria_id
      LEFT JOIN marcas m ON m.id=p.marca_id
      LEFT JOIN unidades u ON u.id=p.unidad_id
-     $where ORDER BY p.nombre LIMIT 300", $params
+     $where ORDER BY p.nombre LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params
 );
 
 $categorias = qAll("SELECT id, nombre, color FROM categorias WHERE activo=1 ORDER BY nombre");
@@ -135,7 +136,7 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
         </select>
       </form>
     </div>
-    <span class="text-sm text-slate-400"><?= count($productos) ?> productos</span>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> productos</span>
   </div>
 
   <?php if (!$productos): ?>
@@ -185,6 +186,7 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

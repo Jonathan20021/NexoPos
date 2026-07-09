@@ -71,8 +71,9 @@ layout_start('Auditoría', 'Registro de actividad del sistema', export_buttons()
         </select>
       </div>
       <div>
-        <label class="label">Buscar</label>
-        <input type="text" name="q" value="<?= e($q) ?>" class="input" placeholder="Descripción o usuario…">
+        <label class="label" for="q">Buscar</label>
+        <input type="hidden" name="p" value="1">
+        <input type="search" id="q" name="q" data-buscar value="<?= e($q) ?>" autocomplete="off" class="input" placeholder="Descripción o usuario…">
       </div>
       <div>
         <label class="label">Desde</label>

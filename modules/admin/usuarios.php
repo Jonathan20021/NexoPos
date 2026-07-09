@@ -105,12 +105,14 @@ $miId      = (int) (current_user()['id'] ?? 0);
 $q = trim(get('q'));
 $where = $q !== '' ? "WHERE (u.nombre LIKE ? OR u.apellido LIKE ? OR u.usuario LIKE ? OR u.email LIKE ?)" : '';
 $params = $q !== '' ? array_fill(0, 4, '%' . $q . '%') : [];
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM usuarios u JOIN roles r ON r.id = u.rol_id $where", $params), 25);
 $usuarios = qAll(
     "SELECT u.*, r.nombre AS rol_nombre, s.nombre AS sucursal_nombre
      FROM usuarios u
      JOIN roles r ON r.id = u.rol_id
      LEFT JOIN sucursales s ON s.id = u.sucursal_id
-     $where ORDER BY u.nombre, u.apellido",
+     $where ORDER BY u.nombre, u.apellido
+     LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}",
     $params
 );
 
@@ -121,7 +123,7 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
     <?= search_box('Buscar por nombre, usuario o email...') ?>
-    <span class="text-sm text-slate-400"><?= count($usuarios) ?> usuarios</span>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> usuarios</span>
   </div>
 
   <?php if (!$usuarios): ?>
@@ -166,6 +168,7 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

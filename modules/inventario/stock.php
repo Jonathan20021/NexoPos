@@ -49,6 +49,8 @@ if (export_solicitado()) {
         array_map(fn($r) => [$r['codigo'], $r['nombre'], $r['categoria'], $r['sucursal'], $r['cantidad'], $r['stock_minimo'], round($r['cantidad'] * $r['precio_compra'], 2)], $all));
 }
 
+$pg = paginar((int) qVal(
+    "SELECT COUNT(*) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $where", $params), 25);
 $rows = qAll(
     "SELECT s.id, s.cantidad, p.id AS pid, p.nombre, p.codigo, p.stock_minimo, p.precio_compra,
             c.nombre AS categoria, c.color AS cat_color, su.id AS suc_id, su.nombre AS sucursal
@@ -56,7 +58,8 @@ $rows = qAll(
      JOIN productos p ON p.id=s.producto_id
      JOIN sucursales su ON su.id=s.sucursal_id
      LEFT JOIN categorias c ON c.id=p.categoria_id
-     WHERE $where ORDER BY (s.cantidad<=p.stock_minimo) DESC, p.nombre LIMIT 400", $params
+     WHERE $where ORDER BY (s.cantidad<=p.stock_minimo) DESC, p.nombre
+     LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params
 );
 
 $totProd = (int) qVal("SELECT COUNT(DISTINCT s.producto_id) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $scope AND p.activo=1", $sp);
@@ -87,7 +90,7 @@ layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
     <?php endif; ?>
     <div class="flex items-center gap-2">
       <?php if ($soloBajo): ?><a href="<?= e(url('modules/inventario/stock.php')) ?>" class="btn btn-ghost btn-sm cursor-pointer">Ver todos</a><?php else: ?><a href="?bajo=1" class="btn btn-ghost btn-sm cursor-pointer"><?= icon('filter', 'w-4 h-4') ?> Solo stock bajo</a><?php endif; ?>
-      <span class="text-sm text-slate-400"><?= count($rows) ?> registros</span>
+      <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> registros</span>
     </div>
   </div>
   <?php if (!$rows): ?>
@@ -117,6 +120,7 @@ layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

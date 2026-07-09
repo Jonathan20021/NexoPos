@@ -65,11 +65,12 @@ if ($estado !== '') { $cond[] = "p.estado = ?"; $params[] = $estado; }
 if ($q !== '')      { $cond[] = "(p.numero LIKE ? OR p.cliente_nombre LIKE ? OR p.cliente_telefono LIKE ?)"; array_push($params, "%$q%", "%$q%", "%$q%"); }
 $where = implode(' AND ', $cond);
 
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM pedidos p WHERE $where", $params), 25);
 $pedidos = qAll(
     "SELECT p.*, s.nombre AS sucursal,
             (SELECT COUNT(*) FROM pedido_detalles WHERE pedido_id = p.id) AS items
        FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id
-      WHERE $where ORDER BY p.id DESC LIMIT 100",
+      WHERE $where ORDER BY p.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}",
     $params
 );
 
@@ -134,8 +135,8 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
     <p class="text-2xl font-extrabold <?= $pendientes ? 'text-amber-600' : 'text-slate-800' ?> mt-1"><?= number_format($pendientes) ?></p>
   </div>
   <div class="card p-5">
-    <p class="text-sm text-slate-500">Pedidos listados</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format(count($pedidos)) ?></p>
+    <p class="text-sm text-slate-500">Pedidos que coinciden</p>
+    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format($pg['total']) ?></p>
   </div>
   <div class="card p-5 col-span-2">
     <p class="text-sm text-slate-500">Enlace público de la tienda</p>
@@ -250,17 +251,21 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 
 <?php
-// Pedidos que piden link de pago y no tienen ninguno utilizable.
-$sinLink = 0;
-foreach ($pedidos as $p) {
-    if ($p['metodo_pago'] === 'link_pago'
-        && !in_array($p['estado'], ['entregado', 'cancelado'], true)
-        && !linkPagoPedido($p, $emp)) $sinLink++;
-}
+// Pedidos que esperan link de pago. Se cuenta sobre TODO el filtro, no sobre la
+// página visible: si no, la advertencia desaparecería al pasar de página.
+$sinLink = empty($emp['link_pago'])
+    ? (int) qVal(
+        "SELECT COUNT(*) FROM pedidos p
+          WHERE $where AND p.metodo_pago = 'link_pago'
+            AND p.estado NOT IN ('entregado','cancelado')
+            AND (p.link_pago IS NULL OR p.link_pago = '')",
+        $params)
+    : 0;
 ?>
 <?php if ($sinLink): ?>
   <div class="card p-5 mt-5 border-l-4 border-l-amber-400">

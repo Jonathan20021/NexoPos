@@ -113,9 +113,21 @@ if ($verId) {
 }
 
 // ----- Listado -----
+// Una transferencia toca dos sucursales, así que el alcance mira origen y destino.
 $sid = current_sucursal_id();
 $scope = $sid === null ? '1=1' : "(t.sucursal_origen_id = $sid OR t.sucursal_destino_id = $sid)";
-$transferencias = qAll("SELECT t.*, so.nombre AS origen, sd.nombre AS destino FROM transferencias t JOIN sucursales so ON so.id=t.sucursal_origen_id JOIN sucursales sd ON sd.id=t.sucursal_destino_id WHERE $scope ORDER BY t.id DESC LIMIT 100");
+
+$q = trim(get('q'));
+$estadoT = in_array(get('estado'), ['pendiente', 'enviada', 'recibida', 'anulada'], true) ? get('estado') : '';
+$cond = [$scope];
+$params = [];
+if ($q !== '')       { $cond[] = "(t.numero LIKE ? OR so.nombre LIKE ? OR sd.nombre LIKE ?)"; array_push($params, "%$q%", "%$q%", "%$q%"); }
+if ($estadoT !== '') { $cond[] = "t.estado = ?"; $params[] = $estadoT; }
+$where = implode(' AND ', $cond);
+
+$joinT = "FROM transferencias t JOIN sucursales so ON so.id=t.sucursal_origen_id JOIN sucursales sd ON sd.id=t.sucursal_destino_id WHERE $where";
+$pg = paginar((int) qVal("SELECT COUNT(*) $joinT", $params), 25);
+$transferencias = qAll("SELECT t.*, so.nombre AS origen, sd.nombre AS destino $joinT ORDER BY t.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
 $productosJs = array_map(fn($p) => ['id' => (int) $p['id'], 'nombre' => $p['nombre']], qAll("SELECT id, nombre FROM productos WHERE activo=1 AND tipo='producto' ORDER BY nombre"));
 $sucursales = qAll("SELECT id, nombre FROM sucursales WHERE activo=1 ORDER BY nombre");
@@ -130,8 +142,23 @@ endif;
 ?>
 
 <div class="card overflow-hidden">
+  <form method="get" class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2 flex-wrap">
+      <input type="hidden" name="p" value="1">
+      <input type="search" name="q" data-buscar value="<?= e($q) ?>" placeholder="Número o sucursal..." aria-label="Buscar transferencia" autocomplete="off" class="input w-64">
+      <select name="estado" aria-label="Estado" class="select cursor-pointer">
+        <option value="">Todos los estados</option>
+        <?php foreach (['pendiente' => 'Pendiente', 'enviada' => 'Enviada', 'recibida' => 'Recibida', 'anulada' => 'Anulada'] as $k => $v): ?>
+          <option value="<?= $k ?>" <?= $estadoT === $k ? 'selected' : '' ?>><?= $v ?></option>
+        <?php endforeach; ?>
+      </select>
+      <button class="btn btn-primary cursor-pointer" aria-label="Aplicar filtros" title="Filtrar"><?= icon('filter', 'w-4 h-4') ?></button>
+    </div>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> transferencias</span>
+  </form>
+
   <?php if (!$transferencias): ?>
-    <?= empty_state('Sin transferencias', 'Crea una transferencia para mover stock entre sucursales.', 'transfer', $acciones) ?>
+    <?= empty_state('Sin transferencias', $q !== '' || $estadoT !== '' ? 'Ninguna transferencia coincide con los filtros.' : 'Crea una transferencia para mover stock entre sucursales.', 'transfer', $acciones) ?>
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
@@ -160,6 +187,7 @@ endif;
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

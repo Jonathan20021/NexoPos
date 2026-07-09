@@ -192,14 +192,96 @@ function btn_nuevo(string $event, string $label): string
 }
 
 /** Caja de búsqueda estándar (GET). */
+/**
+ * Buscador que se envía solo mientras escribes (ver `data-buscar` en footer.php).
+ * Sigue siendo un <form> normal: sin JavaScript funciona pulsando Enter.
+ */
 function search_box(string $placeholder = 'Buscar...', array $hidden = []): string
 {
+    $q = $_GET['q'] ?? '';
     $h = '';
     foreach ($hidden as $k => $v) $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+
+    $limpiar = '';
+    if ($q !== '') {
+        $qs = $_GET; unset($qs['q'], $qs['p']);
+        $href = '?' . http_build_query($qs);
+        $limpiar = '<a href="' . e($href) . '" title="Limpiar búsqueda" aria-label="Limpiar búsqueda"
+            class="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors duration-200 cursor-pointer">'
+            . icon('x', 'w-4 h-4') . '</a>';
+    }
+
     return '<form method="get" class="relative w-full sm:w-80">' . $h
-        . '<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">' . icon('search', 'w-4 h-4') . '</span>'
-        . '<input type="text" name="q" value="' . e($_GET['q'] ?? '') . '" placeholder="' . e($placeholder) . '" class="input pl-10">'
-        . '</form>';
+        . '<input type="hidden" name="p" value="1">'
+        . '<span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">' . icon('search', 'w-4 h-4') . '</span>'
+        . '<input type="search" name="q" data-buscar value="' . e($q) . '" placeholder="' . e($placeholder) . '"'
+        . ' aria-label="' . e($placeholder) . '" autocomplete="off" class="input pl-10 pr-9">'
+        . $limpiar . '</form>';
+}
+
+/**
+ * Calcula el tramo a mostrar. Devuelve el arreglo que espera paginacion().
+ * `p` fuera de rango se ajusta al último tramo válido en vez de mostrar una
+ * página vacía (pasa al borrar registros estando en la última página).
+ */
+function paginar(int $total, int $porPagina = 25): array
+{
+    $porPagina = max(1, $porPagina);
+    $totalPag  = max(1, (int) ceil($total / $porPagina));
+    $pagina    = max(1, (int) get('p'));
+    if ($pagina > $totalPag) $pagina = $totalPag;
+    return [
+        'total'     => $total,
+        'porPagina' => $porPagina,
+        'totalPag'  => $totalPag,
+        'pagina'    => $pagina,
+        'offset'    => ($pagina - 1) * $porPagina,
+        'desde'     => $total ? ($pagina - 1) * $porPagina + 1 : 0,
+        'hasta'     => min($pagina * $porPagina, $total),
+    ];
+}
+
+/** Pie de paginación. Conserva los filtros de la URL. Vacío si sobra una sola página. */
+function paginacion(array $pg): string
+{
+    if ($pg['totalPag'] <= 1) {
+        return $pg['total']
+            ? '<div class="px-4 py-3 border-t border-slate-100 text-sm text-slate-400">'
+              . number_format($pg['total']) . ' registro' . ($pg['total'] === 1 ? '' : 's') . '</div>'
+            : '';
+    }
+
+    $enlace = function (int $i) {
+        $qs = $_GET; $qs['p'] = $i;
+        return '?' . e(http_build_query($qs));
+    };
+    $btn = 'px-3 py-1.5 rounded-lg font-semibold transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
+
+    $h = '<nav aria-label="Paginación" class="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-slate-100 text-sm">';
+    $h .= '<span class="text-slate-400">Mostrando ' . number_format($pg['desde']) . '–' . number_format($pg['hasta'])
+        . ' de ' . number_format($pg['total']) . '</span>';
+    $h .= '<div class="flex items-center gap-1">';
+
+    if ($pg['pagina'] > 1) {
+        $h .= '<a href="' . $enlace($pg['pagina'] - 1) . '" rel="prev" aria-label="Página anterior" class="' . $btn . ' text-slate-500 hover:bg-slate-100">' . icon('arrow-left', 'w-4 h-4') . '</a>';
+    }
+    if ($pg['pagina'] > 3) {
+        $h .= '<a href="' . $enlace(1) . '" class="' . $btn . ' text-slate-500 hover:bg-slate-100">1</a>';
+        if ($pg['pagina'] > 4) $h .= '<span class="px-1 text-slate-300" aria-hidden="true">…</span>';
+    }
+    for ($i = max(1, $pg['pagina'] - 2); $i <= min($pg['totalPag'], $pg['pagina'] + 2); $i++) {
+        $actual = $i === $pg['pagina'];
+        $h .= '<a href="' . $enlace($i) . '"' . ($actual ? ' aria-current="page"' : '')
+            . ' class="' . $btn . ' ' . ($actual ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100') . '">' . $i . '</a>';
+    }
+    if ($pg['pagina'] < $pg['totalPag'] - 2) {
+        if ($pg['pagina'] < $pg['totalPag'] - 3) $h .= '<span class="px-1 text-slate-300" aria-hidden="true">…</span>';
+        $h .= '<a href="' . $enlace($pg['totalPag']) . '" class="' . $btn . ' text-slate-500 hover:bg-slate-100">' . $pg['totalPag'] . '</a>';
+    }
+    if ($pg['pagina'] < $pg['totalPag']) {
+        $h .= '<a href="' . $enlace($pg['pagina'] + 1) . '" rel="next" aria-label="Página siguiente" class="' . $btn . ' text-slate-500 hover:bg-slate-100">' . icon('arrow-right', 'w-4 h-4') . '</a>';
+    }
+    return $h . '</div></nav>';
 }
 
 /** Inicia una página completa (head + layout + cabecera). */

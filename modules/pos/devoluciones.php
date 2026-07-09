@@ -160,8 +160,16 @@ if ($ventaId && can('devoluciones.crear')) {
 }
 
 // ----- Listado -----
-[$scope, $sp] = sucursalScope('d.sucursal_id');
-$devs = qAll("SELECT d.*, v.numero AS venta_numero, su.nombre AS sucursal, u.nombre AS usuario FROM devoluciones d JOIN ventas v ON v.id=d.venta_id JOIN sucursales su ON su.id=d.sucursal_id LEFT JOIN usuarios u ON u.id=d.usuario_id WHERE $scope ORDER BY d.id DESC LIMIT 100", $sp);
+[$scope, $sp] = sucursalFiltro('d.sucursal_id');
+$q = trim(get('q'));
+$cond = [$scope];
+$params = $sp;
+if ($q !== '') { $cond[] = "(d.numero LIKE ? OR v.numero LIKE ? OR d.motivo LIKE ?)"; array_push($params, "%$q%", "%$q%", "%$q%"); }
+$where = implode(' AND ', $cond);
+
+$joinBase = "FROM devoluciones d JOIN ventas v ON v.id=d.venta_id JOIN sucursales su ON su.id=d.sucursal_id LEFT JOIN usuarios u ON u.id=d.usuario_id WHERE $where";
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM devoluciones d JOIN ventas v ON v.id=d.venta_id WHERE $where", $params), 25);
+$devs = qAll("SELECT d.*, v.numero AS venta_numero, su.nombre AS sucursal, u.nombre AS usuario $joinBase ORDER BY d.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
 $acciones = can('devoluciones.crear') ? '<button onclick="document.getElementById(\'buscarDev\').classList.toggle(\'hidden\')" class="btn btn-primary">' . icon('plus', 'w-4 h-4') . ' Nueva devolución</button>' : '';
 layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones);
@@ -178,8 +186,23 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
 <?php endif; ?>
 
 <div class="card overflow-hidden">
+  <?php $selSuc = selectSucursalFiltro(); ?>
+  <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+    <?php if ($selSuc): ?>
+      <form method="get" class="flex items-center gap-2 flex-wrap">
+        <input type="hidden" name="p" value="1">
+        <input type="search" name="q" data-buscar value="<?= e($q) ?>" placeholder="Devolución, venta o motivo..." aria-label="Buscar devolución" autocomplete="off" class="input w-64">
+        <?= $selSuc ?>
+        <button class="btn btn-primary cursor-pointer" aria-label="Aplicar filtros" title="Filtrar"><?= icon('filter', 'w-4 h-4') ?></button>
+      </form>
+    <?php else: ?>
+      <?= search_box('Devolución, venta o motivo...') ?>
+    <?php endif; ?>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> devoluciones</span>
+  </div>
+
   <?php if (!$devs): ?>
-    <?= empty_state('Sin devoluciones', 'Las devoluciones registradas aparecerán aquí.', 'undo') ?>
+    <?= empty_state('Sin devoluciones', $q !== '' ? 'Ninguna devolución coincide con la búsqueda.' : 'Las devoluciones registradas aparecerán aquí.', 'undo') ?>
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
@@ -199,6 +222,7 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

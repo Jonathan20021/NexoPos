@@ -147,20 +147,23 @@ if ($depId > 0) {
     $params[] = $depId;
 }
 $where = 'WHERE ' . implode(' AND ', $conds);
-$empleados = qAll(
+$consultaBase =
     "SELECT e.*, p.nombre AS puesto, d.nombre AS departamento, su.nombre AS sucursal
      FROM empleados e
      LEFT JOIN puestos p ON p.id = e.puesto_id
      LEFT JOIN departamentos d ON d.id = e.departamento_id
      LEFT JOIN sucursales su ON su.id = e.sucursal_id
-     $where ORDER BY e.nombre, e.apellido",
-    $params
-);
+     $where ORDER BY e.nombre, e.apellido";
 
+// La exportación ignora la paginación: se lleva todo lo que coincide con el filtro.
 if (export_solicitado()) {
+    $todos = qAll($consultaBase, $params);
     export_tabla('empleados', ['Código', 'Nombre', 'Apellido', 'Cédula', 'Puesto', 'Departamento', 'Sucursal', 'Fecha ingreso', 'Salario', 'Estado'],
-        array_map(fn($e) => [$e['codigo'], $e['nombre'], $e['apellido'], $e['cedula'], $e['puesto'], $e['departamento'], $e['sucursal'], $e['fecha_ingreso'], $e['salario'], $e['estado']], $empleados));
+        array_map(fn($e) => [$e['codigo'], $e['nombre'], $e['apellido'], $e['cedula'], $e['puesto'], $e['departamento'], $e['sucursal'], $e['fecha_ingreso'], $e['salario'], $e['estado']], $todos));
 }
+
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM empleados e $where", $params), 25);
+$empleados = qAll($consultaBase . " LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
 $acciones = export_buttons() . (can('rrhh_empleados.crear') ? btn_nuevo('emp:new', 'Nuevo empleado') : '');
 layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acciones);
@@ -193,7 +196,7 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
           <option value="<?= (int) $d['id'] ?>" <?= $depId === (int) $d['id'] ? 'selected' : '' ?>><?= e($d['nombre']) ?></option>
         <?php endforeach; ?>
       </select>
-      <span class="text-sm text-slate-400 whitespace-nowrap"><?= count($empleados) ?> empleados</span>
+      <span class="text-sm text-slate-400 whitespace-nowrap"><?= number_format($pg['total']) ?> empleados</span>
     </form>
   </div>
 
@@ -248,6 +251,7 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

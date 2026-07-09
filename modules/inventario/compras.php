@@ -187,7 +187,8 @@ if ($desde)        { $cond[] = "c.fecha >= ?"; $params[] = $desde; }
 if ($hasta)        { $cond[] = "c.fecha <= ?"; $params[] = $hasta; }
 $where = implode(' AND ', $cond);
 
-$compras = qAll("SELECT c.*, p.nombre AS proveedor, s.nombre AS sucursal FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $where ORDER BY c.id DESC LIMIT 100", $params);
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id WHERE $where", $params), 25);
+$compras = qAll("SELECT c.*, p.nombre AS proveedor, s.nombre AS sucursal FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $where ORDER BY c.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
 if (export_solicitado()) {
     $rows = qAll("SELECT c.numero, c.ncf, p.nombre AS proveedor, s.nombre AS sucursal, c.fecha, c.subtotal, c.itbis, c.total, c.estado FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $where ORDER BY c.id DESC", $params);
@@ -249,6 +250,7 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

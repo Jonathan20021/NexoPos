@@ -85,15 +85,19 @@ $balanceTotal = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM clientes");
 $q = trim(get('q'));
 $where = $q !== '' ? "WHERE (c.nombre LIKE ? OR c.rnc_cedula LIKE ? OR c.telefono LIKE ?)" : '';
 $params = $q !== '' ? ['%' . $q . '%', '%' . $q . '%', '%' . $q . '%'] : [];
+// La exportación ignora la paginación: se lleva todo lo que coincide con el filtro.
+if (export_solicitado()) {
+    $todos = qAll("SELECT c.* FROM clientes c $where ORDER BY (c.id = 1) DESC, c.nombre", $params);
+    export_tabla('clientes', ['Código', 'Nombre', 'RNC/Cédula', 'Teléfono', 'Email', 'Tipo', 'Límite crédito', 'Balance', 'Estado'],
+        array_map(fn($c) => [$c['codigo'], $c['nombre'], $c['rnc_cedula'], $c['telefono'], $c['email'], $c['tipo'], $c['limite_credito'], $c['balance'], $c['activo'] ? 'Activo' : 'Inactivo'], $todos));
+}
+
+$pg = paginar((int) qVal("SELECT COUNT(*) FROM clientes c $where", $params), 25);
 $clientes = qAll(
-    "SELECT c.* FROM clientes c $where ORDER BY (c.id = 1) DESC, c.nombre",
+    "SELECT c.* FROM clientes c $where ORDER BY (c.id = 1) DESC, c.nombre
+     LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}",
     $params
 );
-
-if (export_solicitado()) {
-    export_tabla('clientes', ['Código', 'Nombre', 'RNC/Cédula', 'Teléfono', 'Email', 'Tipo', 'Límite crédito', 'Balance', 'Estado'],
-        array_map(fn($c) => [$c['codigo'], $c['nombre'], $c['rnc_cedula'], $c['telefono'], $c['email'], $c['tipo'], $c['limite_credito'], $c['balance'], $c['activo'] ? 'Activo' : 'Inactivo'], $clientes));
-}
 
 $acciones = export_buttons() . (can('clientes.crear') ? btn_nuevo('cli:new', 'Nuevo cliente') : '');
 layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $acciones);
@@ -118,7 +122,7 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
     <?= search_box('Buscar por nombre, RNC/cédula o teléfono...') ?>
-    <span class="text-sm text-slate-400"><?= count($clientes) ?> clientes</span>
+    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> clientes</span>
   </div>
 
   <?php if (!$clientes): ?>
@@ -164,6 +168,7 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 
