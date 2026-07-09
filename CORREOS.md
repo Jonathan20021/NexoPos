@@ -73,3 +73,19 @@ Resend tiene buzones de prueba que aceptan correo y no llegan a ninguna persona:
 - `complained@resend.dev` — se marca como spam.
 
 Úsalos para verificar la integración antes de apuntar a correos reales.
+
+---
+
+## Dónde va la API key en el servidor
+
+En cPanel, abre `/home2/neetjbte/nexo.kyrosrd.com/config/config.local.php` y
+**añade estas tres líneas al final**, sin borrar las de la base de datos:
+
+```php
+define('RESEND_API_KEY', 're_tu_key_aqui');
+define('MAIL_FROM', 'Comercial Dominicana SRL <pedidos@kyrosrd.com>');
+define('MAIL_REPLY_TO', 'pedidos@kyrosrd.com');
+```
+
+Ese archivo está en `.gitignore`, así que un *Update From Remote* nunca lo
+sobrescribe ni lo sube a GitHub.

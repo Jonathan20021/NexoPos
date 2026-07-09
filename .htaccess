@@ -54,3 +54,40 @@ RedirectMatch 404 /\.git(/|$)
 
 # ----- Documento por defecto -----
 DirectoryIndex index.php
+
+# ============================================================
+#  URLs limpias (sin la extensión .php)
+#
+#  /modules/pos/ventas   se sirve con   modules/pos/ventas.php
+#  /tienda/              se sirve con   tienda/index.php
+#
+#  Las direcciones viejas con .php siguen funcionando: se redirigen con 301 a la
+#  versión limpia, así los enlaces ya enviados por correo no se rompen.
+#  La redirección es SOLO para peticiones GET: un 301 sobre un POST haría que el
+#  navegador reenviara el formulario como GET y se perderían los datos.
+# ============================================================
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # MultiViews haría su propia negociación de extensiones y chocaría con estas reglas.
+  <IfModule mod_negotiation.c>
+    Options -MultiViews
+  </IfModule>
+
+  # 1) /ruta/index.php  ->  /ruta/     (301, solo GET)
+  RewriteCond %{REQUEST_METHOD} =GET
+  RewriteCond %{THE_REQUEST} \s([^?\s]*/)index\.php(\?[^\s]*)?\s [NC]
+  RewriteRule ^ %1 [R=301,L,NE]
+
+  # 2) /ruta.php  ->  /ruta            (301, solo GET)
+  RewriteCond %{REQUEST_METHOD} =GET
+  RewriteCond %{THE_REQUEST} \s([^?\s]*)\.php(\?[^\s]*)?\s [NC]
+  RewriteRule ^ %1 [R=301,L,NE]
+
+  # 3) Servir /ruta con el archivo /ruta.php, sin cambiar lo que ve el usuario.
+  #    Nunca se toca un archivo o carpeta que exista de verdad (imágenes, CSS...).
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_FILENAME}.php -f
+  RewriteRule ^(.+?)/?$ $1.php [L]
+</IfModule>

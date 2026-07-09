@@ -85,3 +85,22 @@ instalador (no es necesario para actualizaciones normales de código).
 ### Recomendado en producción
 - Forzar **HTTPS** y descomentar la línea `Strict-Transport-Security` en `.htaccess`.
 - Hacer respaldos periódicos desde *Administración → Respaldo*.
+
+---
+
+## URLs sin extensión `.php`
+
+El [`.htaccess`](.htaccess) de la raíz hace tres cosas:
+
+1. Sirve `/modules/pos/ventas` con el archivo `modules/pos/ventas.php`.
+2. Redirige con **301** las direcciones viejas con `.php` a la versión limpia,
+   así los enlaces ya enviados por correo no se rompen.
+3. **Solo redirige peticiones GET.** Un 301 sobre un POST haría que el navegador
+   reenviara el formulario como GET y se perderían los datos.
+
+Requiere `mod_rewrite` y `AllowOverride All` (activos por defecto en cPanel).
+Si el módulo no estuviera, el bloque `<IfModule mod_rewrite.c>` simplemente no
+se aplica: las URLs seguirían con `.php` y nada dejaría de funcionar.
+
+Del lado de PHP, `url()` en [`app/helpers.php`](app/helpers.php) genera siempre la
+forma limpia. **No construyas rutas a mano**: usa `url()` y `redirect()`.

@@ -54,11 +54,25 @@ function nav_groups(): array
     ];
 }
 
+/**
+ * ¿El enlace del menú corresponde a la página actual?
+ *
+ * Con las URLs sin extensión, el enlace llega como «/base/modules/pos/» y el
+ * SCRIPT_NAME sigue siendo «/base/modules/pos/index.php». Se normalizan ambos a
+ * la misma forma y se comparan EXACTO: comparar por substring marcaría «Punto de
+ * Venta» como activo en todas las páginas de /modules/pos/.
+ */
 function navActive(string $fullUrl): bool
 {
-    $path = parse_url($fullUrl, PHP_URL_PATH) ?: '';
-    $script = $_SERVER['SCRIPT_NAME'] ?? '';
-    return $path !== '' && $script !== '' && strpos($script, $path) !== false;
+    $normalizar = static function (string $p): string {
+        $p = parse_url($p, PHP_URL_PATH) ?: '';
+        if (str_ends_with($p, '/'))          $p .= 'index';
+        elseif (str_ends_with($p, '.php'))   $p = substr($p, 0, -4);
+        return $p;
+    };
+    $path   = $normalizar($fullUrl);
+    $script = $normalizar($_SERVER['SCRIPT_NAME'] ?? '');
+    return $path !== '' && $script !== '' && $path === $script;
 }
 
 /** Badge / etiqueta de color. */

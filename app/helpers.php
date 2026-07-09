@@ -204,9 +204,37 @@ function base_url(): string
     return $b = ($dir === '/' ? '' : rtrim($dir, '/'));
 }
 
+/**
+ * Construye una URL de la aplicación SIN la extensión .php.
+ *
+ * El .htaccess de la raíz sirve /modules/pos/ventas con el archivo ventas.php,
+ * y redirige (301) las direcciones viejas con .php a la versión limpia. Aquí solo
+ * se genera la forma limpia:
+ *
+ *   url('modules/pos/ventas.php')            -> /base/modules/pos/ventas
+ *   url('modules/pos/ticket.php?id=5&pdf=1') -> /base/modules/pos/ticket?id=5&pdf=1
+ *   url('tienda/index.php')                  -> /base/tienda/
+ *   url('index.php')                         -> /base/
+ *   url('assets/favicon.svg')                -> /base/assets/favicon.svg   (sin tocar)
+ */
 function url(string $path = ''): string
 {
-    return base_url() . '/' . ltrim($path, '/');
+    $path = ltrim($path, '/');
+
+    // Se separa la cadena de consulta y el fragmento para no tocarlos.
+    $corte = strcspn($path, '?#');
+    $ruta  = substr($path, 0, $corte);
+    $resto = substr($path, $corte);
+
+    if ($ruta === 'index.php') {
+        $ruta = '';
+    } elseif (str_ends_with($ruta, '/index.php')) {
+        $ruta = substr($ruta, 0, -strlen('index.php'));   // conserva la barra final
+    } elseif (str_ends_with($ruta, '.php')) {
+        $ruta = substr($ruta, 0, -4);
+    }
+
+    return base_url() . '/' . $ruta . $resto;
 }
 
 function asset(string $path = ''): string

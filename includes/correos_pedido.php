@@ -31,16 +31,16 @@ function correoDestinoSucursal(array $p, array $emp): ?string
     return null;
 }
 
-/** URL pública del pedido, la misma que ve el cliente. */
+/** URL pública absoluta del pedido, la misma que ve el cliente. */
 function correoUrlPedido(array $p): string
 {
-    $base = rtrim((string) (getenv('APP_PUBLIC_URL') ?: ''), '/');
-    if ($base === '') {
+    $raiz = rtrim((string) (getenv('APP_PUBLIC_URL') ?: ''), '/');
+    if ($raiz === '') {
         $esquema = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        $base = $esquema . '://' . $host . base_url();
+        $raiz = $esquema . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
     }
-    return $base . '/tienda/pedido.php?token=' . $p['token'];
+    // url() ya devuelve la ruta limpia, sin la extensión .php.
+    return $raiz . url('tienda/pedido.php?token=' . $p['token']);
 }
 
 // ---------------------------------------------------------------------------
