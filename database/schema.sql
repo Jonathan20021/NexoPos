@@ -627,6 +627,26 @@ CREATE TABLE pedido_detalles (
   CONSTRAINT fk_pd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Bitácora de los correos automáticos de la tienda. Sin esto, un correo que no
+-- llega es invisible: aquí queda el id de Resend o el error exacto.
+DROP TABLE IF EXISTS correos_enviados;
+CREATE TABLE correos_enviados (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pedido_id INT UNSIGNED NULL,
+  evento VARCHAR(40) NOT NULL,
+  destinatario VARCHAR(180) NOT NULL,
+  asunto VARCHAR(180) NOT NULL,
+  estado ENUM('enviado','fallido') NOT NULL,
+  proveedor_id VARCHAR(80) NULL,
+  error VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_correo_pedido (pedido_id),
+  KEY idx_correo_estado (estado),
+  KEY idx_correo_fecha (created_at),
+  CONSTRAINT fk_correo_pedido FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Formato 608 de la DGII: comprobantes fiscales anulados en el período.
 -- tipo_anulacion (catálogo oficial): 1 Deterioro de factura preimpresa,
 -- 2 Errores de impresión, 3 Impresión defectuosa, 4 Corrección de la información,

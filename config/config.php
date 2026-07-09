@@ -33,3 +33,11 @@ if (!defined('DB_USER'))    define('DB_USER', 'root');
 if (!defined('DB_PASS'))    define('DB_PASS', '');
 if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
 if (!defined('APP_ENV'))    define('APP_ENV', 'development');
+
+// ===== Correo saliente (Resend) =====
+// La API key vive SOLO en config.local.php, que está en .gitignore.
+// Sin RESEND_API_KEY no se envían correos, pero nada más deja de funcionar:
+// un pedido nunca se pierde porque falle el correo.
+if (!defined('RESEND_API_KEY')) define('RESEND_API_KEY', '');
+if (!defined('MAIL_FROM'))      define('MAIL_FROM', 'Pedidos <pedidos@kyrosrd.com>');
+if (!defined('MAIL_REPLY_TO'))  define('MAIL_REPLY_TO', '');

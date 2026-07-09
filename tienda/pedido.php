@@ -66,7 +66,42 @@ tienda_start('Pedido ' . $pedido['numero']);
     <span class="inline-block mt-4 px-3 py-1 rounded-full text-sm font-semibold border <?= $estadoClases ?>">
       <?= e($estadoTexto) ?>
     </span>
+
+    <?php if (filter_var((string) $pedido['cliente_email'], FILTER_VALIDATE_EMAIL)): ?>
+      <p class="mt-3 text-sm text-emerald-900/70">
+        Te enviamos la confirmación a <span class="font-semibold text-marca-texto"><?= e($pedido['cliente_email']) ?></span>.
+      </p>
+    <?php endif; ?>
   </div>
+
+  <!-- Progreso del pedido -->
+  <?php if ($pedido['estado'] !== 'cancelado'): ?>
+    <?php
+      $pasos = ['pendiente' => 'Recibido', 'confirmado' => 'Confirmado', 'listo' => 'Listo para retirar', 'entregado' => 'Entregado'];
+      $orden = array_keys($pasos);
+      $actual = array_search($pedido['estado'], $orden, true);
+      $actual = $actual === false ? 0 : $actual;
+    ?>
+    <ol class="mt-8 flex items-center" aria-label="Progreso del pedido">
+      <?php foreach ($orden as $i => $clave): $hecho = $i <= $actual; ?>
+        <li class="flex-1 flex items-center <?= $i === count($orden) - 1 ? '' : 'pr-1' ?>">
+          <div class="flex flex-col items-center gap-1.5 shrink-0">
+            <span class="w-8 h-8 rounded-full grid place-items-center border-2 transition-colors duration-200
+                         <?= $hecho ? 'bg-marca border-marca text-white' : 'bg-white border-emerald-200 text-emerald-300' ?>"
+                  <?= $i === $actual ? 'aria-current="step"' : '' ?>>
+              <?= $hecho ? ticon('check', 'w-4 h-4') : '<span class="text-xs font-bold">' . ($i + 1) . '</span>' ?>
+            </span>
+            <span class="text-[11px] sm:text-xs text-center leading-tight <?= $hecho ? 'font-semibold text-marca-texto' : 'text-emerald-900/45' ?>">
+              <?= e($pasos[$clave]) ?>
+            </span>
+          </div>
+          <?php if ($i < count($orden) - 1): ?>
+            <span class="flex-1 h-0.5 mx-1 mb-5 rounded <?= $i < $actual ? 'bg-marca' : 'bg-emerald-200' ?>" aria-hidden="true"></span>
+          <?php endif; ?>
+        </li>
+      <?php endforeach; ?>
+    </ol>
+  <?php endif; ?>
 
   <?php
   // El enlace del pedido manda; el de la empresa es solo respaldo.

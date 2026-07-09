@@ -50,10 +50,13 @@ if (isPost() && post('accion') === 'pedido') {
         if (wa_numero($telefono) === '' || strlen(wa_numero($telefono)) < 10) {
             throw new RuntimeException('Escribe un teléfono válido con código de país. Ej. 1 809 555 1234.');
         }
+        if ($email === null || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new RuntimeException('Escribe un correo válido: ahí te enviamos la confirmación del pedido.');
+        }
         if (!is_array($carrito) || !$carrito) throw new RuntimeException('Tu carrito está vacío.');
         if (count($carrito) > 50) throw new RuntimeException('Demasiados productos en el carrito.');
 
-        $token = tx(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis) {
+        $creado = tx(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis) {
             $subtotal = 0; $itbisTotal = 0; $lineas = [];
             foreach ($carrito as $item) {
                 $pid  = (int) ($item['id'] ?? 0);
@@ -100,9 +103,18 @@ if (isPost() && post('accion') === 'pedido') {
                     'itbis' => $l['itbis'], 'subtotal' => $l['sub'],
                 ]);
             }
-            return $token;
+            return ['id' => $pedidoId, 'token' => $token];
         });
-        redirect('tienda/pedido.php?token=' . $token);
+
+        // Fuera de la transacción, y a prueba de fallos: un correo caído no puede
+        // tumbar un pedido que ya está guardado. El resultado queda en correos_enviados.
+        try {
+            correoPedidoNuevo((int) $creado['id']);
+        } catch (Throwable $e) {
+            // Ni siquiera un error inesperado del proveedor interrumpe al cliente.
+        }
+
+        redirect('tienda/pedido.php?token=' . $creado['token']);
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
         redirect('tienda/index.php?sucursal=' . $sucursalId);
@@ -209,6 +221,27 @@ $mensajes = get_flashes();
     </div>
   </section>
 
+  <!-- Cómo funciona: responde las tres dudas del cliente antes de que las tenga -->
+  <section aria-label="Cómo funciona" class="bg-white border-b border-emerald-100">
+    <div class="max-w-6xl mx-auto px-4 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+      <div class="flex items-center gap-2.5">
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('cart', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight">Ordena en línea</span>
+           <span class="text-emerald-900/60">Sin registrarte</span></p>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('store', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight">Retira en la sucursal</span>
+           <span class="text-emerald-900/60">Sin costo de envío</span></p>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('check', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight">Paga como prefieras</span>
+           <span class="text-emerald-900/60">Al retirar o por link</span></p>
+      </div>
+    </div>
+  </section>
+
   <main class="max-w-6xl mx-auto px-4 py-8">
     <?php foreach ($mensajes as $m): ?>
       <div role="alert" class="mb-6 rounded-xl border p-4 <?= $m['tipo'] === 'error' ? 'border-rose-300 bg-rose-50 text-rose-800' : 'border-emerald-300 bg-emerald-50 text-emerald-900' ?>">
@@ -248,32 +281,63 @@ $mensajes = get_flashes();
       <p class="text-emerald-900/60 mb-6"><?= count($productos) ?> disponibles en <?= e($sucursal['nombre']) ?></p>
 
       <ul class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <?php foreach ($productos as $p): ?>
-          <li class="bg-white rounded-2xl border border-emerald-100 overflow-hidden flex flex-col">
-            <div class="aspect-square bg-marca-muy grid place-items-center overflow-hidden">
+        <?php foreach ($productos as $p): $pid = (int) $p['id']; $pocas = (float) $p['stock'] <= 5; ?>
+          <li class="group bg-white rounded-2xl border border-emerald-100 overflow-hidden flex flex-col
+                     transition-shadow duration-200 hover:shadow-lg hover:shadow-emerald-900/5">
+            <div class="relative aspect-square bg-marca-muy grid place-items-center overflow-hidden">
               <?php if (!empty($p['imagen']) && is_file(dirname(__DIR__) . '/' . $p['imagen'])): ?>
-                <img src="<?= e(url($p['imagen'])) ?>" alt="<?= e($p['nombre']) ?>" loading="lazy"
+                <img src="<?= e(url($p['imagen'])) ?>" alt="<?= e($p['nombre']) ?>" loading="lazy" decoding="async"
                      class="w-full h-full object-cover">
               <?php else: ?>
-                <span class="text-emerald-700/30" aria-hidden="true"><?= ticon('box', 'w-12 h-12') ?></span>
+                <span class="text-emerald-700/25" aria-hidden="true"><?= ticon('box', 'w-12 h-12') ?></span>
               <?php endif; ?>
+
+              <?php if ($pocas): ?>
+                <span class="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold border border-amber-200">
+                  Quedan <?= qty($p['stock']) ?>
+                </span>
+              <?php endif; ?>
+
+              <span x-show="enCarrito(<?= $pid ?>) > 0" x-transition
+                    class="absolute top-2 right-2 min-w-[26px] h-[26px] px-1.5 rounded-full bg-marca text-white text-xs font-bold grid place-items-center"
+                    x-text="enCarrito(<?= $pid ?>)" aria-hidden="true"></span>
             </div>
+
             <div class="p-4 flex flex-col flex-1">
               <?php if ($p['categoria']): ?>
                 <p class="text-xs font-semibold text-emerald-700/60 uppercase tracking-wide"><?= e($p['categoria']) ?></p>
               <?php endif; ?>
-              <h2 class="font-semibold text-marca-texto mt-0.5 leading-snug"><?= e($p['nombre']) ?></h2>
-              <p class="mt-2 font-display text-xl font-bold text-marca"><?= money($p['precio_venta']) ?></p>
-              <p class="text-xs text-emerald-900/50 mt-0.5">
-                <?= $p['itbis_aplica'] ? 'ITBIS incluido al facturar' : 'Exento de ITBIS' ?>
-              </p>
+              <h2 class="font-semibold text-marca-texto mt-0.5 leading-snug line-clamp-2"><?= e($p['nombre']) ?></h2>
+
+              <div class="mt-2">
+                <p class="font-display text-xl font-bold text-marca leading-none"><?= money($p['precio_venta']) ?></p>
+                <p class="text-xs text-emerald-900/50 mt-1">
+                  <?= $p['itbis_aplica'] ? 'ITBIS incluido al facturar' : 'Exento de ITBIS' ?>
+                </p>
+              </div>
 
               <div class="mt-auto pt-3">
-                <button type="button" @click="agregar(<?= (int) $p['id'] ?>)"
-                        class="btn-marca w-full rounded-xl py-2.5 text-sm cursor-pointer flex items-center justify-center gap-2 min-h-[44px]">
-                  <?= ticon('plus', 'w-4 h-4') ?>
-                  <span x-text="enCarrito(<?= (int) $p['id'] ?>) ? `En el carrito (${enCarrito(<?= (int) $p['id'] ?>)})` : 'Agregar'"></span>
-                </button>
+                <!-- Con el producto ya en el carrito, el botón se convierte en un contador. -->
+                <template x-if="enCarrito(<?= $pid ?>) === 0">
+                  <button type="button" @click="agregar(<?= $pid ?>)"
+                          class="btn-marca w-full rounded-xl py-2.5 text-sm cursor-pointer flex items-center justify-center gap-2 min-h-[44px]">
+                    <?= ticon('plus', 'w-4 h-4') ?> Agregar
+                  </button>
+                </template>
+                <template x-if="enCarrito(<?= $pid ?>) > 0">
+                  <div class="flex items-center justify-between gap-2 rounded-xl border border-marca/30 bg-marca-muy p-1">
+                    <button type="button" @click="restar(<?= $pid ?>)" aria-label="Quitar uno de <?= e($p['nombre']) ?>"
+                            class="w-10 h-10 grid place-items-center rounded-lg text-marca hover:bg-white transition-colors duration-200 cursor-pointer">
+                      <?= ticon('minus', 'w-4 h-4') ?>
+                    </button>
+                    <span class="font-display font-bold text-marca-texto tabular-nums" x-text="enCarrito(<?= $pid ?>)"></span>
+                    <button type="button" @click="agregar(<?= $pid ?>)" :disabled="enCarrito(<?= $pid ?>) >= <?= (float) $p['stock'] ?>"
+                            aria-label="Agregar uno de <?= e($p['nombre']) ?>"
+                            class="w-10 h-10 grid place-items-center rounded-lg text-marca hover:bg-white transition-colors duration-200 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                      <?= ticon('plus', 'w-4 h-4') ?>
+                    </button>
+                  </div>
+                </template>
               </div>
             </div>
           </li>
@@ -369,7 +433,13 @@ $mensajes = get_flashes();
           <label class="block text-sm font-semibold mb-1" for="cliente_telefono">WhatsApp *</label>
           <input id="cliente_telefono" name="cliente_telefono" required inputmode="tel" autocomplete="tel"
                  placeholder="1 809 555 1234" class="campo">
-          <p class="mt-1 text-xs text-emerald-900/60">Aquí te enviaremos la confirmación y el link de pago.</p>
+          <p class="mt-1 text-xs text-emerald-900/60">Por aquí te avisamos y te mandamos el link de pago.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold mb-1" for="cliente_email">Correo electrónico *</label>
+          <input type="email" id="cliente_email" name="cliente_email" required inputmode="email" autocomplete="email"
+                 placeholder="tunombre@correo.com" class="campo">
+          <p class="mt-1 text-xs text-emerald-900/60">Te llega la confirmación del pedido al instante.</p>
         </div>
         <div>
           <label class="block text-sm font-semibold mb-1" for="cliente_documento">Cédula o RNC <span class="font-normal text-emerald-900/50">(opcional)</span></label>

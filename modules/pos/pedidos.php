@@ -48,7 +48,18 @@ if (isPost()) {
                 'link_pago_enviado_at' => null,
             ], 'id = ?', [$id]);
             audit('pedidos', 'link', "Link de pago actualizado en {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
-            flash('success', $link ? "Link de pago guardado en {$p['numero']}. Falta enviárselo al cliente por WhatsApp." : "Link de pago eliminado de {$p['numero']}.");
+
+            $aviso = '';
+            if ($link) {
+                try {
+                    correoPedidoLinkPago($id, $link);
+                    $aviso = filter_var((string) $p['cliente_email'], FILTER_VALIDATE_EMAIL)
+                        ? ' Le enviamos el enlace por correo.' : '';
+                } catch (Throwable $e) { /* el correo nunca bloquea la operación */ }
+            }
+            flash('success', $link
+                ? "Link de pago guardado en {$p['numero']}.$aviso Falta enviárselo por WhatsApp."
+                : "Link de pago eliminado de {$p['numero']}.");
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -272,6 +283,9 @@ if (isPost()) {
             }
             dbUpdate('pedidos', ['estado' => $nuevo], 'id = ?', [$id]);
             audit('pedidos', 'estado', "Pedido {$p['numero']}: {$p['estado']} → $nuevo", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            try {
+                correoPedidoEstado($id, $nuevo);   // solo notifica listo, entregado y cancelado
+            } catch (Throwable $e) { /* el correo nunca bloquea el cambio de estado */ }
             flash('success', "Pedido {$p['numero']} marcado como $nuevo.");
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
