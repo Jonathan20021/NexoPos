@@ -34,6 +34,145 @@ if (isPost()) {
         redirect('modules/pos/pedidos.php');
     }
 
+    /**
+     * Convierte un pedido en venta real: emite NCF, descuenta stock, registra el
+     * cobro y lo asienta en Finanzas. Es la misma operación que hace el POS.
+     *
+     * Se factura al PRECIO QUE SE LE COTIZÓ AL CLIENTE (el guardado en el pedido),
+     * no al precio actual del catálogo. Si el precio subió, no se le cobra de más
+     * por haber ordenado antes.
+     */
+    if (post('accion') === 'facturar') {
+        require_perm('pedidos.gestionar');
+        require_perm('pos.vender');
+        $id          = postInt('id');
+        $metodoId    = postInt('metodo_pago_id') ?: 1;
+        $comprobante = post('comprobante') === 'credito_fiscal' ? 'credito_fiscal' : 'consumidor';
+        $uid         = (int) current_user()['id'];
+
+        try {
+            $ventaId = tx(function () use ($id, $metodoId, $comprobante, $uid) {
+                $ped = qOne("SELECT * FROM pedidos WHERE id = ? FOR UPDATE", [$id]);
+                if (!$ped) throw new RuntimeException('Pedido no encontrado.');
+                if (!can_access_sucursal($ped['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de este pedido.');
+                if ($ped['venta_id']) throw new RuntimeException("El pedido {$ped['numero']} ya fue facturado.");
+                if (in_array($ped['estado'], ['cancelado'], true)) throw new RuntimeException('Un pedido cancelado no se puede facturar.');
+
+                $sid = (int) $ped['sucursal_id'];
+
+                // La venta entra a la caja: exige una sesión abierta, igual que el POS.
+                $sesion = cajaSesionAbierta($sid, $uid);
+                if (!$sesion) throw new RuntimeException('Abre la caja de esa sucursal antes de facturar el pedido.');
+
+                $metodo = qOne("SELECT id, nombre, afecta_caja, es_credito FROM metodos_pago WHERE id = ? AND activo = 1", [$metodoId]);
+                if (!$metodo) throw new RuntimeException('Método de pago no válido o inactivo.');
+
+                // ---- Cliente: se reutiliza o se crea a partir de los datos del pedido ----
+                $clienteId = 1; // Cliente Genérico
+                $doc = trim((string) $ped['cliente_documento']);
+                if ($doc !== '') {
+                    $existente = qVal("SELECT id FROM clientes WHERE rnc_cedula = ? AND activo = 1", [$doc]);
+                    $clienteId = $existente
+                        ? (int) $existente
+                        : dbInsert('clientes', [
+                            'codigo'     => nextNumero('clientes', 'codigo', 'CLI', 5),
+                            'nombre'     => $ped['cliente_nombre'],
+                            'rnc_cedula' => $doc,
+                            'tipo_id'    => dgiiTipoIdPorDocumento($doc) ?? 1,
+                            'telefono'   => $ped['cliente_telefono'],
+                            'email'      => $ped['cliente_email'],
+                            'tipo'       => 'contado',
+                            'activo'     => 1,
+                        ]);
+                }
+                if ($comprobante === 'credito_fiscal' && $doc === '') {
+                    throw new RuntimeException('Un comprobante de crédito fiscal exige el RNC o cédula del cliente.');
+                }
+
+                // ---- Líneas: precio cotizado, costo actual, stock revalidado ----
+                $detalles = qAll("SELECT * FROM pedido_detalles WHERE pedido_id = ?", [$id]);
+                if (!$detalles) throw new RuntimeException('El pedido no tiene líneas.');
+
+                $subtotal = 0.0; $itbisTotal = 0.0; $costoTotal = 0.0; $lineas = [];
+                foreach ($detalles as $d) {
+                    if (!$d['producto_id']) throw new RuntimeException('El producto «' . $d['descripcion'] . '» ya no existe en el catálogo.');
+                    $p = qOne("SELECT id, nombre, precio_compra, tipo FROM productos WHERE id = ? AND activo = 1", [$d['producto_id']]);
+                    if (!$p) throw new RuntimeException('El producto «' . $d['descripcion'] . '» ya no está activo.');
+
+                    $cant = (float) $d['cantidad'];
+                    if ($p['tipo'] === 'producto') {
+                        $stock = stockActual((int) $p['id'], $sid);
+                        if ($cant > $stock) {
+                            throw new RuntimeException('Ya no hay inventario de «' . $p['nombre'] . '»: quedan ' . qty($stock) . ' y el pedido lleva ' . qty($cant) . '.');
+                        }
+                    }
+                    $subtotal   += (float) $d['subtotal'];
+                    $itbisTotal += (float) $d['itbis'];
+                    $costoTotal += (float) $p['precio_compra'] * $cant;
+                    $lineas[] = [
+                        'pid' => (int) $p['id'], 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
+                        'precio' => (float) $d['precio_unitario'], 'costo' => (float) $p['precio_compra'],
+                        'base' => (float) $d['subtotal'], 'itbis' => (float) $d['itbis'],
+                    ];
+                }
+                $total = round($subtotal + $itbisTotal, 2);
+
+                $ncf = siguienteNCF($comprobante === 'credito_fiscal' ? 'B01' : 'B02');
+                if ($ncf === null) throw new RuntimeException('No hay una secuencia NCF activa y vigente para este comprobante.');
+
+                $numero = nextNumero('ventas', 'numero', 'VTA');
+                $ventaId = dbInsert('ventas', [
+                    'numero' => $numero, 'sucursal_id' => $sid, 'caja_sesion_id' => (int) $sesion['id'],
+                    'cliente_id' => $clienteId, 'usuario_id' => $uid, 'fecha' => date('Y-m-d H:i:s'),
+                    'subtotal' => $subtotal, 'descuento' => 0, 'itbis' => $itbisTotal, 'total' => $total,
+                    'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf,
+                    'tipo_ingreso' => 1, 'estado' => 'completada',
+                    'notas' => 'Pedido en línea ' . $ped['numero'],
+                ]);
+
+                foreach ($lineas as $l) {
+                    dbInsert('venta_detalles', [
+                        'venta_id' => $ventaId, 'producto_id' => $l['pid'], 'descripcion' => $l['nombre'],
+                        'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'costo_unitario' => $l['costo'],
+                        'descuento' => 0, 'itbis' => $l['itbis'], 'subtotal' => $l['base'],
+                    ]);
+                    if ($l['tipo'] === 'producto') {
+                        ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], 'Venta ' . $numero);
+                    }
+                }
+
+                dbInsert('venta_pagos', ['venta_id' => $ventaId, 'metodo_pago_id' => $metodoId, 'monto' => $total]);
+
+                if ((int) $metodo['es_credito'] === 1) {
+                    if ($clienteId <= 1) throw new RuntimeException('Una venta a crédito exige un cliente registrado: el pedido no trae cédula ni RNC.');
+                    $cli = qOne("SELECT nombre, balance, limite_credito FROM clientes WHERE id = ? FOR UPDATE", [$clienteId]);
+                    if ((float) $cli['limite_credito'] > 0 && ((float) $cli['balance'] + $total) > (float) $cli['limite_credito']) {
+                        throw new RuntimeException('La venta supera el límite de crédito de ' . $cli['nombre'] . '.');
+                    }
+                    q("UPDATE clientes SET balance = balance + ? WHERE id = ?", [$total, $clienteId]);
+                } elseif ($total > 0) {
+                    registrarTransaccion('ingreso', $total, [
+                        'sucursal_id' => $sid,
+                        'cuenta_id' => cuentaFinancieraIdPorTipo((int) $metodo['afecta_caja'] === 1 ? 'efectivo' : 'banco', $sid),
+                        'categoria_id' => categoriaFinancieraId('ingreso', 'Ventas'),
+                        'descripcion' => 'Venta ' . $numero . ' (pedido ' . $ped['numero'] . ')',
+                        'referencia_tipo' => 'venta', 'referencia_id' => $ventaId,
+                    ]);
+                }
+
+                dbUpdate('pedidos', ['venta_id' => $ventaId, 'estado' => 'entregado'], 'id = ?', [$id]);
+                return $ventaId;
+            });
+
+            audit('pedidos', 'facturar', "Pedido facturado como venta #$ventaId", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            flash('success', 'Pedido facturado. Se emitió el NCF y se descontó el inventario.');
+            redirect('modules/pos/ticket.php?id=' . $ventaId . '&print=1');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+            redirect('modules/pos/pedidos.php');
+        }
+    }
+
     if (post('accion') === 'estado') {
         require_perm('pedidos.gestionar');
         $id = postInt('id');
@@ -67,12 +206,16 @@ $where = implode(' AND ', $cond);
 
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM pedidos p WHERE $where", $params), 25);
 $pedidos = qAll(
-    "SELECT p.*, s.nombre AS sucursal,
+    "SELECT p.*, s.nombre AS sucursal, v.numero AS venta_numero,
             (SELECT COUNT(*) FROM pedido_detalles WHERE pedido_id = p.id) AS items
-       FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id
+       FROM pedidos p
+       JOIN sucursales s ON s.id = p.sucursal_id
+       LEFT JOIN ventas v ON v.id = p.venta_id
       WHERE $where ORDER BY p.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}",
     $params
 );
+
+$metodos = qAll("SELECT id, nombre, es_credito FROM metodos_pago WHERE activo = 1 ORDER BY id");
 
 $pendientes = (int) qVal("SELECT COUNT(*) FROM pedidos p WHERE $scope AND p.estado = 'pendiente'", $sp);
 
@@ -205,9 +348,25 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
                   <span class="text-xs font-semibold text-slate-500">Al retirar</span>
                 <?php endif; ?>
               </td>
-              <td><span class="px-2.5 py-1 rounded-lg text-xs font-semibold border <?= $clases ?>"><?= $label ?></span></td>
+              <td>
+                <span class="px-2.5 py-1 rounded-lg text-xs font-semibold border <?= $clases ?>"><?= $label ?></span>
+                <?php if ($p['venta_id']): ?>
+                  <a href="<?= e(url('modules/pos/ventas.php?ver=' . (int) $p['venta_id'])) ?>"
+                     class="block mt-1 text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors duration-200 cursor-pointer">
+                    <?= e($p['venta_numero']) ?>
+                  </a>
+                <?php endif; ?>
+              </td>
               <td>
                 <div class="flex items-center justify-end gap-1">
+                  <?php if (can('pedidos.gestionar') && can('pos.vender') && !$p['venta_id'] && $p['estado'] !== 'cancelado'): ?>
+                    <button type="button"
+                            onclick="<?= jsEvent('pedido:facturar', ['id' => (int) $p['id'], 'numero' => $p['numero'], 'total' => money($p['total']), 'cliente' => $p['cliente_nombre'], 'sucursal' => $p['sucursal'], 'documento' => (string) $p['cliente_documento'], 'metodo' => $p['metodo_pago']]) ?>"
+                            class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                            title="Convertir el pedido en venta"
+                            aria-label="Facturar el pedido <?= e($p['numero']) ?>"><?= icon('receipt', 'w-4 h-4') ?></button>
+                  <?php endif; ?>
+
                   <?php if (can('pedidos.gestionar') && $p['metodo_pago'] === 'link_pago' && $p['estado'] !== 'entregado'): ?>
                     <button type="button"
                             onclick="<?= jsEvent('pedido:link', ['id' => (int) $p['id'], 'numero' => $p['numero'], 'total' => money($p['total']), 'cliente' => $p['cliente_nombre'], 'link' => (string) $p['link_pago']]) ?>"
@@ -281,6 +440,75 @@ $sinLink = empty($emp['link_pago'])
     </div>
   </div>
 <?php endif; ?>
+
+<!-- Modal: convertir el pedido en venta -->
+<div x-data="{ open: false, ped: { id: 0, numero: '', total: '', cliente: '', sucursal: '', documento: '', metodo: 'pickup' },
+               get tieneDoc() { return this.ped.documento !== ''; } }"
+     @pedido:facturar.window="ped = $event.detail; open = true"
+     @keydown.escape.window="open = false"
+     x-show="open" x-transition.opacity style="display:none"
+     class="modal-overlay" @click.self="open = false" role="dialog" aria-modal="true" aria-labelledby="tituloFacturar">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
+    <form method="post">
+      <?= csrf_field() ?>
+      <input type="hidden" name="accion" value="facturar">
+      <input type="hidden" name="id" :value="ped.id">
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 id="tituloFacturar" class="font-bold text-slate-800">Facturar <span x-text="ped.numero"></span></h3>
+        <button type="button" @click="open = false" aria-label="Cerrar modal" title="Cerrar"
+                class="text-slate-400 hover:text-slate-700 p-1 -m-1 cursor-pointer transition-colors duration-200"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm">
+          <p class="text-slate-500">Total a cobrar</p>
+          <p class="text-xl font-extrabold text-slate-800" x-text="ped.total"></p>
+          <p class="text-slate-500 mt-1">
+            <span class="font-semibold text-slate-700" x-text="ped.cliente"></span> ·
+            <span x-text="ped.sucursal"></span>
+          </p>
+        </div>
+
+        <div>
+          <label class="label" for="metodo_pago_id">Método de pago *</label>
+          <select id="metodo_pago_id" name="metodo_pago_id" required class="select cursor-pointer">
+            <?php foreach ($metodos as $m): ?>
+              <option value="<?= (int) $m['id'] ?>" <?= (int) $m['id'] === 1 ? 'selected' : '' ?>><?= e($m['nombre']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <p class="mt-1 text-xs text-slate-500">
+            El cliente eligió <span class="font-semibold" x-text="ped.metodo === 'link_pago' ? 'pagar con link' : 'pagar al retirar'"></span>.
+            Registra aquí cómo pagó realmente.
+          </p>
+        </div>
+
+        <div>
+          <label class="label" for="comprobante">Tipo de comprobante *</label>
+          <select id="comprobante" name="comprobante" class="select cursor-pointer">
+            <option value="consumidor">Consumidor Final (B02)</option>
+            <option value="credito_fiscal" x-bind:disabled="!tieneDoc">Crédito Fiscal (B01)</option>
+          </select>
+          <p class="mt-1 text-xs" :class="tieneDoc ? 'text-slate-500' : 'text-amber-600'"
+             x-text="tieneDoc ? 'El cliente dejó su RNC o cédula: puedes emitir crédito fiscal.' : 'El pedido no trae RNC ni cédula, así que solo puede emitirse Consumidor Final.'"></p>
+        </div>
+
+        <div class="flex gap-3 rounded-xl border border-sky-200 bg-sky-50 p-3">
+          <?= icon('alert', 'w-5 h-5 text-sky-600 shrink-0') ?>
+          <p class="text-sm text-sky-900">
+            Se emitirá el NCF, se descontará el inventario de la sucursal y el cobro entrará a la caja abierta.
+            Se factura al precio que se le cotizó al cliente, no al precio actual del catálogo.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="open = false" class="btn btn-ghost cursor-pointer">Cancelar</button>
+        <button class="btn btn-primary cursor-pointer"><?= icon('receipt', 'w-4 h-4') ?> Facturar y emitir ticket</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- Modal: link de pago del pedido -->
 <div x-data="{ open: false, pedido: { id: 0, numero: '', total: '', cliente: '', link: '' } }"

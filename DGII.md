@@ -34,6 +34,17 @@ que genera el sistema. Ese es el mejor chequeo posible.
 
 ---
 
+## Pedidos de la tienda en línea
+
+Un pedido de la tienda **no es una venta**: no descuenta inventario ni emite NCF.
+Cuando el cliente llega a retirar, se pulsa **Facturar** en *Pedidos en línea* y el
+sistema crea la venta real: emite el NCF, descuenta el stock, registra el cobro en
+la caja abierta y asienta el ingreso en Finanzas. Desde ese momento la venta entra
+al 607 como cualquier otra.
+
+Se factura al **precio que se le cotizó al cliente**, no al precio actual del
+catálogo: si el precio subió entre el pedido y el retiro, no se le cobra de más.
+
 ## Reglas de negocio implementadas
 
 - **Los reportes son por RNC, no por sucursal.** El archivo siempre incluye todas
