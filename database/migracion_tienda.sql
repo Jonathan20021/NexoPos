@@ -88,6 +88,22 @@ CREATE TABLE IF NOT EXISTS pedido_detalles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- 3b) Link de pago POR PEDIDO.
+--
+--     Cada pedido tiene su propio enlace, porque el monto cambia en cada venta.
+--     empresa.link_pago queda solo como respaldo opcional cuando el comercio
+--     usa un enlace genérico.
+-- ---------------------------------------------------------------------------
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pedidos' AND COLUMN_NAME='link_pago');
+SET @s := IF(@c=0,
+  'ALTER TABLE pedidos
+     ADD COLUMN link_pago VARCHAR(500) NULL AFTER metodo_pago,
+     ADD COLUMN link_pago_enviado_at DATETIME NULL AFTER link_pago',
+  'SELECT ''pedidos.link_pago ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- ---------------------------------------------------------------------------
 -- 4) PERMISOS del módulo de pedidos.
 -- ---------------------------------------------------------------------------
 INSERT INTO permisos (clave, modulo, grupo, descripcion)
@@ -116,6 +132,7 @@ UNION ALL SELECT 'roles con acceso a pedidos.ver', COUNT(*) FROM rol_permisos rp
 
 -- ---------------------------------------------------------------------------
 -- REVERSIÓN:
+--   ALTER TABLE pedidos DROP COLUMN link_pago, DROP COLUMN link_pago_enviado_at;
 --   DROP TABLE pedido_detalles; DROP TABLE pedidos;
 --   ALTER TABLE sucursales DROP COLUMN whatsapp, DROP COLUMN horario, DROP COLUMN tienda_activa;
 --   ALTER TABLE empresa DROP COLUMN link_pago, DROP COLUMN tienda_activa;

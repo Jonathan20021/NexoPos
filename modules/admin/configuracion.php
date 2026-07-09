@@ -178,9 +178,12 @@ layout_start('Configuración', 'Ajustes generales del sistema');
             <p class="text-xs text-slate-500 mt-0.5">Catálogo público en <code class="px-1 rounded bg-slate-100 font-mono"><?= e(url('tienda/index.php')) ?></code></p>
           </div>
           <div class="sm:col-span-2">
-            <label class="label" for="link_pago">Link de pago</label>
+            <label class="label" for="link_pago">Link de pago genérico <span class="font-normal text-slate-400">(opcional)</span></label>
             <input type="url" id="link_pago" name="link_pago" value="<?= e($empresa['link_pago'] ?? '') ?>" class="input" placeholder="https://pagos.tubanco.com/tu-comercio" <?= $puedeEditar ? '' : 'disabled' ?>>
-            <p class="mt-1 text-xs text-slate-500">Se incluye en el mensaje de WhatsApp que envías al cliente cuando pide recibir el link.</p>
+            <p class="mt-1 text-xs text-slate-500">
+              Solo como respaldo. Cada pedido lleva su propio enlace por el monto exacto, que se pega desde
+              <a href="<?= e(url('modules/pos/pedidos.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 cursor-pointer">Pedidos en línea</a>.
+            </p>
           </div>
           <div class="sm:col-span-2">
             <label class="flex items-center gap-2.5 <?= $puedeEditar ? 'cursor-pointer' : '' ?>">

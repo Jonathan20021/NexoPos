@@ -68,9 +68,24 @@ tienda_start('Pedido ' . $pedido['numero']);
     </span>
   </div>
 
+  <?php
+  // El enlace del pedido manda; el de la empresa es solo respaldo.
+  $linkPago = $pedido['link_pago'] ?: ($emp['link_pago'] ?? null);
+  $pagable = $linkPago && $pedido['metodo_pago'] === 'link_pago'
+             && !in_array($pedido['estado'], ['entregado', 'cancelado'], true);
+  ?>
+
+  <?php if ($pagable): ?>
+    <a href="<?= e($linkPago) ?>" target="_blank" rel="noopener"
+       class="btn-accion mt-8 w-full rounded-xl py-4 min-h-[44px] cursor-pointer flex items-center justify-center gap-2.5 text-base">
+      <?= ticon('check', 'w-5 h-5') ?> Pagar <?= money($pedido['total']) ?> en línea
+    </a>
+    <p class="mt-2 text-center text-xs text-emerald-900/60">Te llevamos al portal de pago seguro.</p>
+  <?php endif; ?>
+
   <?php if ($linkWhatsapp): ?>
     <a href="<?= e($linkWhatsapp) ?>" target="_blank" rel="noopener"
-       class="btn-marca mt-8 w-full rounded-xl py-4 min-h-[44px] cursor-pointer flex items-center justify-center gap-2.5 text-base">
+       class="<?= $pagable ? 'btn-marca mt-3' : 'btn-marca mt-8' ?> w-full rounded-xl py-4 min-h-[44px] cursor-pointer flex items-center justify-center gap-2.5 text-base">
       <?= ticon('whatsapp', 'w-5 h-5') ?> Avisar por WhatsApp a la tienda
     </a>
     <p class="mt-2 text-center text-xs text-emerald-900/60">
@@ -129,7 +144,9 @@ tienda_start('Pedido ' . $pedido['numero']);
       <?php if ($pedido['metodo_pago'] === 'link_pago'): ?>
         <p class="mt-2 font-semibold">Link de pago</p>
         <p class="text-sm text-emerald-900/70 mt-0.5">
-          Te enviaremos el enlace por WhatsApp al <?= e($pedido['cliente_telefono']) ?>.
+          <?= $pagable
+              ? 'Ya puedes pagar con el botón de arriba.'
+              : 'Te enviaremos el enlace por WhatsApp al ' . e($pedido['cliente_telefono']) . '.' ?>
         </p>
       <?php else: ?>
         <p class="mt-2 font-semibold">Pagas al retirar</p>

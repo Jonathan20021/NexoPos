@@ -7,6 +7,33 @@ $emp = $GLOBALS['empresa'] ?: [];
 
 if (isPost()) {
     verify_csrf();
+
+    if (post('accion') === 'link') {
+        require_perm('pedidos.gestionar');
+        $id   = postInt('id');
+        $link = trim(post('link_pago'));
+        try {
+            $p = qOne("SELECT * FROM pedidos WHERE id = ?", [$id]);
+            if (!$p) throw new RuntimeException('Pedido no encontrado.');
+            require_sucursal_access($p['sucursal_id']);
+            if ($link !== '') {
+                if (!filter_var($link, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $link)) {
+                    throw new RuntimeException('El link de pago debe ser una URL válida que empiece por https://');
+                }
+                if (mb_strlen($link) > 500) throw new RuntimeException('El link de pago es demasiado largo.');
+            }
+            dbUpdate('pedidos', [
+                'link_pago' => $link ?: null,
+                'link_pago_enviado_at' => $link ? date('Y-m-d H:i:s') : null,
+            ], 'id = ?', [$id]);
+            audit('pedidos', 'link', "Link de pago actualizado en {$p['numero']}", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            flash('success', $link ? "Link de pago guardado en {$p['numero']}. Ya puedes enviarlo por WhatsApp." : "Link de pago eliminado de {$p['numero']}.");
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/pos/pedidos.php');
+    }
+
     if (post('accion') === 'estado') {
         require_perm('pedidos.gestionar');
         $id = postInt('id');
@@ -56,6 +83,15 @@ $estadoBadge = [
     'cancelado'  => ['Cancelado', 'bg-rose-50 text-rose-700 border-rose-200'],
 ];
 
+/**
+ * Link de pago efectivo del pedido: el suyo propio, y si no tiene, el genérico
+ * de la empresa. El del pedido siempre manda, porque lleva el monto de esa venta.
+ */
+function linkPagoPedido(array $p, array $emp): ?string
+{
+    return $p['link_pago'] ?: ($emp['link_pago'] ?? null) ?: null;
+}
+
 /** Mensaje de WhatsApp que la tienda envía al cliente. */
 function mensajePedido(array $p, array $emp): string
 {
@@ -72,10 +108,18 @@ function mensajePedido(array $p, array $emp): string
     };
 
     $msg = $saludo . $base . $estado;
-    if ($p['metodo_pago'] === 'link_pago' && !empty($emp['link_pago']) && !in_array($p['estado'], ['entregado', 'cancelado'], true)) {
-        $msg .= " Puedes pagar aquí: {$emp['link_pago']}";
-    } elseif ($p['metodo_pago'] === 'pickup' && !in_array($p['estado'], ['entregado', 'cancelado'], true)) {
-        $msg .= ' Pagas al retirar.';
+    $cerrado = in_array($p['estado'], ['entregado', 'cancelado'], true);
+    $link = linkPagoPedido($p, $emp);
+
+    if ($cerrado) {
+        return $msg;
+    }
+    if ($p['metodo_pago'] === 'link_pago') {
+        $msg .= $link
+            ? " Puedes pagar " . money($p['total']) . " aquí: $link"
+            : " En breve te enviamos el link de pago.";
+    } else {
+        $msg .= ' Pagas ' . money($p['total']) . ' al retirar.';
     }
     return $msg;
 }
@@ -146,13 +190,32 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
               <td class="text-center tabular-nums"><?= (int) $p['items'] ?></td>
               <td class="text-right font-bold text-slate-800 tabular-nums"><?= money($p['total']) ?></td>
               <td>
-                <span class="text-xs font-semibold <?= $p['metodo_pago'] === 'link_pago' ? 'text-blue-600' : 'text-slate-500' ?>">
-                  <?= $p['metodo_pago'] === 'link_pago' ? 'Link de pago' : 'Al retirar' ?>
-                </span>
+                <?php $linkEfectivo = linkPagoPedido($p, $emp); ?>
+                <?php if ($p['metodo_pago'] === 'link_pago'): ?>
+                  <span class="text-xs font-semibold text-blue-600 block">Link de pago</span>
+                  <?php if ($p['link_pago']): ?>
+                    <span class="text-xs text-emerald-600">Enviado <?= e(substr((string) $p['link_pago_enviado_at'], 0, 10)) ?></span>
+                  <?php elseif ($linkEfectivo): ?>
+                    <span class="text-xs text-slate-400">Usa el genérico</span>
+                  <?php else: ?>
+                    <span class="text-xs font-semibold text-amber-600">Falta el link</span>
+                  <?php endif; ?>
+                <?php else: ?>
+                  <span class="text-xs font-semibold text-slate-500">Al retirar</span>
+                <?php endif; ?>
               </td>
               <td><span class="px-2.5 py-1 rounded-lg text-xs font-semibold border <?= $clases ?>"><?= $label ?></span></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
+                  <?php if (can('pedidos.gestionar') && $p['metodo_pago'] === 'link_pago' && $p['estado'] !== 'entregado'): ?>
+                    <button type="button"
+                            onclick="<?= jsEvent('pedido:link', ['id' => (int) $p['id'], 'numero' => $p['numero'], 'total' => money($p['total']), 'cliente' => $p['cliente_nombre'], 'link' => (string) $p['link_pago']]) ?>"
+                            class="p-2 rounded-lg transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500
+                                   <?= $p['link_pago'] ? 'text-slate-400 hover:text-blue-600 hover:bg-blue-50' : 'text-amber-600 hover:bg-amber-50' ?>"
+                            title="<?= $p['link_pago'] ? 'Cambiar el link de pago' : 'Agregar el link de pago de este pedido' ?>"
+                            aria-label="Link de pago del pedido <?= e($p['numero']) ?>"><?= icon('wallet', 'w-4 h-4') ?></button>
+                  <?php endif; ?>
+
                   <?php if ($wa): ?>
                     <a href="<?= e($wa) ?>" target="_blank" rel="noopener"
                        class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
@@ -190,19 +253,75 @@ layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública',
   <?php endif; ?>
 </div>
 
-<?php if (empty($emp['link_pago'])): ?>
+<?php
+// Pedidos que piden link de pago y no tienen ninguno utilizable.
+$sinLink = 0;
+foreach ($pedidos as $p) {
+    if ($p['metodo_pago'] === 'link_pago'
+        && !in_array($p['estado'], ['entregado', 'cancelado'], true)
+        && !linkPagoPedido($p, $emp)) $sinLink++;
+}
+?>
+<?php if ($sinLink): ?>
   <div class="card p-5 mt-5 border-l-4 border-l-amber-400">
     <div class="flex items-start gap-3">
       <?= icon('alert', 'w-5 h-5 text-amber-600 shrink-0 mt-0.5') ?>
       <div class="text-sm text-slate-600">
-        <h3 class="font-bold text-slate-800">Falta configurar el link de pago</h3>
+        <h3 class="font-bold text-slate-800"><?= $sinLink ?> pedido<?= $sinLink === 1 ? '' : 's' ?> sin link de pago</h3>
         <p class="mt-1">
-          Sin él, los mensajes de WhatsApp a clientes que eligieron «recibir link de pago» no incluirán el enlace.
-          Configúralo en <a href="<?= e(url('modules/admin/configuracion.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 cursor-pointer">Configuración → Empresa</a>.
+          Genera el enlace de cobro por el monto exacto en tu pasarela y pégalo en cada pedido con el botón de la billetera.
+          Hasta entonces, el mensaje de WhatsApp solo le avisa al cliente que se lo enviarás en breve.
         </p>
       </div>
     </div>
   </div>
 <?php endif; ?>
+
+<!-- Modal: link de pago del pedido -->
+<div x-data="{ open: false, pedido: { id: 0, numero: '', total: '', cliente: '', link: '' } }"
+     @pedido:link.window="pedido = $event.detail; open = true; $nextTick(() => $refs.campoLink.focus())"
+     @keydown.escape.window="open = false"
+     x-show="open" x-transition.opacity style="display:none"
+     class="modal-overlay" @click.self="open = false" role="dialog" aria-modal="true" aria-labelledby="tituloLink">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
+    <form method="post">
+      <?= csrf_field() ?>
+      <input type="hidden" name="accion" value="link">
+      <input type="hidden" name="id" :value="pedido.id">
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 id="tituloLink" class="font-bold text-slate-800">Link de pago · <span x-text="pedido.numero"></span></h3>
+        <button type="button" @click="open = false" aria-label="Cerrar modal" title="Cerrar"
+                class="text-slate-400 hover:text-slate-700 p-1 -m-1 cursor-pointer transition-colors duration-200"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div class="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm">
+          <p class="text-slate-500">Monto a cobrar</p>
+          <p class="text-xl font-extrabold text-slate-800" x-text="pedido.total"></p>
+          <p class="text-slate-500 mt-1">Cliente: <span class="font-semibold text-slate-700" x-text="pedido.cliente"></span></p>
+        </div>
+
+        <div>
+          <label class="label" for="link_pago">Enlace de cobro *</label>
+          <input type="url" id="link_pago" name="link_pago" x-ref="campoLink" x-model="pedido.link"
+                 placeholder="https://pagos.tubanco.com/abc123" class="input" autocomplete="off">
+          <p class="mt-1 text-xs text-slate-500">
+            Genera el enlace por el monto exacto en tu pasarela y pégalo aquí. Cada pedido lleva el suyo.
+          </p>
+        </div>
+
+        <p class="text-xs text-slate-500">
+          Deja el campo vacío para quitar el enlace. Después de guardar, usa el botón de WhatsApp para enviárselo al cliente.
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="open = false" class="btn btn-ghost cursor-pointer">Cancelar</button>
+        <button class="btn btn-primary cursor-pointer"><?= icon('save', 'w-4 h-4') ?> Guardar link</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <?php layout_end(); ?>

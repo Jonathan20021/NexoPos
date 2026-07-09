@@ -587,6 +587,9 @@ CREATE TABLE pedidos (
   cliente_documento VARCHAR(30) NULL,
   notas VARCHAR(500) NULL,
   metodo_pago ENUM('pickup','link_pago') NOT NULL DEFAULT 'pickup',
+  -- Cada pedido lleva su propio enlace: el monto cambia en cada venta.
+  link_pago VARCHAR(500) NULL,
+  link_pago_enviado_at DATETIME NULL,
   subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
