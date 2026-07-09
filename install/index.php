@@ -88,8 +88,8 @@ function sembrar(): void
         ]);
 
         // ----- Sucursales -----
-        $sucPrincipal = dbInsert('sucursales', ['codigo' => 'SUC-01', 'nombre' => 'Sucursal Principal', 'direccion' => 'Av. Winston Churchill #45, Santo Domingo', 'telefono' => '809-555-0101', 'encargado' => 'Carlos Méndez']);
-        $sucSantiago  = dbInsert('sucursales', ['codigo' => 'SUC-02', 'nombre' => 'Sucursal Santiago', 'direccion' => 'Calle del Sol #88, Santiago', 'telefono' => '809-555-0202', 'encargado' => 'Laura Peña']);
+        $sucPrincipal = dbInsert('sucursales', ['codigo' => 'SUC-01', 'nombre' => 'Sucursal Principal', 'direccion' => 'Av. Winston Churchill #45, Santo Domingo', 'telefono' => '809-555-0101', 'whatsapp' => '18095550101', 'horario' => 'Lun a Sáb, 8:00 AM - 8:00 PM', 'encargado' => 'Carlos Méndez']);
+        $sucSantiago  = dbInsert('sucursales', ['codigo' => 'SUC-02', 'nombre' => 'Sucursal Santiago', 'direccion' => 'Calle del Sol #88, Santiago', 'telefono' => '809-555-0202', 'whatsapp' => '18095550202', 'horario' => 'Lun a Sáb, 8:00 AM - 7:00 PM', 'encargado' => 'Laura Peña']);
 
         // ----- Permisos (desde el catálogo) -----
         foreach (permission_keys() as $clave => $info) {

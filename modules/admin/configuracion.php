@@ -23,8 +23,14 @@ if (isPost()) {
             'moneda'         => trim(post('moneda')) ?: 'RD$',
             'itbis_tasa'     => $itbisTasa,
             'mensaje_ticket' => trim(post('mensaje_ticket')) ?: null,
+            'link_pago'      => trim(post('link_pago')) ?: null,
+            'tienda_activa'  => post('tienda_activa') ? 1 : 0,
             'logo'           => guardar_imagen('logo', 'logo', setting('logo')),
         ];
+        if ($datos['link_pago'] !== null && !filter_var($datos['link_pago'], FILTER_VALIDATE_URL)) {
+            flash('error', 'El link de pago debe ser una URL válida (empezando por https://).');
+            redirect('modules/admin/configuracion.php');
+        }
         dbUpdate('empresa', $datos, 'id = ?', [1]);
         audit('configuracion', 'editar', 'Datos de la empresa actualizados', ['tabla' => 'empresa', 'registro_id' => 1]);
         flash('success', 'Datos de la empresa guardados.');
@@ -163,8 +169,25 @@ layout_start('Configuración', 'Ajustes generales del sistema');
             <input type="number" step="0.01" min="0" name="itbis_tasa" value="<?= e($empresa['itbis_tasa'] ?? '18.00') ?>" class="input" <?= $puedeEditar ? '' : 'disabled' ?>>
           </div>
           <div class="sm:col-span-2">
-            <label class="label">Mensaje del ticket</label>
-            <input type="text" name="mensaje_ticket" value="<?= e($empresa['mensaje_ticket'] ?? '') ?>" class="input" placeholder="¡Gracias por su compra!" <?= $puedeEditar ? '' : 'disabled' ?>>
+            <label class="label" for="mensaje_ticket">Mensaje del ticket</label>
+            <input type="text" id="mensaje_ticket" name="mensaje_ticket" value="<?= e($empresa['mensaje_ticket'] ?? '') ?>" class="input" placeholder="¡Gracias por su compra!" <?= $puedeEditar ? '' : 'disabled' ?>>
+          </div>
+
+          <div class="sm:col-span-2 border-t border-slate-100 pt-4 mt-1">
+            <h4 class="font-bold text-slate-800 text-sm">Tienda en línea</h4>
+            <p class="text-xs text-slate-500 mt-0.5">Catálogo público en <code class="px-1 rounded bg-slate-100 font-mono"><?= e(url('tienda/index.php')) ?></code></p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="label" for="link_pago">Link de pago</label>
+            <input type="url" id="link_pago" name="link_pago" value="<?= e($empresa['link_pago'] ?? '') ?>" class="input" placeholder="https://pagos.tubanco.com/tu-comercio" <?= $puedeEditar ? '' : 'disabled' ?>>
+            <p class="mt-1 text-xs text-slate-500">Se incluye en el mensaje de WhatsApp que envías al cliente cuando pide recibir el link.</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="flex items-center gap-2.5 <?= $puedeEditar ? 'cursor-pointer' : '' ?>">
+              <input type="checkbox" name="tienda_activa" value="1" <?= !empty($empresa['tienda_activa']) ? 'checked' : '' ?> <?= $puedeEditar ? '' : 'disabled' ?> class="w-4 h-4 accent-blue-600">
+              <span class="text-sm font-semibold text-slate-700">Tienda en línea abierta al público</span>
+            </label>
+            <p class="mt-1 text-xs text-slate-500">Al desactivarla, los clientes ven un aviso de tienda cerrada.</p>
           </div>
         </div>
         <?php if ($puedeEditar): ?>

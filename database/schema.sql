@@ -19,6 +19,8 @@ CREATE TABLE empresa (
   itbis_tasa DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   logo VARCHAR(255) NULL,
   mensaje_ticket VARCHAR(255) NULL DEFAULT '¡Gracias por su compra!',
+  link_pago VARCHAR(255) NULL,                  -- se envía al cliente por WhatsApp
+  tienda_activa TINYINT(1) NOT NULL DEFAULT 1,  -- interruptor general de la tienda pública
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -31,9 +33,12 @@ CREATE TABLE sucursales (
   nombre VARCHAR(120) NOT NULL,
   direccion VARCHAR(255) NULL,
   telefono VARCHAR(40) NULL,
+  whatsapp VARCHAR(20) NULL,          -- número de la tienda online (con código de país)
+  horario VARCHAR(120) NULL,          -- se muestra al cliente en la tienda
   email VARCHAR(120) NULL,
   encargado VARCHAR(120) NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
+  tienda_activa TINYINT(1) NOT NULL DEFAULT 1,  -- visible en la tienda pública
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_sucursal_codigo (codigo)
@@ -563,6 +568,57 @@ CREATE TABLE devolucion_detalles (
   CONSTRAINT chk_devolucion_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND subtotal >= 0),
   CONSTRAINT fk_dd_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(id) ON DELETE CASCADE,
   CONSTRAINT fk_dd_venta_detalle FOREIGN KEY (venta_detalle_id) REFERENCES venta_detalles(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== TIENDA ONLINE =====================
+-- Un pedido NO descuenta stock: es una solicitud. El inventario se mueve cuando
+-- el pedido se convierte en venta desde el POS.
+-- token: identificador público; el cliente consulta su pedido sin autenticarse.
+DROP TABLE IF EXISTS pedido_detalles;
+DROP TABLE IF EXISTS pedidos;
+CREATE TABLE pedidos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  token CHAR(32) NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  cliente_nombre VARCHAR(150) NOT NULL,
+  cliente_telefono VARCHAR(40) NOT NULL,
+  cliente_email VARCHAR(120) NULL,
+  cliente_documento VARCHAR(30) NULL,
+  notas VARCHAR(500) NULL,
+  metodo_pago ENUM('pickup','link_pago') NOT NULL DEFAULT 'pickup',
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  estado ENUM('pendiente','confirmado','listo','entregado','cancelado') NOT NULL DEFAULT 'pendiente',
+  venta_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pedido_numero (numero),
+  UNIQUE KEY uq_pedido_token (token),
+  KEY idx_pedido_sucursal (sucursal_id),
+  KEY idx_pedido_estado (estado),
+  KEY fk_pedido_venta (venta_id),
+  CONSTRAINT chk_pedido_total CHECK (total >= 0),
+  CONSTRAINT fk_pedido_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_pedido_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE pedido_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pedido_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NULL,
+  descripcion VARCHAR(180) NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  precio_unitario DECIMAL(12,2) NOT NULL,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  subtotal DECIMAL(12,2) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_pd_pedido (pedido_id),
+  CONSTRAINT chk_pedido_detalle CHECK (cantidad > 0 AND precio_unitario >= 0),
+  CONSTRAINT fk_pd_pedido FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Formato 608 de la DGII: comprobantes fiscales anulados en el período.

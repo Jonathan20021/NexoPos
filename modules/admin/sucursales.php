@@ -16,6 +16,10 @@ if (isPost()) {
         $email     = trim(post('email'));
         $encargado = trim(post('encargado'));
         $activo    = postInt('activo', 1);
+        // La tienda pública usa wa.me, que exige el número solo en dígitos y con país.
+        $whatsapp  = preg_replace('/\D+/', '', post('whatsapp'));
+        $horario   = trim(post('horario'));
+        $tiendaAct = post('tienda_activa') ? 1 : 0;
 
         if ($codigo === '' || $nombre === '') {
             flash('error', 'El código y el nombre son obligatorios.');
@@ -23,15 +27,20 @@ if (isPost()) {
             flash('error', 'El correo electrónico no es válido.');
         } elseif (qVal("SELECT 1 FROM sucursales WHERE codigo = ? AND id <> ?", [$codigo, $id])) {
             flash('error', 'Ya existe una sucursal con ese código.');
+        } elseif ($whatsapp !== '' && strlen($whatsapp) < 10) {
+            flash('error', 'El WhatsApp debe incluir el código de país. Ej. 1 809 555 0101.');
         } else {
             $datos = [
-                'codigo'    => $codigo,
-                'nombre'    => $nombre,
-                'direccion' => $direccion ?: null,
-                'telefono'  => $telefono ?: null,
-                'email'     => $email ?: null,
-                'encargado' => $encargado ?: null,
-                'activo'    => $activo,
+                'codigo'        => $codigo,
+                'nombre'        => $nombre,
+                'direccion'     => $direccion ?: null,
+                'telefono'      => $telefono ?: null,
+                'whatsapp'      => $whatsapp ?: null,
+                'horario'       => $horario ?: null,
+                'email'         => $email ?: null,
+                'encargado'     => $encargado ?: null,
+                'activo'        => $activo,
+                'tienda_activa' => $tiendaAct,
             ];
             if ($id > 0) {
                 require_perm('sucursales.editar');
@@ -121,7 +130,7 @@ layout_start('Sucursales', 'Administra las sucursales de tu negocio', $acciones)
               <td>
                 <div class="flex items-center justify-end gap-1">
                   <?php if (can('sucursales.editar')): ?>
-                    <button onclick="<?= jsEvent('suc:edit', ['id' => $s['id'], 'codigo' => $s['codigo'], 'nombre' => $s['nombre'], 'direccion' => $s['direccion'], 'telefono' => $s['telefono'], 'email' => $s['email'], 'encargado' => $s['encargado'], 'activo' => $s['activo']]) ?>"
+                    <button onclick="<?= jsEvent('suc:edit', ['id' => $s['id'], 'codigo' => $s['codigo'], 'nombre' => $s['nombre'], 'direccion' => $s['direccion'], 'telefono' => $s['telefono'], 'whatsapp' => $s['whatsapp'], 'horario' => $s['horario'], 'email' => $s['email'], 'encargado' => $s['encargado'], 'activo' => $s['activo'], 'tienda_activa' => $s['tienda_activa']]) ?>"
                             class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('sucursales.eliminar')): ?>
@@ -141,8 +150,8 @@ layout_start('Sucursales', 'Administra las sucursales de tu negocio', $acciones)
 </div>
 
 <!-- Modal crear/editar -->
-<div x-data="{open:false, form:{id:0,codigo:'',nombre:'',direccion:'',telefono:'',email:'',encargado:'',activo:1}}"
-     @suc:new.window="form={id:0,codigo:'',nombre:'',direccion:'',telefono:'',email:'',encargado:'',activo:1}; open=true"
+<div x-data="{open:false, form:{id:0,codigo:'',nombre:'',direccion:'',telefono:'',whatsapp:'',horario:'',email:'',encargado:'',activo:1,tienda_activa:1}}"
+     @suc:new.window="form={id:0,codigo:'',nombre:'',direccion:'',telefono:'',whatsapp:'',horario:'',email:'',encargado:'',activo:1,tienda_activa:1}; open=true"
      @suc:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
@@ -180,9 +189,25 @@ layout_start('Sucursales', 'Administra las sucursales de tu negocio', $acciones)
             <label class="label">Encargado</label>
             <input type="text" name="encargado" x-model="form.encargado" class="input" placeholder="Opcional">
           </div>
-          <label class="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2">
+          <label class="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2 cursor-pointer">
             <input type="hidden" name="activo" value="0">
             <input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"> Sucursal activa
+          </label>
+
+          <div class="sm:col-span-2 border-t border-slate-100 pt-4">
+            <h4 class="font-bold text-slate-800 text-sm">Tienda en línea</h4>
+          </div>
+          <div>
+            <label class="label" for="suc_whatsapp">WhatsApp</label>
+            <input type="text" id="suc_whatsapp" name="whatsapp" x-model="form.whatsapp" class="input" placeholder="1 809 555 0101">
+            <p class="mt-1 text-xs text-slate-500">Con código de país. Los clientes escriben aquí.</p>
+          </div>
+          <div>
+            <label class="label" for="suc_horario">Horario</label>
+            <input type="text" id="suc_horario" name="horario" x-model="form.horario" class="input" placeholder="Lun a Sáb, 8:00 AM - 8:00 PM">
+          </div>
+          <label class="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2 cursor-pointer">
+            <input type="checkbox" name="tienda_activa" value="1" :checked="form.tienda_activa==1" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"> Visible en la tienda pública
           </label>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">

@@ -196,7 +196,7 @@ function base_url(): string
     static $b = null;
     if ($b !== null) return $b;
     $script = $_SERVER['SCRIPT_NAME'] ?? '';
-    foreach (['/modules/', '/install/', '/app/', '/api/', '/includes/'] as $m) {
+    foreach (['/modules/', '/install/', '/app/', '/api/', '/includes/', '/tienda/'] as $m) {
         $p = strpos($script, $m);
         if ($p !== false) return $b = rtrim(substr($script, 0, $p), '/');
     }

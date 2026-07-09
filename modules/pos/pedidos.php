@@ -1,0 +1,208 @@
+<?php
+require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
+require_once dirname(__DIR__, 2) . '/tienda/_shell.php'; // wa_link() y wa_numero()
+require_perm('pedidos.ver');
+
+$emp = $GLOBALS['empresa'] ?: [];
+
+if (isPost()) {
+    verify_csrf();
+    if (post('accion') === 'estado') {
+        require_perm('pedidos.gestionar');
+        $id = postInt('id');
+        $nuevo = post('estado');
+        $validos = ['pendiente', 'confirmado', 'listo', 'entregado', 'cancelado'];
+        try {
+            if (!in_array($nuevo, $validos, true)) throw new RuntimeException('Estado no válido.');
+            $p = qOne("SELECT * FROM pedidos WHERE id = ?", [$id]);
+            if (!$p) throw new RuntimeException('Pedido no encontrado.');
+            require_sucursal_access($p['sucursal_id']);
+            if ($p['estado'] === 'entregado') throw new RuntimeException('Un pedido entregado ya no cambia de estado.');
+            dbUpdate('pedidos', ['estado' => $nuevo], 'id = ?', [$id]);
+            audit('pedidos', 'estado', "Pedido {$p['numero']}: {$p['estado']} → $nuevo", ['tabla' => 'pedidos', 'registro_id' => $id]);
+            flash('success', "Pedido {$p['numero']} marcado como $nuevo.");
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/pos/pedidos.php');
+    }
+}
+
+[$scope, $sp] = sucursalFiltro('p.sucursal_id');
+$estado = in_array(get('estado'), ['pendiente', 'confirmado', 'listo', 'entregado', 'cancelado'], true) ? get('estado') : '';
+$q = trim(get('q'));
+
+$cond = [$scope];
+$params = $sp;
+if ($estado !== '') { $cond[] = "p.estado = ?"; $params[] = $estado; }
+if ($q !== '')      { $cond[] = "(p.numero LIKE ? OR p.cliente_nombre LIKE ? OR p.cliente_telefono LIKE ?)"; array_push($params, "%$q%", "%$q%", "%$q%"); }
+$where = implode(' AND ', $cond);
+
+$pedidos = qAll(
+    "SELECT p.*, s.nombre AS sucursal,
+            (SELECT COUNT(*) FROM pedido_detalles WHERE pedido_id = p.id) AS items
+       FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id
+      WHERE $where ORDER BY p.id DESC LIMIT 100",
+    $params
+);
+
+$pendientes = (int) qVal("SELECT COUNT(*) FROM pedidos p WHERE $scope AND p.estado = 'pendiente'", $sp);
+
+$estadoBadge = [
+    'pendiente'  => ['Pendiente', 'bg-amber-50 text-amber-700 border-amber-200'],
+    'confirmado' => ['Confirmado', 'bg-sky-50 text-sky-700 border-sky-200'],
+    'listo'      => ['Listo', 'bg-emerald-50 text-emerald-700 border-emerald-200'],
+    'entregado'  => ['Entregado', 'bg-slate-50 text-slate-600 border-slate-200'],
+    'cancelado'  => ['Cancelado', 'bg-rose-50 text-rose-700 border-rose-200'],
+];
+
+/** Mensaje de WhatsApp que la tienda envía al cliente. */
+function mensajePedido(array $p, array $emp): string
+{
+    $saludo = "Hola {$p['cliente_nombre']}, te escribimos de " . ($emp['nombre'] ?? APP_NAME) . ".";
+    $base = " Tu pedido {$p['numero']} por " . money($p['total']) . " está ";
+
+    // Cada rama cierra su propia puntuación: así no se duplica el punto final.
+    $estado = match ($p['estado']) {
+        'confirmado' => 'confirmado.',
+        'listo'      => 'listo para retirar en ' . $p['sucursal'] . '.',
+        'entregado'  => 'entregado. ¡Gracias por tu compra!',
+        'cancelado'  => 'cancelado.',
+        default      => 'en proceso.',
+    };
+
+    $msg = $saludo . $base . $estado;
+    if ($p['metodo_pago'] === 'link_pago' && !empty($emp['link_pago']) && !in_array($p['estado'], ['entregado', 'cancelado'], true)) {
+        $msg .= " Puedes pagar aquí: {$emp['link_pago']}";
+    } elseif ($p['metodo_pago'] === 'pickup' && !in_array($p['estado'], ['entregado', 'cancelado'], true)) {
+        $msg .= ' Pagas al retirar.';
+    }
+    return $msg;
+}
+
+$acciones = '';
+layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública', $acciones);
+?>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+  <div class="card p-5">
+    <p class="text-sm text-slate-500">Pendientes de confirmar</p>
+    <p class="text-2xl font-extrabold <?= $pendientes ? 'text-amber-600' : 'text-slate-800' ?> mt-1"><?= number_format($pendientes) ?></p>
+  </div>
+  <div class="card p-5">
+    <p class="text-sm text-slate-500">Pedidos listados</p>
+    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format(count($pedidos)) ?></p>
+  </div>
+  <div class="card p-5 col-span-2">
+    <p class="text-sm text-slate-500">Enlace público de la tienda</p>
+    <a href="<?= e(url('tienda/index.php')) ?>" target="_blank" rel="noopener"
+       class="mt-1 inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 transition-colors duration-200 cursor-pointer break-all">
+      <?= icon('store', 'w-4 h-4') ?> <?= e(url('tienda/index.php')) ?>
+    </a>
+  </div>
+</div>
+
+<div class="card overflow-hidden">
+  <?php $selSuc = selectSucursalFiltro(); ?>
+  <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-<?= $selSuc ? '4' : '3' ?> gap-3">
+    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Número, cliente o teléfono..." aria-label="Buscar pedido" class="input">
+    <?= $selSuc ?>
+    <select name="estado" aria-label="Estado del pedido" class="select cursor-pointer">
+      <option value="">Todos los estados</option>
+      <?php foreach ($estadoBadge as $k => [$label, $_]): ?>
+        <option value="<?= $k ?>" <?= $estado === $k ? 'selected' : '' ?>><?= $label ?></option>
+      <?php endforeach; ?>
+    </select>
+    <button class="btn btn-primary cursor-pointer" aria-label="Aplicar filtros"><?= icon('filter', 'w-4 h-4') ?> Filtrar</button>
+  </form>
+
+  <?php if (!$pedidos): ?>
+    <?= empty_state('Sin pedidos', 'Cuando un cliente ordene desde la tienda, aparecerá aquí.', 'cart') ?>
+  <?php else: ?>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Pedido</th><th>Cliente</th><th>Sucursal</th><th class="text-center">Items</th>
+            <th class="text-right">Total</th><th>Pago</th><th>Estado</th><th class="text-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($pedidos as $p): ?>
+            <?php
+              [$label, $clases] = $estadoBadge[$p['estado']];
+              $wa = wa_link($p['cliente_telefono'], mensajePedido($p, $emp));
+            ?>
+            <tr>
+              <td>
+                <p class="font-semibold text-slate-700"><?= e($p['numero']) ?></p>
+                <p class="text-xs text-slate-400"><?= e(substr((string) $p['created_at'], 0, 16)) ?></p>
+              </td>
+              <td>
+                <p class="font-semibold text-slate-700"><?= e($p['cliente_nombre']) ?></p>
+                <p class="text-xs text-slate-400"><?= e($p['cliente_telefono']) ?></p>
+              </td>
+              <td class="text-slate-600"><?= e($p['sucursal']) ?></td>
+              <td class="text-center tabular-nums"><?= (int) $p['items'] ?></td>
+              <td class="text-right font-bold text-slate-800 tabular-nums"><?= money($p['total']) ?></td>
+              <td>
+                <span class="text-xs font-semibold <?= $p['metodo_pago'] === 'link_pago' ? 'text-blue-600' : 'text-slate-500' ?>">
+                  <?= $p['metodo_pago'] === 'link_pago' ? 'Link de pago' : 'Al retirar' ?>
+                </span>
+              </td>
+              <td><span class="px-2.5 py-1 rounded-lg text-xs font-semibold border <?= $clases ?>"><?= $label ?></span></td>
+              <td>
+                <div class="flex items-center justify-end gap-1">
+                  <?php if ($wa): ?>
+                    <a href="<?= e($wa) ?>" target="_blank" rel="noopener"
+                       class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                       title="Escribir al cliente por WhatsApp"
+                       aria-label="Escribir a <?= e($p['cliente_nombre']) ?> por WhatsApp"><?= icon('phone', 'w-4 h-4') ?></a>
+                  <?php endif; ?>
+
+                  <a href="<?= e(url('tienda/pedido.php?token=' . $p['token'])) ?>" target="_blank" rel="noopener"
+                     class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                     title="Ver el pedido como lo ve el cliente"
+                     aria-label="Ver pedido <?= e($p['numero']) ?>"><?= icon('eye', 'w-4 h-4') ?></a>
+
+                  <?php if (can('pedidos.gestionar') && $p['estado'] !== 'entregado'): ?>
+                    <form method="post" class="inline-flex items-center gap-1">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="accion" value="estado">
+                      <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
+                      <label class="sr-only" for="estado_<?= (int) $p['id'] ?>">Cambiar estado del pedido <?= e($p['numero']) ?></label>
+                      <select id="estado_<?= (int) $p['id'] ?>" name="estado" onchange="this.form.submit()"
+                              class="select py-1.5 text-xs cursor-pointer">
+                        <?php foreach ($estadoBadge as $k => [$lbl, $_]): ?>
+                          <option value="<?= $k ?>" <?= $p['estado'] === $k ? 'selected' : '' ?>><?= $lbl ?></option>
+                        <?php endforeach; ?>
+                      </select>
+                      <noscript><button class="btn btn-ghost btn-sm">Guardar</button></noscript>
+                    </form>
+                  <?php endif; ?>
+                </div>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  <?php endif; ?>
+</div>
+
+<?php if (empty($emp['link_pago'])): ?>
+  <div class="card p-5 mt-5 border-l-4 border-l-amber-400">
+    <div class="flex items-start gap-3">
+      <?= icon('alert', 'w-5 h-5 text-amber-600 shrink-0 mt-0.5') ?>
+      <div class="text-sm text-slate-600">
+        <h3 class="font-bold text-slate-800">Falta configurar el link de pago</h3>
+        <p class="mt-1">
+          Sin él, los mensajes de WhatsApp a clientes que eligieron «recibir link de pago» no incluirán el enlace.
+          Configúralo en <a href="<?= e(url('modules/admin/configuracion.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 cursor-pointer">Configuración → Empresa</a>.
+        </p>
+      </div>
+    </div>
+  </div>
+<?php endif; ?>
+
+<?php layout_end(); ?>

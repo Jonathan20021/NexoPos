@@ -34,7 +34,7 @@ if (isPost()) {
     }
 }
 
-[$scope, $sp] = sucursalScope('s.sucursal_id');
+[$scope, $sp] = sucursalFiltro('s.sucursal_id');
 $q = trim(get('q'));
 $soloBajo = get('bajo') === '1';
 $cond = [$scope, 'p.activo = 1'];
@@ -74,9 +74,19 @@ layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-    <?= search_box('Buscar producto...', $soloBajo ? ['bajo' => '1'] : []) ?>
+    <?php $selSuc = selectSucursalFiltro(); ?>
+    <?php if ($selSuc): ?>
+      <form method="get" class="flex items-end gap-2 flex-wrap">
+        <?php if ($soloBajo): ?><input type="hidden" name="bajo" value="1"><?php endif; ?>
+        <input type="text" name="q" value="<?= e($q) ?>" placeholder="Buscar producto..." aria-label="Buscar producto" class="input w-56">
+        <?= $selSuc ?>
+        <button class="btn btn-primary cursor-pointer" aria-label="Aplicar filtros" title="Filtrar"><?= icon('filter', 'w-4 h-4') ?></button>
+      </form>
+    <?php else: ?>
+      <?= search_box('Buscar producto...', $soloBajo ? ['bajo' => '1'] : []) ?>
+    <?php endif; ?>
     <div class="flex items-center gap-2">
-      <?php if ($soloBajo): ?><a href="<?= e(url('modules/inventario/stock.php')) ?>" class="btn btn-ghost btn-sm">Ver todos</a><?php else: ?><a href="?bajo=1" class="btn btn-ghost btn-sm"><?= icon('filter', 'w-4 h-4') ?> Solo stock bajo</a><?php endif; ?>
+      <?php if ($soloBajo): ?><a href="<?= e(url('modules/inventario/stock.php')) ?>" class="btn btn-ghost btn-sm cursor-pointer">Ver todos</a><?php else: ?><a href="?bajo=1" class="btn btn-ghost btn-sm cursor-pointer"><?= icon('filter', 'w-4 h-4') ?> Solo stock bajo</a><?php endif; ?>
       <span class="text-sm text-slate-400"><?= count($rows) ?> registros</span>
     </div>
   </div>

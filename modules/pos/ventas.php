@@ -110,7 +110,7 @@ if ($verId) {
 }
 
 // ----- Listado -----
-[$scope, $sp] = sucursalScope('v.sucursal_id');
+[$scope, $sp] = sucursalFiltro('v.sucursal_id');
 $q = trim(get('q'));
 $estado = get('estado');
 $desde = get('desde');
@@ -148,11 +148,13 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
 </div>
 
 <div class="card overflow-hidden">
-  <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-5 gap-3">
-    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Factura o cliente..." class="input sm:col-span-2">
-    <select name="estado" class="select"><option value="">Todos</option><option value="completada" <?= $estado === 'completada' ? 'selected' : '' ?>>Completada</option><option value="anulada" <?= $estado === 'anulada' ? 'selected' : '' ?>>Anulada</option><option value="devuelta" <?= $estado === 'devuelta' ? 'selected' : '' ?>>Devuelta</option></select>
-    <input type="date" name="desde" value="<?= e($desde) ?>" class="input">
-    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" aria-label="Fecha final" class="input"><button aria-label="Aplicar filtros" title="Filtrar" class="btn btn-primary shrink-0"><?= icon('filter', 'w-4 h-4') ?></button></div>
+  <?php $selSuc = selectSucursalFiltro(); ?>
+  <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-<?= $selSuc ? '6' : '5' ?> gap-3">
+    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Factura o cliente..." aria-label="Buscar factura o cliente" class="input sm:col-span-2">
+    <?= $selSuc ?>
+    <select name="estado" aria-label="Estado" class="select cursor-pointer"><option value="">Todos</option><option value="completada" <?= $estado === 'completada' ? 'selected' : '' ?>>Completada</option><option value="anulada" <?= $estado === 'anulada' ? 'selected' : '' ?>>Anulada</option><option value="devuelta" <?= $estado === 'devuelta' ? 'selected' : '' ?>>Devuelta</option></select>
+    <input type="date" name="desde" value="<?= e($desde) ?>" aria-label="Fecha inicial" class="input">
+    <div class="flex gap-2"><input type="date" name="hasta" value="<?= e($hasta) ?>" aria-label="Fecha final" class="input"><button aria-label="Aplicar filtros" title="Filtrar" class="btn btn-primary shrink-0 cursor-pointer"><?= icon('filter', 'w-4 h-4') ?></button></div>
   </form>
   <?php if (!$ventas): ?>
     <?= empty_state('Sin ventas', 'No hay ventas que coincidan con los filtros.', 'receipt') ?>

@@ -173,13 +173,26 @@ if ($verId) {
 }
 
 // ----- Listado -----
-[$scope, $sp] = sucursalScope('c.sucursal_id');
-$compras = qAll("SELECT c.*, p.nombre AS proveedor, s.nombre AS sucursal FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $scope ORDER BY c.id DESC LIMIT 100", $sp);
+[$scope, $sp] = sucursalFiltro('c.sucursal_id');
+$q      = trim(get('q'));
+$estado = in_array(get('estado'), ['pendiente', 'recibida', 'anulada'], true) ? get('estado') : '';
+$desde  = get('desde');
+$hasta  = get('hasta');
+
+$cond = [$scope];
+$params = $sp;
+if ($q !== '')     { $cond[] = "(c.numero LIKE ? OR c.ncf LIKE ? OR p.nombre LIKE ?)"; array_push($params, "%$q%", "%$q%", "%$q%"); }
+if ($estado !== ''){ $cond[] = "c.estado = ?"; $params[] = $estado; }
+if ($desde)        { $cond[] = "c.fecha >= ?"; $params[] = $desde; }
+if ($hasta)        { $cond[] = "c.fecha <= ?"; $params[] = $hasta; }
+$where = implode(' AND ', $cond);
+
+$compras = qAll("SELECT c.*, p.nombre AS proveedor, s.nombre AS sucursal FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $where ORDER BY c.id DESC LIMIT 100", $params);
 
 if (export_solicitado()) {
-    $rows = qAll("SELECT c.numero, p.nombre AS proveedor, s.nombre AS sucursal, c.fecha, c.subtotal, c.itbis, c.total, c.estado FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $scope ORDER BY c.id DESC", $sp);
-    export_tabla('compras', ['Número', 'Proveedor', 'Sucursal', 'Fecha', 'Subtotal', 'ITBIS', 'Total', 'Estado'],
-        array_map(fn($c) => [$c['numero'], $c['proveedor'], $c['sucursal'], $c['fecha'], $c['subtotal'], $c['itbis'], $c['total'], $c['estado']], $rows));
+    $rows = qAll("SELECT c.numero, c.ncf, p.nombre AS proveedor, s.nombre AS sucursal, c.fecha, c.subtotal, c.itbis, c.total, c.estado FROM compras c LEFT JOIN proveedores p ON p.id=c.proveedor_id JOIN sucursales s ON s.id=c.sucursal_id WHERE $where ORDER BY c.id DESC", $params);
+    export_tabla('compras', ['Número', 'NCF', 'Proveedor', 'Sucursal', 'Fecha', 'Subtotal', 'ITBIS', 'Total', 'Estado'],
+        array_map(fn($c) => [$c['numero'], $c['ncf'], $c['proveedor'], $c['sucursal'], $c['fecha'], $c['subtotal'], $c['itbis'], $c['total'], $c['estado']], $rows));
 }
 
 $productosJs = array_map(fn($p) => ['id' => (int) $p['id'], 'nombre' => $p['nombre'], 'costo' => (float) $p['precio_compra'], 'itbis' => (int) $p['itbis_aplica']],
@@ -192,8 +205,24 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
 ?>
 
 <div class="card overflow-hidden">
+  <?php $selSuc = selectSucursalFiltro(); ?>
+  <form method="get" class="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-<?= $selSuc ? '6' : '5' ?> gap-3">
+    <input type="text" name="q" value="<?= e($q) ?>" placeholder="Número, NCF o proveedor..." aria-label="Buscar compra" class="input sm:col-span-2">
+    <?= $selSuc ?>
+    <select name="estado" aria-label="Estado" class="select cursor-pointer">
+      <option value="">Todos los estados</option>
+      <?php foreach (['pendiente' => 'Pendiente', 'recibida' => 'Recibida', 'anulada' => 'Anulada'] as $k => $v): ?>
+        <option value="<?= $k ?>" <?= $estado === $k ? 'selected' : '' ?>><?= $v ?></option>
+      <?php endforeach; ?>
+    </select>
+    <input type="date" name="desde" value="<?= e($desde) ?>" aria-label="Fecha inicial" class="input">
+    <div class="flex gap-2">
+      <input type="date" name="hasta" value="<?= e($hasta) ?>" aria-label="Fecha final" class="input">
+      <button aria-label="Aplicar filtros" title="Filtrar" class="btn btn-primary shrink-0 cursor-pointer"><?= icon('filter', 'w-4 h-4') ?></button>
+    </div>
+  </form>
   <?php if (!$compras): ?>
-    <?= empty_state('Sin compras', 'Registra una compra para aumentar el inventario.', 'truck', $acciones) ?>
+    <?= empty_state('Sin compras', 'No hay compras que coincidan con los filtros aplicados.', 'truck', $acciones) ?>
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">

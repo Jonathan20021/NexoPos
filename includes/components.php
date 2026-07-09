@@ -14,6 +14,7 @@ function nav_groups(): array
             ['Punto de Venta', 'cart', url('modules/pos/index.php'), 'pos.ver'],
             ['Caja', 'cash', url('modules/pos/caja.php'), 'caja.ver'],
             ['Ventas', 'receipt', url('modules/pos/ventas.php'), 'ventas.ver'],
+            ['Pedidos en línea', 'store', url('modules/pos/pedidos.php'), 'pedidos.ver'],
             ['Devoluciones', 'undo', url('modules/pos/devoluciones.php'), 'devoluciones.ver'],
             ['Clientes', 'users', url('modules/pos/clientes.php'), 'clientes.ver'],
             ['Cuentas por Cobrar', 'wallet', url('modules/pos/cuentas_cobrar.php'), 'clientes.ver'],
@@ -120,6 +121,49 @@ function sucursalScope(string $col = 'sucursal_id'): array
     $sid = current_sucursal_id();
     if ($sid === null) return ['1=1', []];
     return ["$col = ?", [$sid]];
+}
+
+/**
+ * Igual que sucursalScope(), pero además aplica el filtro ?sucursal_id= de la URL.
+ *
+ * La sucursal activa es un límite de seguridad y no se puede burlar desde la URL;
+ * el filtro solo puede acotar más, nunca ampliar. Devuelve [where, params].
+ */
+function sucursalFiltro(string $col = 'sucursal_id'): array
+{
+    [$where, $params] = sucursalScope($col);
+    $filtro = (int) get('sucursal_id');
+    if ($filtro > 0 && can_access_sucursal($filtro)) {
+        $where .= " AND $col = ?";
+        $params[] = $filtro;
+    }
+    return [$where, $params];
+}
+
+/** La sucursal elegida en el filtro de la URL, o null. Útil para marcar el <select>. */
+function sucursalFiltroActual(): ?int
+{
+    $filtro = (int) get('sucursal_id');
+    return ($filtro > 0 && can_access_sucursal($filtro)) ? $filtro : null;
+}
+
+/**
+ * <select> de sucursales para los filtros de los listados.
+ * Devuelve cadena vacía cuando el usuario solo puede ver una sucursal: no tendría
+ * nada que elegir, y un filtro de una sola opción es ruido.
+ */
+function selectSucursalFiltro(): string
+{
+    $sucursales = sucursales_visibles();
+    if (count($sucursales) < 2) return '';
+    $actual = sucursalFiltroActual();
+    $h  = '<select name="sucursal_id" aria-label="Filtrar por sucursal" class="select cursor-pointer">';
+    $h .= '<option value="">Todas las sucursales</option>';
+    foreach ($sucursales as $s) {
+        $sel = $actual === (int) $s['id'] ? ' selected' : '';
+        $h .= '<option value="' . (int) $s['id'] . '"' . $sel . '>' . e($s['nombre']) . '</option>';
+    }
+    return $h . '</select>';
 }
 
 /** Lista de sucursales visibles para el usuario actual. */

@@ -29,6 +29,7 @@ function permission_catalog(): array
             'pos'          => ['label' => 'Punto de Venta', 'acciones' => ['ver' => 'Ver', 'vender' => 'Vender']],
             'caja'         => ['label' => 'Caja', 'acciones' => ['ver' => 'Ver', 'abrir' => 'Abrir', 'cerrar' => 'Cerrar', 'movimiento' => 'Movimientos']],
             'ventas'       => ['label' => 'Ventas', 'acciones' => ['ver' => 'Ver', 'anular' => 'Anular']],
+            'pedidos'      => ['label' => 'Pedidos en línea', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Cambiar estado']],
             'devoluciones' => ['label' => 'Devoluciones', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear']],
             'clientes'     => ['label' => 'Clientes', 'acciones' => $crud],
         ],
