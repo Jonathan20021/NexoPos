@@ -42,6 +42,7 @@ function permission_catalog(): array
         'Finanzas' => [
             'finanzas' => ['label' => 'Ingresos y Gastos', 'acciones' => $crud],
             'reportes' => ['label' => 'Reportes', 'acciones' => ['ver' => 'Ver']],
+            'dgii'     => ['label' => 'Reportes DGII', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar archivo']],
         ],
     ];
 }

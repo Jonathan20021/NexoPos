@@ -30,6 +30,7 @@ require_once __DIR__ . '/audit.php';
 require_once dirname(__DIR__) . '/includes/components.php';
 require_once dirname(__DIR__) . '/includes/operaciones.php';
 require_once dirname(__DIR__) . '/includes/dgii.php';
+require_once dirname(__DIR__) . '/includes/dgii_reportes.php';
 require_once dirname(__DIR__) . '/includes/export.php';
 require_once dirname(__DIR__) . '/includes/uploads.php';
 require_once dirname(__DIR__) . '/includes/backup.php';

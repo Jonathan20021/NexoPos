@@ -129,10 +129,11 @@ function sembrar(): void
         $vendedores = [$uAdmin, $uGerente, $uCajero];
 
         // ----- Métodos de pago -----
-        $mpEfectivo = dbInsert('metodos_pago', ['nombre' => 'Efectivo', 'afecta_caja' => 1]);
-        dbInsert('metodos_pago', ['nombre' => 'Tarjeta de Crédito/Débito', 'afecta_caja' => 0]);
-        dbInsert('metodos_pago', ['nombre' => 'Transferencia', 'afecta_caja' => 0]);
-        dbInsert('metodos_pago', ['nombre' => 'Crédito (Cuenta)', 'afecta_caja' => 0, 'es_credito' => 1]);
+        // dgii_tipo_pago mapea al desglose de cobro del Formato 607 (columnas 17-23).
+        $mpEfectivo = dbInsert('metodos_pago', ['nombre' => 'Efectivo', 'afecta_caja' => 1, 'dgii_tipo_pago' => 1]);
+        dbInsert('metodos_pago', ['nombre' => 'Tarjeta de Crédito/Débito', 'afecta_caja' => 0, 'dgii_tipo_pago' => 3]);
+        dbInsert('metodos_pago', ['nombre' => 'Transferencia', 'afecta_caja' => 0, 'dgii_tipo_pago' => 2]);
+        dbInsert('metodos_pago', ['nombre' => 'Crédito (Cuenta)', 'afecta_caja' => 0, 'es_credito' => 1, 'dgii_tipo_pago' => 4]);
 
         // ----- NCF -----
         dbInsert('ncf_secuencias', ['tipo' => 'B02', 'descripcion' => 'Consumidor Final', 'prefijo' => 'B', 'secuencia_actual' => 1, 'secuencia_hasta' => 99999999, 'vencimiento' => date('Y-12-31', strtotime('+1 year'))]);

@@ -160,6 +160,7 @@ CREATE TABLE proveedores (
   codigo VARCHAR(20) NOT NULL,
   nombre VARCHAR(150) NOT NULL,
   rnc VARCHAR(30) NULL,
+  tipo_id TINYINT UNSIGNED NOT NULL DEFAULT 1,  -- DGII 606 col.2: 1=RNC, 2=Cédula
   contacto VARCHAR(120) NULL,
   telefono VARCHAR(40) NULL,
   email VARCHAR(120) NULL,
@@ -245,11 +246,30 @@ DROP TABLE IF EXISTS compras;
 CREATE TABLE compras (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   numero VARCHAR(30) NOT NULL,
+  -- ===== Campos del Formato 606 de la DGII =====
+  ncf VARCHAR(19) NULL,                 -- col.4  comprobante emitido por el proveedor
+  ncf_modificado VARCHAR(19) NULL,      -- col.5  NCF afectado por nota de crédito/débito
   sucursal_id INT UNSIGNED NOT NULL,
   proveedor_id INT UNSIGNED NULL,
+  tipo_bien_servicio TINYINT UNSIGNED NULL, -- col.3  catálogo 1..11
   fecha DATE NOT NULL,
+  fecha_comprobante DATE NULL,          -- col.6
+  fecha_pago DATE NULL,                 -- col.7  obligatoria si hay retenciones
   subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
-  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  monto_bienes DECIMAL(12,2) NOT NULL DEFAULT 0,     -- col.9
+  monto_servicios DECIMAL(12,2) NOT NULL DEFAULT 0,  -- col.8
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,            -- col.11
+  itbis_retenido DECIMAL(12,2) NOT NULL DEFAULT 0,        -- col.12
+  itbis_proporcionalidad DECIMAL(12,2) NOT NULL DEFAULT 0,-- col.13
+  itbis_costo DECIMAL(12,2) NOT NULL DEFAULT 0,           -- col.14
+  itbis_percibido DECIMAL(12,2) NOT NULL DEFAULT 0,       -- col.16
+  tipo_retencion_isr TINYINT UNSIGNED NULL,               -- col.17 catálogo 1..9
+  monto_retencion_renta DECIMAL(12,2) NOT NULL DEFAULT 0, -- col.18
+  isr_percibido DECIMAL(12,2) NOT NULL DEFAULT 0,         -- col.19
+  impuesto_selectivo DECIMAL(12,2) NOT NULL DEFAULT 0,    -- col.20
+  otros_impuestos DECIMAL(12,2) NOT NULL DEFAULT 0,       -- col.21
+  propina_legal DECIMAL(12,2) NOT NULL DEFAULT 0,         -- col.22
+  forma_pago TINYINT UNSIGNED NULL,                       -- col.23 catálogo 1..7
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
   estado ENUM('pendiente','recibida','anulada') NOT NULL DEFAULT 'recibida',
@@ -258,6 +278,8 @@ CREATE TABLE compras (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_compra_numero (numero),
+  KEY idx_compras_ncf (ncf),
+  KEY idx_compras_comprobante (fecha_comprobante),
   KEY idx_c_sucursal (sucursal_id),
   CONSTRAINT fk_c_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
   CONSTRAINT fk_c_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL
@@ -317,6 +339,7 @@ CREATE TABLE clientes (
   codigo VARCHAR(20) NOT NULL,
   nombre VARCHAR(150) NOT NULL,
   rnc_cedula VARCHAR(30) NULL,
+  tipo_id TINYINT UNSIGNED NOT NULL DEFAULT 1,  -- DGII 607 col.2: 1=RNC, 2=Cédula, 3=Pasaporte
   telefono VARCHAR(40) NULL,
   email VARCHAR(120) NULL,
   direccion VARCHAR(255) NULL,
@@ -355,6 +378,9 @@ CREATE TABLE metodos_pago (
   nombre VARCHAR(50) NOT NULL,
   afecta_caja TINYINT(1) NOT NULL DEFAULT 1,   -- efectivo afecta el conteo de caja
   es_credito TINYINT(1) NOT NULL DEFAULT 0,    -- venta a crédito (genera cuenta por cobrar)
+  -- DGII 607 col.17-23: 1 Efectivo, 2 Cheque/Transf/Depósito, 3 Tarjeta, 4 Crédito,
+  -- 5 Bonos, 6 Permuta, 7 Otras formas.
+  dgii_tipo_pago TINYINT UNSIGNED NOT NULL DEFAULT 7,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   PRIMARY KEY (id),
   UNIQUE KEY uq_metodo_nombre (nombre)
@@ -439,18 +465,29 @@ CREATE TABLE ventas (
   cliente_id INT UNSIGNED NULL,
   usuario_id INT UNSIGNED NOT NULL,
   fecha DATETIME NOT NULL,
+  fecha_retencion DATE NULL,            -- DGII 607 col.7
   subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
-  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,                    -- col.9
+  itbis_retenido_terceros DECIMAL(12,2) NOT NULL DEFAULT 0,  -- col.10
+  itbis_percibido DECIMAL(12,2) NOT NULL DEFAULT 0,          -- col.11
+  retencion_renta_terceros DECIMAL(12,2) NOT NULL DEFAULT 0, -- col.12
+  isr_percibido DECIMAL(12,2) NOT NULL DEFAULT 0,            -- col.13
+  impuesto_selectivo DECIMAL(12,2) NOT NULL DEFAULT 0,       -- col.14
+  otros_impuestos DECIMAL(12,2) NOT NULL DEFAULT 0,          -- col.15
+  propina_legal DECIMAL(12,2) NOT NULL DEFAULT 0,            -- col.16
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
   costo_total DECIMAL(12,2) NOT NULL DEFAULT 0,
   tipo_comprobante ENUM('consumidor','credito_fiscal') NOT NULL DEFAULT 'consumidor',
-  ncf VARCHAR(20) NULL,
+  ncf VARCHAR(20) NULL,                 -- col.3
+  ncf_modificado VARCHAR(19) NULL,      -- col.4
+  tipo_ingreso TINYINT UNSIGNED NOT NULL DEFAULT 1, -- col.5 catálogo 1..6
   estado ENUM('completada','anulada','devuelta') NOT NULL DEFAULT 'completada',
   notas VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_venta_numero (numero),
+  KEY idx_ventas_ncf (ncf),
   KEY idx_v_sucursal (sucursal_id),
   KEY idx_v_fecha (fecha),
   KEY idx_v_cliente (cliente_id),
@@ -526,6 +563,30 @@ CREATE TABLE devolucion_detalles (
   CONSTRAINT chk_devolucion_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND subtotal >= 0),
   CONSTRAINT fk_dd_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(id) ON DELETE CASCADE,
   CONSTRAINT fk_dd_venta_detalle FOREIGN KEY (venta_detalle_id) REFERENCES venta_detalles(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Formato 608 de la DGII: comprobantes fiscales anulados en el período.
+-- tipo_anulacion (catálogo oficial): 1 Deterioro de factura preimpresa,
+-- 2 Errores de impresión, 3 Impresión defectuosa, 4 Corrección de la información,
+-- 5 Cambio de productos, 6 Devolución de productos, 7 Omisión de productos,
+-- 8 Errores en secuencia de NCF, 9 Por cese de operaciones, 10 Pérdida o hurto de talonarios.
+DROP TABLE IF EXISTS comprobantes_anulados;
+CREATE TABLE comprobantes_anulados (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ncf VARCHAR(19) NOT NULL,
+  fecha_comprobante DATE NOT NULL,
+  tipo_anulacion TINYINT UNSIGNED NOT NULL,
+  venta_id INT UNSIGNED NULL,
+  sucursal_id INT UNSIGNED NULL,
+  usuario_id INT UNSIGNED NULL,
+  notas VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_anulado_ncf (ncf),
+  KEY idx_anulado_fecha (fecha_comprobante),
+  KEY fk_anul_venta (venta_id),
+  CONSTRAINT chk_tipo_anulacion CHECK (tipo_anulacion BETWEEN 1 AND 10),
+  CONSTRAINT fk_anul_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== RRHH =====================

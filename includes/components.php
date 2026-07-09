@@ -40,6 +40,7 @@ function nav_groups(): array
             ['Cuentas', 'wallet', url('modules/finanzas/cuentas.php'), 'finanzas.ver'],
             ['Comisiones', 'percent', url('modules/finanzas/comisiones.php'), 'reportes.ver'],
             ['Reportes', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
+            ['Reportes DGII', 'shield', url('modules/finanzas/dgii.php'), 'dgii.ver'],
         ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],

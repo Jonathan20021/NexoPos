@@ -188,3 +188,29 @@ UNION ALL SELECT 'metodos_pago sin mapeo DGII', COUNT(*) FROM metodos_pago WHERE
 --   ALTER TABLE clientes DROP COLUMN tipo_id;
 --   ALTER TABLE metodos_pago DROP COLUMN dgii_tipo_pago;
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 9) PERMISOS del módulo de Reportes DGII, y concesión a los roles con acceso
+--    total. Idempotente.
+-- ---------------------------------------------------------------------------
+INSERT INTO permisos (clave, modulo, grupo, descripcion)
+SELECT * FROM (SELECT 'dgii.ver' AS c, 'dgii' AS m, 'Finanzas' AS g, 'Reportes DGII — Ver' AS d) t
+WHERE NOT EXISTS (SELECT 1 FROM permisos WHERE clave = 'dgii.ver');
+
+INSERT INTO permisos (clave, modulo, grupo, descripcion)
+SELECT * FROM (SELECT 'dgii.generar' AS c, 'dgii' AS m, 'Finanzas' AS g, 'Reportes DGII — Generar archivo' AS d) t
+WHERE NOT EXISTS (SELECT 1 FROM permisos WHERE clave = 'dgii.generar');
+
+-- Concede los permisos a los roles que ya pueden ver reportes financieros.
+INSERT INTO rol_permisos (rol_id, permiso_id)
+SELECT rp.rol_id, p.id
+  FROM rol_permisos rp
+  JOIN permisos pr ON pr.id = rp.permiso_id AND pr.clave = 'reportes.ver'
+  JOIN permisos p  ON p.clave IN ('dgii.ver', 'dgii.generar')
+ WHERE NOT EXISTS (
+    SELECT 1 FROM rol_permisos x WHERE x.rol_id = rp.rol_id AND x.permiso_id = p.id
+ );
+
+SELECT 'permisos DGII creados' AS chequeo, COUNT(*) AS filas FROM permisos WHERE clave LIKE 'dgii.%'
+UNION ALL
+SELECT 'roles con acceso a dgii.ver', COUNT(*) FROM rol_permisos rp JOIN permisos p ON p.id=rp.permiso_id WHERE p.clave='dgii.ver';
