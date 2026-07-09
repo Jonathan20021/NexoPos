@@ -348,7 +348,7 @@ $mensajes = get_flashes();
       </ul>
 
       <!-- Checkout -->
-      <form method="post" class="mt-6 space-y-4" x-show="items.length > 0" @submit="carritoInput.value = JSON.stringify(items.map(i => ({id: i.id, cant: i.cant})))">
+      <form method="post" class="mt-6 space-y-4" x-show="items.length > 0" @submit="enviarPedido($event)">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="pedido">
         <input type="hidden" name="carrito" x-ref="carritoInput" id="carritoInput">
@@ -402,8 +402,15 @@ $mensajes = get_flashes();
           <textarea id="notas" name="notas" rows="2" maxlength="500" class="campo resize-none"></textarea>
         </div>
 
-        <button class="btn-accion w-full rounded-xl py-3.5 min-h-[44px] cursor-pointer flex items-center justify-center gap-2"
-                x-bind:disabled="enviando" @click="enviando = true">
+        <!--
+          El botón NUNCA se deshabilita en el propio clic: un <button type="submit">
+          deshabilitado pierde su acción por defecto y el formulario no se envía.
+          El doble envío se evita en enviarPedido(), no con el atributo disabled.
+        -->
+        <button type="submit"
+                class="btn-accion w-full rounded-xl py-3.5 min-h-[44px] cursor-pointer flex items-center justify-center gap-2"
+                :aria-busy="enviando ? 'true' : 'false'"
+                :class="enviando && 'opacity-70 pointer-events-none'">
           <span x-show="!enviando" class="flex items-center gap-2"><?= ticon('check', 'w-5 h-5') ?> Confirmar pedido</span>
           <span x-show="enviando">Enviando...</span>
         </button>
@@ -418,10 +425,11 @@ function tienda(catalogo, sucursalId, tasaItbis) {
   const clave = 'nexopos_carrito_' + sucursalId;
   return {
     catalogo, abrirCarrito: false, enviando: false, items: [],
-    carritoInput: null,
 
     init() {
-      this.carritoInput = this.$refs.carritoInput;
+      // Si el usuario vuelve con el botón "atrás", el navegador restaura la página
+      // desde caché con enviando=true. Hay que devolver el botón a su estado normal.
+      window.addEventListener('pageshow', () => { this.enviando = false; });
       try {
         const guardado = JSON.parse(localStorage.getItem(clave) || '[]');
         // Se rehidrata contra el catálogo actual: precios y stock mandan del servidor.
@@ -452,6 +460,13 @@ function tienda(catalogo, sucursalId, tasaItbis) {
       if (i.cant > 1) i.cant--; else this.eliminar(id);
     },
     eliminar(id) { this.items = this.items.filter(x => x.id !== id); },
+
+    enviarPedido(e) {
+      if (this.enviando) { e.preventDefault(); return; }   // evita el doble envío
+      if (this.items.length === 0) { e.preventDefault(); return; }
+      this.$refs.carritoInput.value = JSON.stringify(this.items.map(i => ({ id: i.id, cant: i.cant })));
+      this.enviando = true;   // solo cambia el texto; el submit ya está en marcha
+    },
 
     get totalItems() { return this.items.reduce((s, i) => s + i.cant, 0); },
     get subtotal()   { return this.items.reduce((s, i) => s + i.precio * i.cant, 0); },
