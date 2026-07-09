@@ -23,30 +23,72 @@ if (isPost()) {
             flash('error', 'El proveedor seleccionado no es válido.');
             redirect('modules/inventario/compras.php');
         }
+
+        // ---- Datos fiscales (Formato 606) ----
+        $dgii = [
+            'ncf'                   => strtoupper(trim(post('ncf'))),
+            'ncf_modificado'        => strtoupper(trim(post('ncf_modificado'))) ?: null,
+            'tipo_bien_servicio'    => postInt('tipo_bien_servicio') ?: null,
+            'fecha_comprobante'     => post('fecha_comprobante') ?: $fecha,
+            'fecha_pago'            => post('fecha_pago') ?: null,
+            'forma_pago'            => postInt('forma_pago') ?: null,
+            'itbis_retenido'        => postNum('itbis_retenido'),
+            'itbis_proporcionalidad'=> postNum('itbis_proporcionalidad'),
+            'itbis_costo'           => postNum('itbis_costo'),
+            'tipo_retencion_isr'    => postInt('tipo_retencion_isr') ?: null,
+            'monto_retencion_renta' => postNum('monto_retencion_renta'),
+            'impuesto_selectivo'    => postNum('impuesto_selectivo'),
+            'otros_impuestos'       => postNum('otros_impuestos'),
+            'propina_legal'         => postNum('propina_legal'),
+        ];
         try {
-            $compraId = tx(function () use ($proveedorId, $sucursalId, $fecha, $lineas, $tasaItbis) {
+            if ($dgii['ncf'] !== '' && !dgiiNcfValido($dgii['ncf'])) {
+                throw new RuntimeException('El NCF debe tener 11, 13 o 19 posiciones alfanuméricas.');
+            }
+            if ($dgii['ncf_modificado'] !== null && !dgiiNcfValido($dgii['ncf_modificado'])) {
+                throw new RuntimeException('El NCF modificado no tiene una estructura válida.');
+            }
+            if ($dgii['tipo_bien_servicio'] !== null && !isset(dgiiTiposBienServicio()[$dgii['tipo_bien_servicio']])) {
+                throw new RuntimeException('Tipo de bienes y servicios inválido.');
+            }
+            if ($dgii['forma_pago'] !== null && !isset(dgiiFormasPago606()[$dgii['forma_pago']])) {
+                throw new RuntimeException('Forma de pago inválida.');
+            }
+            if ($dgii['tipo_retencion_isr'] !== null && !isset(dgiiTiposRetencionIsr()[$dgii['tipo_retencion_isr']])) {
+                throw new RuntimeException('Tipo de retención en ISR inválido.');
+            }
+            // Regla del instructivo 606: los campos de retención exigen la Fecha de Pago (casilla 7).
+            if (!$dgii['fecha_pago'] && ($dgii['itbis_retenido'] > 0 || $dgii['monto_retencion_renta'] > 0 || $dgii['tipo_retencion_isr'] !== null)) {
+                throw new RuntimeException('La DGII exige la Fecha de Pago cuando se informan retenciones de ITBIS o ISR.');
+            }
+
+            $compraId = tx(function () use ($proveedorId, $sucursalId, $fecha, $lineas, $tasaItbis, $dgii) {
                 $subtotal = 0; $itbisTotal = 0; $det = [];
+                $montoBienes = 0; $montoServicios = 0;
                 foreach ($lineas as $l) {
                     $pid = (int) ($l['producto_id'] ?? 0);
                     $cant = (float) ($l['cantidad'] ?? 0);
                     $costo = (float) ($l['costo'] ?? 0);
                     if ($pid <= 0 || $cant <= 0) continue;
                     if ($costo <= 0) throw new RuntimeException('El costo de compra debe ser mayor que cero.');
-                    $p = qOne("SELECT id, itbis_aplica FROM productos WHERE id = ?", [$pid]);
+                    $p = qOne("SELECT id, itbis_aplica, tipo FROM productos WHERE id = ?", [$pid]);
                     if (!$p) throw new RuntimeException('Producto inválido en la compra.');
                     $base = round($costo * $cant, 2);
                     $itbis = $p['itbis_aplica'] ? round($base * $tasaItbis / 100, 2) : 0;
                     $subtotal += $base; $itbisTotal += $itbis;
+                    // 606, columnas 8 y 9: el monto facturado se separa en bienes y servicios.
+                    if ($p['tipo'] === 'servicio') $montoServicios += $base; else $montoBienes += $base;
                     $det[] = ['pid' => $pid, 'cant' => $cant, 'costo' => $costo, 'itbis' => $itbis, 'base' => $base];
                 }
                 if (!$det) throw new RuntimeException('No hay líneas válidas.');
                 $total = $subtotal + $itbisTotal;
                 $numero = nextNumero('compras', 'numero', 'COM');
-                $compraId = dbInsert('compras', [
+                $compraId = dbInsert('compras', array_merge([
                     'numero' => $numero, 'sucursal_id' => $sucursalId, 'proveedor_id' => $proveedorId, 'fecha' => $fecha,
-                    'subtotal' => $subtotal, 'itbis' => $itbisTotal, 'descuento' => 0, 'total' => $total,
+                    'subtotal' => $subtotal, 'monto_bienes' => $montoBienes, 'monto_servicios' => $montoServicios,
+                    'itbis' => $itbisTotal, 'descuento' => 0, 'total' => $total,
                     'estado' => 'recibida', 'usuario_id' => current_user()['id'],
-                ]);
+                ], $dgii, ['ncf' => $dgii['ncf'] ?: null]));
                 foreach ($det as $d) {
                     dbInsert('compra_detalles', ['compra_id' => $compraId, 'producto_id' => $d['pid'], 'cantidad' => $d['cant'], 'costo_unitario' => $d['costo'], 'itbis' => $d['itbis'], 'subtotal' => $d['base']]);
                     ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero);
@@ -193,6 +235,112 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
           <div><label class="label">Sucursal *</label><select name="sucursal_id" required class="select"><?php foreach ($sucursales as $s): ?><option value="<?= (int) $s['id'] ?>"><?= e($s['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Fecha</label><input type="date" name="fecha" value="<?= date('Y-m-d') ?>" class="input"></div>
         </div>
+
+        <!-- Datos fiscales: alimentan el Formato 606 de la DGII -->
+        <div x-data="{ fiscal: false }" class="rounded-xl border border-slate-200 bg-slate-50/60">
+          <button type="button" @click="fiscal = !fiscal"
+                  class="w-full flex items-center justify-between px-4 py-3 cursor-pointer transition-colors duration-200 hover:bg-slate-100 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  :aria-expanded="fiscal.toString()" aria-controls="bloqueFiscal">
+            <span class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <?= icon('receipt', 'w-4 h-4 text-slate-400') ?> Datos fiscales (DGII 606)
+            </span>
+            <span class="text-xs text-slate-500" x-text="fiscal ? 'Ocultar' : 'Mostrar'"></span>
+          </button>
+
+          <div id="bloqueFiscal" x-show="fiscal" x-transition.opacity style="display:none" class="px-4 pb-4 space-y-4 border-t border-slate-200 pt-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="label" for="c_ncf">NCF del proveedor</label>
+                <input id="c_ncf" name="ncf" maxlength="19" placeholder="Ej. B0100000001" class="input uppercase">
+                <p class="mt-1 text-xs text-slate-500">11, 13 o 19 posiciones. Sin él, la compra no entra al 606.</p>
+              </div>
+              <div>
+                <label class="label" for="c_ncf_mod">NCF modificado</label>
+                <input id="c_ncf_mod" name="ncf_modificado" maxlength="19" class="input uppercase">
+                <p class="mt-1 text-xs text-slate-500">Solo para notas de crédito o débito.</p>
+              </div>
+              <div>
+                <label class="label" for="c_tipo_bs">Tipo de bienes y servicios *</label>
+                <select id="c_tipo_bs" name="tipo_bien_servicio" class="select">
+                  <?php foreach (dgiiTiposBienServicio() as $k => $v): ?>
+                    <option value="<?= $k ?>" <?= $k === 9 ? 'selected' : '' ?>><?= $k ?>. <?= e($v) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="label" for="c_fecha_comp">Fecha del comprobante</label>
+                <input type="date" id="c_fecha_comp" name="fecha_comprobante" value="<?= date('Y-m-d') ?>" class="input">
+              </div>
+              <div>
+                <label class="label" for="c_fecha_pago">Fecha de pago</label>
+                <input type="date" id="c_fecha_pago" name="fecha_pago" class="input">
+                <p class="mt-1 text-xs text-slate-500">Obligatoria si informas retenciones.</p>
+              </div>
+              <div>
+                <label class="label" for="c_forma_pago">Forma de pago</label>
+                <select id="c_forma_pago" name="forma_pago" class="select">
+                  <?php foreach (dgiiFormasPago606() as $k => $v): ?>
+                    <option value="<?= $k ?>" <?= $k === 1 ? 'selected' : '' ?>><?= $k ?>. <?= e($v) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <label class="label" for="c_itbis_ret">ITBIS retenido</label>
+                <input type="number" step="0.01" min="0" id="c_itbis_ret" name="itbis_retenido" value="0" class="input text-right">
+              </div>
+              <div>
+                <label class="label" for="c_itbis_prop">ITBIS proporcionalidad</label>
+                <input type="number" step="0.01" min="0" id="c_itbis_prop" name="itbis_proporcionalidad" value="0" class="input text-right">
+              </div>
+              <div>
+                <label class="label" for="c_itbis_costo">ITBIS llevado al costo</label>
+                <input type="number" step="0.01" min="0" id="c_itbis_costo" name="itbis_costo" value="0" class="input text-right">
+              </div>
+              <div>
+                <label class="label" for="c_propina">Propina legal (10%)</label>
+                <input type="number" step="0.01" min="0" id="c_propina" name="propina_legal" value="0" class="input text-right">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div class="sm:col-span-2">
+                <label class="label" for="c_tipo_isr">Tipo de retención en ISR</label>
+                <select id="c_tipo_isr" name="tipo_retencion_isr" class="select">
+                  <option value="">— No aplica —</option>
+                  <?php foreach (dgiiTiposRetencionIsr() as $k => $v): ?>
+                    <option value="<?= $k ?>"><?= $k ?>. <?= e($v) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div>
+                <label class="label" for="c_ret_renta">Retención de renta</label>
+                <input type="number" step="0.01" min="0" id="c_ret_renta" name="monto_retencion_renta" value="0" class="input text-right">
+              </div>
+              <div>
+                <label class="label" for="c_isc">Selectivo al consumo</label>
+                <input type="number" step="0.01" min="0" id="c_isc" name="impuesto_selectivo" value="0" class="input text-right">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div>
+                <label class="label" for="c_otros">Otros impuestos/tasas</label>
+                <input type="number" step="0.01" min="0" id="c_otros" name="otros_impuestos" value="0" class="input text-right">
+              </div>
+            </div>
+
+            <p class="text-xs text-slate-500">
+              El monto facturado se separa en bienes y servicios automáticamente, según el tipo de cada producto.
+            </p>
+          </div>
+        </div>
+
         <div class="flex items-end gap-2">
           <div class="flex-1"><label class="label">Agregar producto</label><select x-model.number="nuevoProd" class="select"><option value="0">Selecciona...</option><?php foreach ($productosJs as $p): ?><option value="<?= $p['id'] ?>"><?= e($p['nombre']) ?></option><?php endforeach; ?></select></div>
           <button type="button" @click="addLinea()" class="btn btn-soft"><?= icon('plus', 'w-4 h-4') ?> Agregar</button>

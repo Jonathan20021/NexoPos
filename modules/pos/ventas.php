@@ -7,8 +7,13 @@ if (isPost()) {
     if (post('accion') === 'anular') {
         require_perm('ventas.anular');
         $id = postInt('id');
+        // 608, columna 3: la DGII exige el motivo de la anulación.
+        $tipoAnulacion = postInt('tipo_anulacion');
         try {
-            tx(function () use ($id) {
+            if (!isset(dgiiTiposAnulacion()[$tipoAnulacion])) {
+                throw new RuntimeException('Selecciona un motivo de anulación válido para el reporte 608.');
+            }
+            tx(function () use ($id, $tipoAnulacion) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$id]);
                 if (!$v || $v['estado'] !== 'completada') throw new RuntimeException('La venta no se puede anular.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
@@ -38,6 +43,19 @@ if (isPost()) {
                     }
                 }
                 dbUpdate('ventas', ['estado' => 'anulada'], 'id = ?', [$id]);
+
+                // Formato 608: solo se reportan comprobantes fiscales realmente emitidos.
+                if (!empty($v['ncf'])) {
+                    dbInsert('comprobantes_anulados', [
+                        'ncf'               => $v['ncf'],
+                        'fecha_comprobante' => substr($v['fecha'], 0, 10),
+                        'tipo_anulacion'    => $tipoAnulacion,
+                        'venta_id'          => $id,
+                        'sucursal_id'       => $v['sucursal_id'],
+                        'usuario_id'        => current_user()['id'],
+                        'notas'             => 'Anulación de la venta ' . $v['numero'],
+                    ]);
+                }
             });
             audit('ventas', 'anular', "Venta anulada #$id", ['tabla' => 'ventas', 'registro_id' => $id]);
             flash('success', 'Venta anulada y stock revertido.');
@@ -157,7 +175,10 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
                   <a href="?ver=<?= (int) $v['id'] ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Ver"><?= icon('eye', 'w-4 h-4') ?></a>
                   <a href="<?= e(url('modules/pos/ticket.php?id=' . (int) $v['id'])) ?>" target="_blank" class="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100" title="Ticket"><?= icon('print', 'w-4 h-4') ?></a>
                   <?php if (can('ventas.anular') && $v['estado'] === 'completada'): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Anular la venta <?= e($v['numero']) ?>? Se revertirá el stock.')"><?= csrf_field() ?><input type="hidden" name="accion" value="anular"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Anular"><?= icon('x', 'w-4 h-4') ?></button></form>
+                    <button type="button"
+                            onclick="<?= jsEvent('venta:anular', ['id' => (int) $v['id'], 'numero' => $v['numero'], 'ncf' => $v['ncf'] ?? '']) ?>"
+                            class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                            title="Anular" aria-label="Anular la venta <?= e($v['numero']) ?>"><?= icon('x', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                 </div>
               </td>
@@ -175,6 +196,56 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
       </div>
     <?php endif; ?>
   <?php endif; ?>
+</div>
+
+<!-- Modal anular venta: la DGII exige el motivo (Formato 608) -->
+<div x-data="{ open: false, venta: { id: 0, numero: '', ncf: '' } }"
+     @venta:anular.window="venta = $event.detail; open = true"
+     @keydown.escape.window="open = false"
+     x-show="open" x-transition.opacity style="display:none"
+     class="modal-overlay" @click.self="open = false" role="dialog" aria-modal="true" aria-labelledby="tituloAnular">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
+    <form method="post">
+      <?= csrf_field() ?>
+      <input type="hidden" name="accion" value="anular">
+      <input type="hidden" name="id" :value="venta.id">
+
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 id="tituloAnular" class="font-bold text-slate-800">Anular venta <span x-text="venta.numero"></span></h3>
+        <button type="button" @click="open = false" aria-label="Cerrar modal" title="Cerrar"
+                class="text-slate-400 hover:text-slate-700 p-1 -m-1 cursor-pointer transition-colors duration-200"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div class="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <?= icon('alert', 'w-5 h-5 text-amber-600 shrink-0') ?>
+          <p class="text-sm text-amber-800">Se revertirá el stock y se eliminará el ingreso registrado en Finanzas. Esta acción no se puede deshacer.</p>
+        </div>
+
+        <div>
+          <label class="label" for="tipo_anulacion">Motivo de la anulación *</label>
+          <select id="tipo_anulacion" name="tipo_anulacion" required class="select">
+            <option value="">Selecciona el motivo...</option>
+            <?php foreach (dgiiTiposAnulacion() as $k => $v): ?>
+              <option value="<?= $k ?>"><?= $k ?>. <?= e($v) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <p class="mt-1 text-xs text-slate-500">
+            Códigos oficiales de la DGII. Se reporta en el Formato 608 solo si la venta tiene NCF.
+          </p>
+        </div>
+
+        <p class="text-xs text-slate-500" x-show="!venta.ncf">
+          Esta venta no tiene NCF, por lo que no se incluirá en el 608.
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="open = false" class="btn btn-ghost cursor-pointer">Cancelar</button>
+        <button class="btn btn-danger cursor-pointer"><?= icon('x', 'w-4 h-4') ?> Anular venta</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <?php layout_end(); ?>
