@@ -54,7 +54,12 @@ if ($verId) {
     $v = qOne("SELECT v.*, su.nombre AS sucursal, cl.nombre AS cliente, u.nombre AS vendedor, u.apellido AS vend_ape FROM ventas v JOIN sucursales su ON su.id=v.sucursal_id LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN usuarios u ON u.id=v.usuario_id WHERE v.id=?", [$verId]);
     if (!$v) { flash('error', 'Venta no encontrada.'); redirect('modules/pos/ventas.php'); }
     require_sucursal_access($v['sucursal_id']);
-    $det = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$verId]);
+    $det = qAll(
+        "SELECT vd.*, COALESCE(NULLIF(vd.descripcion,''), p.nombre, '(producto no disponible)') AS descripcion
+         FROM venta_detalles vd LEFT JOIN productos p ON p.id = vd.producto_id
+         WHERE vd.venta_id = ?",
+        [$verId]
+    );
     $pagos = qAll("SELECT vp.*, m.nombre AS metodo FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?", [$verId]);
     layout_start('Venta ' . e($v['numero']), 'Detalle de la venta', '<a href="' . url('modules/pos/ventas.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a><a href="' . url('modules/pos/ticket.php?id=' . $verId . '&pdf=1') . '" target="_blank" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Factura PDF</a><a href="' . url('modules/pos/ticket.php?id=' . $verId) . '" target="_blank" class="btn btn-primary">' . icon('print', 'w-4 h-4') . ' Ticket</a>');
     ?>

@@ -202,7 +202,7 @@ function sembrar(): void
                 'itbis_aplica' => 1,
                 'stock_minimo' => 10,
             ]);
-            $productos[$pid] = ['precio_compra' => $p[3], 'precio_venta' => $p[4]];
+            $productos[$pid] = ['nombre' => $p[0], 'precio_compra' => $p[3], 'precio_venta' => $p[4]];
             // Stock inicial en ambas sucursales
             foreach ([$sucPrincipal, $sucSantiago] as $suc) {
                 $stockIni = mt_rand(15, 80);
@@ -303,7 +303,7 @@ function sembrar(): void
                 ]);
                 foreach ($lineas as $l) {
                     dbInsert('venta_detalles', [
-                        'venta_id' => $vid, 'producto_id' => $l['pid'], 'descripcion' => '',
+                        'venta_id' => $vid, 'producto_id' => $l['pid'], 'descripcion' => $productos[$l['pid']]['nombre'],
                         'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'],
                         'costo_unitario' => $productos[$l['pid']]['precio_compra'],
                         'itbis' => $l['itbis'], 'subtotal' => $l['subtotal'],

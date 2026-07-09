@@ -31,7 +31,8 @@ if (isPost()) {
                     ? ((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal']
                     : 1.0;
                 $detalles = qAll(
-                    "SELECT vd.*, p.tipo AS producto_tipo
+                    "SELECT vd.*, p.tipo AS producto_tipo,
+                            COALESCE(NULLIF(vd.descripcion,''), p.nombre, '(producto no disponible)') AS descripcion
                      FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id
                      WHERE vd.venta_id = ?",
                     [$ventaId]
@@ -113,7 +114,16 @@ if ($ventaId && can('devoluciones.crear')) {
     $v = qOne("SELECT v.*, cl.nombre AS cliente, su.nombre AS sucursal FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id JOIN sucursales su ON su.id=v.sucursal_id WHERE v.id=?", [$ventaId]);
     if (!$v) { flash('error', 'Venta no encontrada.'); redirect('modules/pos/devoluciones.php'); }
     require_sucursal_access($v['sucursal_id']);
-    $detalles = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$ventaId]);
+    $detalles = qAll(
+        "SELECT vd.*, COALESCE(NULLIF(vd.descripcion,''), p.nombre, '(producto no disponible)') AS descripcion
+         FROM venta_detalles vd LEFT JOIN productos p ON p.id = vd.producto_id
+         WHERE vd.venta_id = ?",
+        [$ventaId]
+    );
+    if (!$detalles) {
+        flash('error', 'La venta ' . $v['numero'] . ' no tiene líneas de detalle registradas, por lo que no se puede devolver.');
+        redirect('modules/pos/devoluciones.php');
+    }
     layout_start('Nueva devolución', 'Venta ' . e($v['numero']) . ' · ' . e($v['cliente'] ?: 'Cliente Genérico'), '<a href="' . url('modules/pos/devoluciones.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Cancelar</a>');
     ?>
     <form method="post" class="card p-6 max-w-3xl">

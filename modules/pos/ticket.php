@@ -8,7 +8,12 @@ $v = qOne("SELECT v.*, su.nombre AS sucursal, su.direccion AS suc_dir, su.telefo
            WHERE v.id=?", [$id]);
 if (!$v) { http_response_code(404); die('Venta no encontrada'); }
 require_sucursal_access($v['sucursal_id']);
-$det = qAll("SELECT * FROM venta_detalles WHERE venta_id=?", [$id]);
+$det = qAll(
+    "SELECT vd.*, COALESCE(NULLIF(vd.descripcion,''), p.nombre, '(producto no disponible)') AS descripcion
+     FROM venta_detalles vd LEFT JOIN productos p ON p.id = vd.producto_id
+     WHERE vd.venta_id = ?",
+    [$id]
+);
 $pagos = qAll("SELECT vp.*, m.nombre AS metodo FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=?", [$id]);
 $emp = $GLOBALS['empresa'];
 $autoPrint = get('print') === '1';
