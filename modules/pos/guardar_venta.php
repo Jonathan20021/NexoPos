@@ -20,9 +20,10 @@ $comprobante  = post('comprobante') === 'credito_fiscal' ? 'credito_fiscal' : 'c
 $metodoId     = postInt('metodo_pago_id') ?: 1;
 $tasaItbis    = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 $puedeMuestra = can('ventas.muestra'); // el navegador no decide esto
+$canal        = in_array(post('canal_venta'), canalesVenta(), true) ? post('canal_venta') : 'Mostrador';
 
 try {
-    $ventaId = tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra) {
+    $ventaId = tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal) {
         // 1) Recalcular en el servidor (no se confía en el cliente)
         $subtotal = 0.0; $itbisBruto = 0.0; $costoTotal = 0.0; $lineas = [];
         foreach ($cart as $item) {
@@ -80,6 +81,7 @@ try {
             'cliente_id' => $clienteId, 'usuario_id' => $uid, 'fecha' => date('Y-m-d H:i:s'),
             'subtotal' => $subtotal, 'descuento' => $descuento, 'itbis' => $itbisTotal, 'total' => $total,
             'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf, 'estado' => 'completada',
+            'canal_venta' => $canal,
         ]);
 
         // 4) Detalles + descuento de stock

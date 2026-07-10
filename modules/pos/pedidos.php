@@ -163,6 +163,7 @@ if (isPost()) {
                     'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf,
                     'tipo_ingreso' => 1, 'estado' => 'completada',
                     'notas' => 'Pedido en línea ' . $ped['numero'],
+                    'canal_venta' => 'Tienda online',
                 ]);
 
                 foreach ($lineas as $l) {

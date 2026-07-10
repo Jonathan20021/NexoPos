@@ -139,6 +139,19 @@ $porMetodo = qAll(
 $totalMetodo = array_sum(array_column($porMetodo, 'total')) ?: 1;
 
 /* ============================================================
+ *  g) Ventas por canal (medición de marketing / Instagram)
+ * ============================================================ */
+$porCanal = qAll(
+    "SELECT COALESCE(NULLIF(v.canal_venta,''),'Sin especificar') AS canal,
+            COUNT(v.id) AS ventas, COALESCE(SUM(v.total),0) AS total
+     FROM ventas v
+     WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scopeW
+     GROUP BY canal ORDER BY total DESC",
+    $pVentas
+);
+$totalCanal = array_sum(array_column($porCanal, 'total')) ?: 1;
+
+/* ============================================================
  *  g) Ventas por vendedor
  * ============================================================ */
 $porVendedor = qAll(
@@ -348,6 +361,31 @@ layout_start('Reportes Gerenciales', 'Análisis de ventas y resultados · ' . fe
                 <td class="text-center text-slate-500"><?= (int) $m['ventas'] ?></td>
                 <td class="text-right font-semibold text-slate-700"><?= money($m['total']) ?></td>
                 <td class="text-right text-slate-400"><?= $pctm ?>%</td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
+
+  <!-- g') Ventas por canal (marketing) -->
+  <div class="card overflow-hidden print-grid-break">
+    <div class="p-5 pb-3"><h3 class="font-bold text-slate-800">Ventas por canal</h3>
+      <p class="text-sm text-slate-400">De dónde llegan las ventas (marketing)</p></div>
+    <?php if (!$porCanal): ?>
+      <p class="text-sm text-slate-400 py-10 text-center">Sin ventas en este periodo.</p>
+    <?php else: ?>
+      <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead><tr><th>Canal</th><th class="text-center">Ventas</th><th class="text-right">Monto</th><th class="text-right">%</th></tr></thead>
+          <tbody>
+            <?php foreach ($porCanal as $c): $pctc = round(($c['total'] / $totalCanal) * 100, 1); ?>
+              <tr>
+                <td class="font-semibold text-slate-700"><?= e($c['canal']) ?></td>
+                <td class="text-center text-slate-500"><?= (int) $c['ventas'] ?></td>
+                <td class="text-right font-semibold text-slate-700"><?= money($c['total']) ?></td>
+                <td class="text-right text-slate-400"><?= $pctc ?>%</td>
               </tr>
             <?php endforeach; ?>
           </tbody>

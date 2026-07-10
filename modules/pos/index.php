@@ -201,11 +201,19 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
               </select>
             </div>
           </div>
-          <div>
-            <label class="label">Método de pago</label>
-            <select name="metodo_pago_id" x-model.number="metodo_pago_id" class="select">
-              <?php foreach ($metodos as $m): ?><option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?></option><?php endforeach; ?>
-            </select>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Método de pago</label>
+              <select name="metodo_pago_id" x-model.number="metodo_pago_id" class="select">
+                <?php foreach ($metodos as $m): ?><option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?></option><?php endforeach; ?>
+              </select>
+            </div>
+            <div>
+              <label class="label">¿Cómo nos encontró?</label>
+              <select name="canal_venta" x-model="canal_venta" class="select">
+                <?php foreach (canalesVenta() as $ch): ?><option value="<?= e($ch) ?>"><?= e($ch) ?></option><?php endforeach; ?>
+              </select>
+            </div>
           </div>
           <div x-show="metodo_pago_id===<?= $efectivoId ?>">
             <label class="label">Efectivo recibido</label>
@@ -231,6 +239,7 @@ function pos() {
     search: '', cat: 0, cart: [], descuento: 0,
     pay: false, comprobante: 'consumidor', cliente_id: 1,
     metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
+    canal_venta: 'Mostrador',
     tasa: <?= $tasa ?>,
     puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,
     get filtered() {

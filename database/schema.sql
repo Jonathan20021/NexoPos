@@ -491,10 +491,12 @@ CREATE TABLE ventas (
   tipo_ingreso TINYINT UNSIGNED NOT NULL DEFAULT 1, -- col.5 catálogo 1..6
   estado ENUM('completada','anulada','devuelta') NOT NULL DEFAULT 'completada',
   notas VARCHAR(255) NULL,
+  canal_venta VARCHAR(40) NULL,                     -- canal de captación (marketing): Instagram, WhatsApp, Mostrador...
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_venta_numero (numero),
   KEY idx_ventas_ncf (ncf),
+  KEY idx_ventas_canal (canal_venta),
   KEY idx_v_sucursal (sucursal_id),
   KEY idx_v_fecha (fecha),
   KEY idx_v_cliente (cliente_id),

@@ -68,3 +68,12 @@ function metaColor(float $pct): string
     if ($pct >= 40)  return 'amber';
     return 'rose';
 }
+
+/**
+ * Canales de captación de una venta (medición de marketing). Fuente única para
+ * el POS y los reportes. 'Tienda online' lo pone el sistema, no el cajero.
+ */
+function canalesVenta(): array
+{
+    return ['Mostrador', 'Instagram', 'WhatsApp', 'Facebook', 'Referido', 'Otro'];
+}
