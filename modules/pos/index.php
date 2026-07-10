@@ -36,6 +36,28 @@ $prodJs = array_map(fn($p) => [
     'categoria_id' => (int) $p['categoria_id'], 'stock' => (float) $p['stock'], 'color' => $p['color'],
 ], $productos);
 
+// Meta personal de la vendedora: se muestra un progreso compacto arriba del POS.
+$miMeta = metaPersonalActiva($uid);
+if ($miMeta) {
+    $mp = metaProgreso($miMeta);
+    $mpCol = metaColor($mp['pct']);
+    ?>
+    <div class="card p-4 mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      <span class="w-10 h-10 rounded-xl badge-<?= $mpCol ?> flex items-center justify-center shrink-0"><?= icon('trending', 'w-5 h-5') ?></span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-3 mb-1">
+          <p class="text-sm font-semibold text-slate-700">Mi meta<?= $mp['dias_restantes'] > 0 ? ' · ' . $mp['dias_restantes'] . ' día' . ($mp['dias_restantes'] === 1 ? '' : 's') : '' ?></p>
+          <p class="text-sm text-slate-500"><span class="font-bold text-<?= $mpCol ?>-600"><?= e($moneda) ?> <?= number_format($mp['vendido'], 2) ?></span> / <?= e($moneda) ?> <?= number_format($mp['objetivo'], 2) ?></p>
+        </div>
+        <div class="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+          <div class="h-full rounded-full bg-<?= $mpCol ?>-500 transition-all" style="width: <?= $mp['pct'] ?>%"></div>
+        </div>
+        <p class="text-xs text-slate-400 mt-1"><?= $mp['pct'] ?>% · <?= $mp['falta'] > 0 ? 'Faltan ' . e($moneda) . ' ' . number_format($mp['falta'], 2) : '¡Meta alcanzada!' ?></p>
+      </div>
+    </div>
+    <?php
+}
+
 $categorias = qAll("SELECT DISTINCT c.id, c.nombre, c.color FROM categorias c JOIN productos p ON p.categoria_id=c.id WHERE p.activo=1 ORDER BY c.nombre");
 $metodos = qAll("SELECT id, nombre, afecta_caja FROM metodos_pago WHERE activo=1 ORDER BY id");
 $clientes = qAll("SELECT id, nombre FROM clientes WHERE activo=1 ORDER BY nombre");

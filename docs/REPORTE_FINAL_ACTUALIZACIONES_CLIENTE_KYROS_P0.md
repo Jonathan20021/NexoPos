@@ -136,3 +136,32 @@ Ver `PLAN_IMPLEMENTACION_ACTUALIZACIONES_CLIENTE_KYROS.md` §4. Resumen:
   comisiones (restar devoluciones, estados), transferencias avanzadas, reportes↔metas.
 - **P2:** facturación electrónica externa, promociones, marketing/Instagram, campañas por correo.
 - **P3:** modo offline (arquitectura de mayor cuidado: NCF, inventario y caja).
+
+---
+
+## 12. Addendum — Metas de Venta / KPI (P1, IMPLEMENTADO)
+
+Se construyó completo el módulo de metas que la cliente describió (meta mensual por
+sucursal dividida entre vendedoras, cada una viendo cuánto lleva y cuánto le falta).
+
+**Qué se hizo:**
+- `includes/metas.php` — `metaProgreso()` deriva el avance de las ventas reales
+  (venta NETA: resta devoluciones del período; las muestras ya no cuentan porque su
+  total es 0; las anuladas se excluyen). `metaPersonalActiva()` y `metaColor()`.
+- `modules/finanzas/metas.php` — pantalla de gestión: crear/editar metas por
+  **sucursal, vendedor o global**, con barra de progreso en tiempo real, % alcanzado,
+  monto faltante y días restantes. Filtro por estado. Cerrar meta.
+- **Banner en el POS** (`modules/pos/index.php`): la vendedora ve su meta personal
+  con barra de progreso apenas abre el punto de venta.
+- Permisos `metas.ver` / `metas.gestionar` (Super/Admin/Gerente). El Cajero **no**
+  tiene el módulo de gestión, pero **sí** ve su banner personal.
+- `database/migracion_metas_kpi.sql` (permisos) + `metas_ventas` ya estaba en el schema.
+
+**Aplicado en producción** (permisos + tabla). **Verificado:** progreso derivado de
+ventas reales (sucursal 61.2%, vendedor 100%, global 37.9% en la data de prueba),
+CRUD con validación (monto > 0, período válido, alcance coherente), banner del POS,
+gating del cajero, y regresión completa (TODO CUADRA).
+
+Con esto, de P1 queda pendiente: IT-1, conciliación bancaria, mejoras de cuentas
+financieras, mejoras de comisiones (estados pendiente/aprobada — las muestras y
+ventas anuladas YA se excluyen), y transferencias avanzadas.
