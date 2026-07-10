@@ -64,5 +64,14 @@
   } catch (e) {}
 })();
 </script>
+
+<script>
+/* Registro del Service Worker (modo offline / PWA). Silencioso si no hay soporte. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('<?= e(url('sw.js')) ?>').catch(function () {});
+  });
+}
+</script>
 </body>
 </html>

@@ -467,6 +467,7 @@ DROP TABLE IF EXISTS ventas;
 CREATE TABLE ventas (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   numero VARCHAR(30) NOT NULL,
+  uuid CHAR(36) NULL,                    -- identidad idempotente para ventas creadas offline (sync)
   sucursal_id INT UNSIGNED NOT NULL,
   caja_sesion_id INT UNSIGNED NULL,
   cliente_id INT UNSIGNED NULL,
@@ -495,6 +496,7 @@ CREATE TABLE ventas (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_venta_numero (numero),
+  UNIQUE KEY uq_ventas_uuid (uuid),
   KEY idx_ventas_ncf (ncf),
   KEY idx_ventas_canal (canal_venta),
   KEY idx_v_sucursal (sucursal_id),

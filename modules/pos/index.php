@@ -67,6 +67,24 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
 
 <div x-data="pos()" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start pb-24 lg:pb-0">
 
+  <!-- Estado del modo offline (conexión / cola de sincronización) -->
+  <div class="lg:col-span-3 flex flex-wrap items-center gap-2" x-show="!online || pendientes>0 || errores>0" x-cloak>
+    <span x-show="!online" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700">
+      <span class="w-2 h-2 rounded-full bg-amber-500"></span> Sin conexión · las ventas se guardan localmente
+    </span>
+    <span x-show="online && pendientes>0" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700">
+      <svg class="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+      Sincronizando <span x-text="pendientes"></span> venta(s)…
+    </span>
+    <span x-show="!online && pendientes>0" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600">
+      <span x-text="pendientes"></span> venta(s) en espera de enviar
+    </span>
+    <button type="button" x-show="online && pendientes>0" @click="sincronizar()" class="text-xs font-semibold text-blue-600 hover:text-blue-700 underline">Reintentar ahora</button>
+    <button type="button" x-show="errores>0" @click="abrirErrores()" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200">
+      <?= icon('alert', 'w-3.5 h-3.5') ?> <span x-text="errores"></span> venta(s) con error · revisar
+    </button>
+  </div>
+
   <!-- Productos -->
   <div class="lg:col-span-2 card p-4">
     <div class="flex items-center gap-2 mb-3">
@@ -173,10 +191,7 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
   <!-- Modal de cobro -->
   <div x-show="pay" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="pay=false" @keydown.escape.window="pay=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
-      <form method="post" action="<?= e(url('modules/pos/guardar_venta.php')) ?>" @submit="document.getElementById('cartInput').value=JSON.stringify(cart.map(i=>({id:i.id,cant:i.cant,muestra:i.muestra?1:0})))">
-        <?= csrf_field() ?>
-        <input type="hidden" name="cart" id="cartInput">
-        <input type="hidden" name="descuento" :value="descuento||0">
+      <form @submit.prevent="confirmar()">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 class="font-bold text-slate-800">Procesar cobro</h3>
           <button type="button" @click="pay=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
@@ -222,16 +237,80 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
               <span>Cambio</span><span x-text="fmt(cambio)"></span>
             </div>
           </div>
+          <div x-show="!online" class="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2.5">
+            <?= icon('alert', 'w-4 h-4 mt-0.5 shrink-0') ?>
+            <span>Sin conexión. La venta se guardará y se enviará automáticamente al volver el internet. El comprobante fiscal (NCF) se asignará al sincronizar.</span>
+          </div>
+          <div x-show="payError" x-transition class="flex items-start gap-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm px-3 py-2.5">
+            <?= icon('alert', 'w-4 h-4 mt-0.5 shrink-0') ?><span x-text="payError"></span>
+          </div>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
-          <button type="button" @click="pay=false" class="btn btn-ghost">Cancelar</button>
-          <button type="submit" class="btn btn-success"><?= icon('check', 'w-4 h-4') ?> Confirmar venta</button>
+          <button type="button" @click="pay=false" :disabled="procesando" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" :disabled="procesando" class="btn btn-success disabled:opacity-60">
+            <span x-show="!procesando"><?= icon('check', 'w-4 h-4') ?> <span x-text="online ? 'Confirmar venta' : 'Guardar venta (offline)'"></span></span>
+            <span x-show="procesando" class="inline-flex items-center gap-2"><svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg> Procesando…</span>
+          </button>
         </div>
       </form>
     </div>
   </div>
+
+  <!-- Ticket provisional (venta guardada offline) -->
+  <div x-show="provisional" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="provisional=false" @keydown.escape.window="provisional=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop id="ticketProvisional">
+      <div class="p-6 text-center">
+        <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mx-auto mb-3"><?= icon('save', 'w-7 h-7') ?></div>
+        <h3 class="text-lg font-bold text-slate-800">Venta guardada</h3>
+        <p class="text-sm text-slate-500 mt-1">Se registró sin conexión. Se enviará automáticamente y su comprobante fiscal (NCF) se asignará al sincronizar.</p>
+        <div class="text-left mt-4 border border-dashed border-slate-300 rounded-xl p-4 text-sm">
+          <p class="text-center font-bold text-slate-700"><?= e($GLOBALS['empresa']['nombre'] ?? APP_NAME) ?></p>
+          <p class="text-center text-[11px] uppercase tracking-wide text-amber-600 font-bold mt-0.5">Ticket provisional · sin valor fiscal</p>
+          <p class="text-center text-xs text-slate-400 mb-3" x-text="prov ? prov.fecha.toLocaleString('es-DO') : ''"></p>
+          <template x-for="(it,i) in (prov ? prov.items : [])" :key="i">
+            <div class="flex justify-between gap-2 py-0.5">
+              <span class="truncate text-slate-600"><span x-text="it.cant"></span>× <span x-text="it.nombre"></span><span x-show="it.muestra" class="text-amber-600 font-semibold"> (muestra)</span></span>
+              <span class="font-semibold text-slate-700" x-text="fmt(it.precio * it.cant)"></span>
+            </div>
+          </template>
+          <div class="flex justify-between border-t border-slate-200 mt-2 pt-2 font-extrabold text-slate-800">
+            <span>Total</span><span x-text="prov ? fmt(prov.total) : ''"></span>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="provisional=false" class="btn btn-ghost">Cerrar</button>
+        <button type="button" @click="imprimirProvisional()" class="btn btn-primary"><?= icon('print', 'w-4 h-4') ?> Imprimir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ventas con error de sincronización -->
+  <div x-show="verErrores" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="verErrores=false" @keydown.escape.window="verErrores=false">
+    <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 class="font-bold text-slate-800 flex items-center gap-2"><?= icon('alert', 'w-5 h-5 text-rose-500') ?> Ventas con error</h3>
+        <button type="button" @click="verErrores=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+      <div class="p-4 space-y-2 max-h-[60vh] overflow-y-auto">
+        <p class="text-xs text-slate-500 px-1">Estas ventas no pudieron registrarse al sincronizar (por ejemplo, stock insuficiente). Revísalas y vuelve a capturarlas si corresponde.</p>
+        <template x-for="er in listaErrores" :key="er.uuid">
+          <div class="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-sm font-bold text-slate-700" x-text="fmt(er.payload.total || 0)"></p>
+              <button type="button" @click="descartarError(er.uuid)" class="text-xs font-semibold text-rose-600 hover:text-rose-700">Descartar</button>
+            </div>
+            <p class="text-xs text-rose-600 mt-0.5" x-text="er.error"></p>
+            <p class="text-[11px] text-slate-400 mt-0.5" x-text="new Date(er.createdAt).toLocaleString('es-DO')"></p>
+          </div>
+        </template>
+        <p x-show="listaErrores.length===0" class="text-center text-sm text-slate-400 py-6">No hay ventas con error.</p>
+      </div>
+    </div>
+  </div>
 </div>
 
+<script src="<?= e(asset('js/pos-offline.js')) ?>"></script>
 <script>
 function pos() {
   return {
@@ -242,6 +321,80 @@ function pos() {
     canal_venta: 'Mostrador',
     tasa: <?= $tasa ?>,
     puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,
+    // Estado del modo offline
+    online: navigator.onLine, pendientes: 0, errores: 0,
+    procesando: false, payError: '',
+    provisional: false, prov: null,
+    verErrores: false, listaErrores: [],
+    init() {
+      var self = this;
+      window.addEventListener('online',  function () { self.online = true; });
+      window.addEventListener('offline', function () { self.online = false; });
+      PosOffline.init({
+        syncUrl: '<?= e(url('modules/pos/sync_venta.php')) ?>',
+        csrf: '<?= e(csrf_token()) ?>',
+        onChange: function (s) { self.pendientes = s.pending; self.errores = s.errors; },
+      });
+    },
+    // Fecha/hora local en formato del servidor (para conservar el momento real offline).
+    _ahora() {
+      var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+             p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    },
+    async confirmar() {
+      if (this.cart.length === 0 || this.procesando) return;
+      this.procesando = true; this.payError = '';
+      var payload = {
+        cart: this.cart.map(function (i) { return { id: i.id, cant: i.cant, muestra: i.muestra ? 1 : 0 }; }),
+        descuento: this.descuento || 0,
+        cliente_id: this.cliente_id,
+        comprobante: this.comprobante,
+        metodo_pago_id: this.metodo_pago_id,
+        canal: this.canal_venta,
+        uuid: PosOffline.uuid(),
+        fecha: this._ahora(),
+        total: this.total,   // solo informativo (para la lista de errores); el servidor recalcula
+      };
+      // Copia para el ticket provisional y para descontar stock local.
+      var snap = {
+        items: this.cart.map(function (i) { return { nombre: i.nombre, cant: i.cant, precio: i.muestra ? 0 : i.precio, muestra: i.muestra }; }),
+        total: this.total, fecha: new Date(),
+      };
+      var vendidos = this.cart.map(function (i) { return { id: i.id, cant: i.cant }; });
+      var r = await PosOffline.submitSale(payload);
+      this.procesando = false;
+      if (r.outcome === 'online') {
+        window.location = '<?= e(url('modules/pos/ticket.php')) ?>?id=' + r.data.id + '&print=1';
+        return;
+      }
+      if (r.outcome === 'queued') {
+        this._descontarStock(vendidos);
+        this.pay = false;
+        this.prov = snap;
+        this.provisional = true;
+        this.cart = []; this.descuento = 0; this.recibido = 0;
+        return;
+      }
+      // Error de negocio: se queda en el modal para corregir.
+      this.payError = r.error || 'No se pudo registrar la venta.';
+    },
+    _descontarStock(vendidos) {
+      var map = {};
+      this.productos.forEach(function (p) { map[p.id] = p; });
+      vendidos.forEach(function (v) { if (map[v.id]) map[v.id].stock = Math.max(0, map[v.id].stock - v.cant); });
+    },
+    sincronizar() { PosOffline.flush(); },
+    async abrirErrores() {
+      this.listaErrores = await PosOffline.listErrors();
+      this.verErrores = true;
+    },
+    async descartarError(id) {
+      await PosOffline.dismissError(id);
+      this.listaErrores = await PosOffline.listErrors();
+      if (this.listaErrores.length === 0) this.verErrores = false;
+    },
+    imprimirProvisional() { window.print(); },
     get filtered() {
       const s = this.search.toLowerCase();
       return this.productos.filter(p =>
@@ -270,7 +423,7 @@ function pos() {
     get total() { return (this.subtotal - Math.min(this.descuento || 0, this.subtotal)) + this.itbis; },
     get cambio() { return Math.max(0, (this.recibido || 0) - this.total); },
     fmt(n) { return '<?= $moneda ?> ' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
-    openPay() { if (this.cart.length === 0) return; this.recibido = 0; this.pay = true; },
+    openPay() { if (this.cart.length === 0) return; this.recibido = 0; this.payError = ''; this.pay = true; },
   };
 }
 </script>

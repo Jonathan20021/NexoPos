@@ -11,6 +11,13 @@ $page_actions  = $GLOBALS['page_actions'] ?? '';
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($page_title) ?> · <?= e(APP_NAME) ?></title>
 <link rel="icon" href="<?= e(asset('favicon.svg')) ?>" type="image/svg+xml">
+<link rel="manifest" href="<?= e(url('manifest.php')) ?>">
+<meta name="theme-color" content="#2563eb">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NexoPOS">
+<link rel="apple-touch-icon" href="<?= e(asset('icon-192.png')) ?>">
+<style>[x-cloak]{display:none!important}</style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">

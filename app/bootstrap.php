@@ -34,6 +34,7 @@ require_once dirname(__DIR__) . '/includes/dgii_reportes.php';
 require_once dirname(__DIR__) . '/includes/mail.php';
 require_once dirname(__DIR__) . '/includes/correos_pedido.php';
 require_once dirname(__DIR__) . '/includes/metas.php';
+require_once dirname(__DIR__) . '/includes/venta_pos.php';
 require_once dirname(__DIR__) . '/includes/export.php';
 require_once dirname(__DIR__) . '/includes/uploads.php';
 require_once dirname(__DIR__) . '/includes/backup.php';
