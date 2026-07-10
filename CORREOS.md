@@ -83,9 +83,13 @@ En cPanel, abre `/home2/neetjbte/nexo.kyrosrd.com/config/config.local.php` y
 
 ```php
 define('RESEND_API_KEY', 're_tu_key_aqui');
-define('MAIL_FROM', 'Comercial Dominicana SRL <pedidos@kyrosrd.com>');
+define('MAIL_FROM', 'Importers TyE, S. A. <pedidos@kyrosrd.com>');
 define('MAIL_REPLY_TO', 'pedidos@kyrosrd.com');
 ```
+
+El nombre dentro de `MAIL_FROM` es lo que ve el cliente como remitente. La parte
+del correo (`pedidos@kyrosrd.com`) debe pertenecer a un dominio verificado en
+Resend; el nombre puede ser cualquiera.
 
 Ese archivo está en `.gitignore`, así que un *Update From Remote* nunca lo
 sobrescribe ni lo sube a GitHub.
