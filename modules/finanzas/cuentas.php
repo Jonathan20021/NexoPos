@@ -2,7 +2,7 @@
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('finanzas.ver');
 
-$tiposCuenta = ['efectivo' => 'Efectivo', 'banco' => 'Banco', 'otro' => 'Otro'];
+$tiposCuenta = ['efectivo' => 'Efectivo', 'banco' => 'Banco', 'tarjeta' => 'Tarjeta', 'transferencia' => 'Transferencia', 'otro' => 'Otro'];
 
 /* ============================================================
  *  Acciones (POST · patrón PRG)
@@ -51,16 +51,18 @@ if (isPost()) {
                 flash('success', 'Cuenta actualizada correctamente.');
             } else {
                 require_perm('finanzas.crear');
-                // El balance solo se fija al crear (saldo inicial)
-                $balance = round(postNum('balance'), 2);
+                // El saldo inicial se fija al crear: se conserva aparte y también
+                // arranca el balance vivo (que luego evoluciona por movimientos).
+                $saldoInicial = round(postNum('balance'), 2);
                 $nid = dbInsert('cuentas_financieras', [
-                    'nombre'      => $nombre,
-                    'tipo'        => $tipo,
-                    'sucursal_id' => $sucId,
-                    'balance'     => $balance,
-                    'activo'      => $activo,
+                    'nombre'        => $nombre,
+                    'tipo'          => $tipo,
+                    'sucursal_id'   => $sucId,
+                    'saldo_inicial' => $saldoInicial,
+                    'balance'       => $saldoInicial,
+                    'activo'        => $activo,
                 ]);
-                audit('finanzas', 'crear', "Cuenta financiera creada: $nombre (saldo inicial " . money($balance) . ")", ['tabla' => 'cuentas_financieras', 'registro_id' => $nid]);
+                audit('finanzas', 'crear', "Cuenta financiera creada: $nombre (saldo inicial " . money($saldoInicial) . ")", ['tabla' => 'cuentas_financieras', 'registro_id' => $nid]);
                 flash('success', 'Cuenta creada correctamente.');
             }
         }
@@ -142,7 +144,7 @@ layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu nego
         </thead>
         <tbody>
           <?php
-          $tipoColor = ['efectivo' => 'emerald', 'banco' => 'sky', 'otro' => 'slate'];
+          $tipoColor = ['efectivo' => 'emerald', 'banco' => 'sky', 'tarjeta' => 'violet', 'transferencia' => 'indigo', 'otro' => 'slate'];
           foreach ($cuentas as $c):
             $bal = (float) $c['balance'];
           ?>
@@ -155,7 +157,10 @@ layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu nego
               </td>
               <td><?= badge($tiposCuenta[$c['tipo']] ?? ucfirst($c['tipo']), $tipoColor[$c['tipo']] ?? 'slate') ?></td>
               <td class="text-slate-500"><?= e($c['sucursal'] ?: 'Todas') ?></td>
-              <td class="text-right font-bold whitespace-nowrap <?= $bal >= 0 ? 'text-slate-800' : 'text-rose-600' ?>"><?= money($bal) ?></td>
+              <td class="text-right whitespace-nowrap">
+                <span class="font-bold <?= $bal >= 0 ? 'text-slate-800' : 'text-rose-600' ?>"><?= money($bal) ?></span>
+                <span class="block text-[11px] text-slate-400">Inicial: <?= money((float) ($c['saldo_inicial'] ?? 0)) ?></span>
+              </td>
               <td><?= $c['activo'] ? badge('Activa', 'emerald') : badge('Inactiva', 'slate') ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">

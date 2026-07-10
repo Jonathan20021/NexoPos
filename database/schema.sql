@@ -861,7 +861,8 @@ CREATE TABLE cuentas_financieras (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   sucursal_id INT UNSIGNED NULL,
   nombre VARCHAR(100) NOT NULL,
-  tipo ENUM('efectivo','banco','otro') NOT NULL DEFAULT 'efectivo',
+  tipo ENUM('efectivo','banco','tarjeta','transferencia','otro') NOT NULL DEFAULT 'efectivo',
+  saldo_inicial DECIMAL(14,2) NOT NULL DEFAULT 0,   -- saldo de apertura (se conserva aparte del balance vivo)
   balance DECIMAL(14,2) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   PRIMARY KEY (id),
@@ -889,6 +890,34 @@ CREATE TABLE transacciones (
   CONSTRAINT chk_transaccion_monto_positivo CHECK (monto > 0),
   CONSTRAINT fk_tr_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id) ON DELETE SET NULL,
   CONSTRAINT fk_tr_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_financieras(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Comisiones de vendedores con flujo de estados: pendiente -> aprobada -> pagada.
+CREATE TABLE comisiones (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id     INT UNSIGNED NOT NULL,
+  sucursal_id    INT UNSIGNED NULL,
+  periodo_desde  DATE NOT NULL,
+  periodo_hasta  DATE NOT NULL,
+  base           DECIMAL(14,2) NOT NULL DEFAULT 0,   -- subtotal - descuento (sin ITBIS)
+  pct            DECIMAL(6,2)  NOT NULL DEFAULT 0,    -- % vigente al generar
+  monto          DECIMAL(14,2) NOT NULL DEFAULT 0,    -- base * pct / 100
+  ventas_cant    INT UNSIGNED  NOT NULL DEFAULT 0,
+  estado         ENUM('pendiente','aprobada','pagada','anulada') NOT NULL DEFAULT 'pendiente',
+  transaccion_id BIGINT UNSIGNED NULL,
+  notas          VARCHAR(255) NULL,
+  generada_por   INT UNSIGNED NULL,
+  aprobada_por   INT UNSIGNED NULL,
+  aprobada_at    DATETIME NULL,
+  pagada_por     INT UNSIGNED NULL,
+  pagada_at      DATETIME NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_comision_periodo (usuario_id, periodo_desde, periodo_hasta),
+  KEY idx_com_estado (estado),
+  KEY idx_com_sucursal (sucursal_id),
+  CONSTRAINT fk_com_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+  CONSTRAINT fk_com_transaccion FOREIGN KEY (transaccion_id) REFERENCES transacciones(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
