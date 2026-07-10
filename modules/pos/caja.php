@@ -51,11 +51,15 @@ if (isPost()) {
         if ($sesion) { flash('error', 'Ya tienes una caja abierta.'); redirect('modules/pos/caja.php'); }
         $cajaId = postInt('caja_id');
         $monto  = postNum('monto_apertura');
+        $turno  = trim(post('turno')) ?: null;
         if ($monto < 0) { flash('error', 'El monto de apertura no puede ser negativo.'); redirect('modules/pos/caja.php'); }
         $caja = qOne("SELECT * FROM cajas WHERE id = ? AND sucursal_id = ?", [$cajaId, $sid]);
         if (!$caja) { flash('error', 'Caja inválida.'); redirect('modules/pos/caja.php'); }
+        // Bloqueo por terminal: nadie abre una caja que otra persona dejó abierta.
+        [$puede, $motivo] = validarAperturaCaja($cajaId, $uid);
+        if (!$puede) { flash('error', $motivo); redirect('modules/pos/caja.php'); }
         $nid = dbInsert('caja_sesiones', [
-            'caja_id' => $cajaId, 'sucursal_id' => $sid, 'usuario_id' => $uid,
+            'caja_id' => $cajaId, 'sucursal_id' => $sid, 'usuario_id' => $uid, 'turno' => $turno,
             'monto_apertura' => $monto, 'estado' => 'abierta', 'abierta_at' => date('Y-m-d H:i:s'),
         ]);
         audit('caja', 'abrir', "Apertura de caja {$caja['nombre']} con " . money($monto), ['tabla' => 'caja_sesiones', 'registro_id' => $nid]);
@@ -105,8 +109,29 @@ if ($sid === null):
     return;
 endif;
 
-// Historial de sesiones cerradas
-$historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FROM caja_sesiones cs JOIN cajas c ON c.id=cs.caja_id JOIN usuarios u ON u.id=cs.usuario_id WHERE cs.sucursal_id=? AND cs.estado='cerrada' ORDER BY cs.id DESC LIMIT 8", [$sid]);
+// Historial de sesiones con filtros (usuario, turno, fecha, estado)
+$fUsuario = (int) get('f_usuario');
+$fTurno   = trim(get('f_turno'));
+$fEstado  = in_array(get('f_estado'), ['abierta', 'cerrada'], true) ? get('f_estado') : 'cerrada';
+$fDesde   = get('f_desde');
+$fHasta   = get('f_hasta');
+
+$cond = ['cs.sucursal_id = ?'];
+$params = [$sid];
+$cond[] = 'cs.estado = ?'; $params[] = $fEstado;
+if ($fUsuario > 0) { $cond[] = 'cs.usuario_id = ?'; $params[] = $fUsuario; }
+if ($fTurno !== '') { $cond[] = 'cs.turno = ?'; $params[] = $fTurno; }
+if ($fDesde)       { $cond[] = 'DATE(cs.abierta_at) >= ?'; $params[] = $fDesde; }
+if ($fHasta)       { $cond[] = 'DATE(cs.abierta_at) <= ?'; $params[] = $fHasta; }
+$whereCaja = implode(' AND ', $cond);
+
+$historial = qAll(
+    "SELECT cs.*, c.nombre AS caja_nombre, CONCAT(u.nombre,' ',u.apellido) AS usuario
+       FROM caja_sesiones cs JOIN cajas c ON c.id=cs.caja_id JOIN usuarios u ON u.id=cs.usuario_id
+      WHERE $whereCaja ORDER BY cs.id DESC LIMIT 30",
+    $params
+);
+$usuariosCaja = qAll("SELECT DISTINCT u.id, CONCAT(u.nombre,' ',u.apellido) AS nombre FROM caja_sesiones cs JOIN usuarios u ON u.id=cs.usuario_id WHERE cs.sucursal_id=? ORDER BY nombre", [$sid]);
 ?>
 
 <?php if ($sesion):
@@ -248,6 +273,15 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
           </select>
         </div>
         <div>
+          <label class="label" for="turno">Turno <span class="font-normal text-slate-400">(opcional)</span></label>
+          <select id="turno" name="turno" class="select">
+            <option value="">— Sin especificar —</option>
+            <option value="Mañana">Mañana</option>
+            <option value="Tarde">Tarde</option>
+            <option value="Noche">Noche</option>
+          </select>
+        </div>
+        <div>
           <label class="label">Monto de apertura</label>
           <div class="relative">
             <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold"><?= e(setting('moneda', 'RD$')) ?></span>
@@ -271,20 +305,46 @@ $historial = qAll("SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario FRO
   </div>
 <?php endif; ?>
 
-<!-- Historial de cierres -->
+<!-- Historial de sesiones de caja -->
 <div class="card overflow-hidden mt-5">
-  <div class="p-5 pb-3"><h3 class="font-bold text-slate-800">Historial de cierres</h3></div>
+  <div class="p-5 pb-3"><h3 class="font-bold text-slate-800">Historial de caja</h3></div>
+
+  <form method="get" class="px-5 pb-4 grid grid-cols-1 sm:grid-cols-5 gap-3">
+    <select name="f_estado" aria-label="Estado" class="select cursor-pointer">
+      <option value="cerrada" <?= $fEstado === 'cerrada' ? 'selected' : '' ?>>Cerradas</option>
+      <option value="abierta" <?= $fEstado === 'abierta' ? 'selected' : '' ?>>Abiertas</option>
+    </select>
+    <select name="f_usuario" aria-label="Cajero" class="select cursor-pointer">
+      <option value="">Todos los cajeros</option>
+      <?php foreach ($usuariosCaja as $u2): ?>
+        <option value="<?= (int) $u2['id'] ?>" <?= $fUsuario === (int) $u2['id'] ? 'selected' : '' ?>><?= e($u2['nombre']) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <select name="f_turno" aria-label="Turno" class="select cursor-pointer">
+      <option value="">Todos los turnos</option>
+      <?php foreach (['Mañana', 'Tarde', 'Noche'] as $t): ?>
+        <option value="<?= $t ?>" <?= $fTurno === $t ? 'selected' : '' ?>><?= $t ?></option>
+      <?php endforeach; ?>
+    </select>
+    <input type="date" name="f_desde" value="<?= e($fDesde) ?>" aria-label="Desde" class="input">
+    <div class="flex gap-2">
+      <input type="date" name="f_hasta" value="<?= e($fHasta) ?>" aria-label="Hasta" class="input">
+      <button class="btn btn-primary shrink-0 cursor-pointer" aria-label="Filtrar"><?= icon('filter', 'w-4 h-4') ?></button>
+    </div>
+  </form>
+
   <?php if (!$historial): ?>
-    <p class="text-sm text-slate-400 px-5 pb-5">Aún no hay cierres registrados.</p>
+    <p class="text-sm text-slate-400 px-5 pb-5">No hay sesiones que coincidan con los filtros.</p>
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Caja</th><th>Cajero</th><th>Apertura</th><th>Cierre</th><th class="text-right">Ventas</th><th class="text-right">Esperado</th><th class="text-right">Real</th><th class="text-right">Diferencia</th></tr></thead>
+        <thead><tr><th>Caja</th><th>Cajero</th><th>Turno</th><th>Apertura</th><th>Cierre</th><th class="text-right">Ventas</th><th class="text-right">Esperado</th><th class="text-right">Real</th><th class="text-right">Diferencia</th></tr></thead>
         <tbody>
           <?php foreach ($historial as $h): ?>
             <tr>
               <td class="font-semibold text-slate-700"><?= e($h['caja_nombre']) ?></td>
               <td class="text-slate-500"><?= e($h['usuario']) ?></td>
+              <td class="text-slate-500"><?= e($h['turno'] ?: '—') ?></td>
               <td class="text-slate-500"><?= fechaHora($h['abierta_at']) ?></td>
               <td class="text-slate-500"><?= fechaHora($h['cerrada_at']) ?></td>
               <td class="text-right font-semibold text-slate-700"><?= money($h['total_ventas']) ?></td>

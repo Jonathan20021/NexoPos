@@ -19,28 +19,41 @@ $clienteId    = postInt('cliente_id') ?: 1;
 $comprobante  = post('comprobante') === 'credito_fiscal' ? 'credito_fiscal' : 'consumidor';
 $metodoId     = postInt('metodo_pago_id') ?: 1;
 $tasaItbis    = (float) setting('itbis_tasa', DEFAULT_ITBIS);
+$puedeMuestra = can('ventas.muestra'); // el navegador no decide esto
 
 try {
-    $ventaId = tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis) {
+    $ventaId = tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra) {
         // 1) Recalcular en el servidor (no se confía en el cliente)
         $subtotal = 0.0; $itbisBruto = 0.0; $costoTotal = 0.0; $lineas = [];
         foreach ($cart as $item) {
             $pid = (int) ($item['id'] ?? 0);
             $cant = (float) ($item['cant'] ?? 0);
             if ($pid <= 0 || $cant <= 0) continue;
+            // Bandera de muestra: se re-valida el permiso en el servidor.
+            $esMuestra = !empty($item['muestra']);
+            if ($esMuestra && !$puedeMuestra) {
+                throw new RuntimeException('No tienes permiso para facturar muestras (RD$0.00).');
+            }
             $p = qOne("SELECT id, nombre, precio_venta, precio_compra, itbis_aplica, tipo FROM productos WHERE id = ? AND activo = 1", [$pid]);
             if (!$p) throw new RuntimeException('Producto no disponible.');
             if ($p['tipo'] === 'producto') {
                 $stock = stockActual($pid, $sid);
                 if ($cant > $stock) throw new RuntimeException('Stock insuficiente de «' . $p['nombre'] . '» (disponible: ' . qty($stock) . ').');
             }
-            $precio = (float) $p['precio_venta'];
+            $precioReal = (float) $p['precio_venta'];
+            // La muestra se cobra en 0: no suma a subtotal ni genera ITBIS. Pero sí
+            // consume inventario, así que su costo real sí cuenta en el costo de venta.
+            $precio = $esMuestra ? 0.0 : $precioReal;
             $base   = round($precio * $cant, 2);
-            $itbis  = $p['itbis_aplica'] ? round($base * $tasaItbis / 100, 2) : 0.0;
+            $itbis  = ($esMuestra || !$p['itbis_aplica']) ? 0.0 : round($base * $tasaItbis / 100, 2);
             $subtotal   += $base;
             $itbisBruto += $itbis;
             $costoTotal += (float) $p['precio_compra'] * $cant;
-            $lineas[] = ['pid' => $pid, 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant, 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis];
+            $lineas[] = [
+                'pid' => $pid, 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
+                'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis,
+                'es_muestra' => $esMuestra ? 1 : 0, 'precio_original' => $esMuestra ? $precioReal : 0.0,
+            ];
         }
         if (!$lineas) throw new RuntimeException('No hay líneas válidas en la venta.');
 
@@ -71,13 +84,17 @@ try {
 
         // 4) Detalles + descuento de stock
         foreach ($lineas as $l) {
+            // El descuento global prorratea solo las líneas cobradas; la muestra ya es 0.
+            $itbisLinea = $l['es_muestra'] ? 0.0 : round($l['itbis'] * $factor, 2);
             dbInsert('venta_detalles', [
                 'venta_id' => $ventaId, 'producto_id' => $l['pid'], 'descripcion' => $l['nombre'],
                 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'costo_unitario' => $l['costo'],
-                'descuento' => 0, 'itbis' => round($l['itbis'] * $factor, 2), 'subtotal' => $l['base'],
+                'descuento' => 0, 'itbis' => $itbisLinea, 'subtotal' => $l['base'],
+                'es_muestra' => $l['es_muestra'], 'precio_original' => $l['precio_original'],
             ]);
             if ($l['tipo'] === 'producto') {
-                ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], 'Venta ' . $numero);
+                $motivo = $l['es_muestra'] ? 'Muestra ' . $numero : 'Venta ' . $numero;
+                ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], $motivo);
             }
         }
 

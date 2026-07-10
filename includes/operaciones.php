@@ -139,3 +139,39 @@ function cajaSesionAbierta(int $sucursalId, ?int $usuarioId = null): ?array
     return qOne("SELECT cs.*, c.nombre AS caja_nombre FROM caja_sesiones cs JOIN cajas c ON c.id = cs.caja_id
                  WHERE cs.sucursal_id = ? AND cs.usuario_id = ? AND cs.estado = 'abierta' ORDER BY cs.id DESC LIMIT 1", [$sucursalId, $u]);
 }
+
+/**
+ * Sesión abierta de una caja/terminal, sea de quien sea. Es distinto de
+ * cajaSesionAbierta(): aquí importa la TERMINAL, no el usuario. Se usa para
+ * impedir que alguien abra una caja que otra persona dejó abierta.
+ */
+function cajaAbiertaPorCaja(int $cajaId): ?array
+{
+    return qOne(
+        "SELECT cs.*, c.nombre AS caja_nombre, u.nombre AS usuario_nombre, u.apellido AS usuario_apellido
+           FROM caja_sesiones cs
+           JOIN cajas c ON c.id = cs.caja_id
+           LEFT JOIN usuarios u ON u.id = cs.usuario_id
+          WHERE cs.caja_id = ? AND cs.estado = 'abierta' ORDER BY cs.id DESC LIMIT 1",
+        [$cajaId]
+    );
+}
+
+/**
+ * Valida si se puede abrir una caja/terminal. Devuelve [true, ''] si se puede,
+ * o [false, motivo] con un mensaje claro de quién la tiene abierta.
+ */
+function validarAperturaCaja(int $cajaId, int $usuarioId): array
+{
+    $abierta = cajaAbiertaPorCaja($cajaId);
+    if (!$abierta) return [true, ''];
+
+    $quien = trim(($abierta['usuario_nombre'] ?? '') . ' ' . ($abierta['usuario_apellido'] ?? '')) ?: 'otro usuario';
+    $desde = $abierta['abierta_at'] ? date('d/m/Y h:i A', strtotime($abierta['abierta_at'])) : '';
+    $propia = (int) $abierta['usuario_id'] === $usuarioId;
+
+    $msg = $propia
+        ? "Ya tienes abierta la caja «{$abierta['caja_nombre']}»" . ($desde ? " desde el $desde" : '') . '. Ciérrala antes de abrir otra.'
+        : "La caja «{$abierta['caja_nombre']}» ya está abierta por $quien" . ($desde ? " desde el $desde" : '') . '. Debe cerrarla antes de que otra persona la use.';
+    return [false, $msg];
+}

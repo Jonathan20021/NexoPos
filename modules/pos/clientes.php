@@ -11,7 +11,7 @@ if (isPost()) {
 
     if ($accion === 'guardar') {
         $id         = postInt('id');
-        $nombre     = trim(post('nombre'));
+        $nombre     = trim(preg_replace('/\s+/', ' ', post('nombre')));
         $rncCedula  = trim(post('rnc_cedula'));
         $telefono   = trim(post('telefono'));
         $email      = trim(post('email'));
@@ -20,12 +20,41 @@ if (isPost()) {
         $limite     = $tipo === 'credito' ? postNum('limite_credito') : 0;
         $activo     = postInt('activo', 1);
 
+        // El Cliente Genérico (id 1) es un registro de sistema para ventas de
+        // mostrador: no se le exige documento ni teléfono. El resto sí se valida.
+        $esGenerico = $id === 1;
+        $telDigitos = preg_replace('/\D+/', '', $telefono);
+        $docDigitos = preg_replace('/\D+/', '', $rncCedula);
+        $error = null;
+
         if ($nombre === '') {
-            flash('error', 'El nombre del cliente es obligatorio.');
+            $error = 'El nombre del cliente es obligatorio.';
+        } elseif (!$esGenerico && preg_match('/\d/', $nombre)) {
+            $error = 'El nombre no puede contener números.';
+        } elseif (!$esGenerico && !preg_match('/\p{L}{2,}/u', $nombre)) {
+            $error = 'Escribe un nombre válido (al menos dos letras).';
+        } elseif (!$esGenerico && $telDigitos === '') {
+            $error = 'El teléfono es obligatorio.';
+        } elseif (!$esGenerico && strlen($telDigitos) < 10) {
+            $error = 'El teléfono debe tener al menos 10 dígitos (con el código de área).';
+        } elseif ($tipo === 'credito' && $docDigitos === '') {
+            $error = 'Un cliente a crédito necesita RNC o cédula.';
         } elseif ($limite < 0) {
-            flash('error', 'El límite de crédito no puede ser negativo.');
+            $error = 'El límite de crédito no puede ser negativo.';
         } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            flash('error', 'El correo electrónico no es válido.');
+            $error = 'El correo electrónico no es válido.';
+        } elseif ($docDigitos !== '' && ($dup = qVal(
+            "SELECT nombre FROM clientes WHERE REGEXP_REPLACE(COALESCE(rnc_cedula,''),'[^0-9]','') = ? AND id <> ?",
+            [$docDigitos, $id ?: 0]))) {
+            $error = "Ya existe un cliente con ese RNC/cédula: $dup.";
+        } elseif (!$esGenerico && $telDigitos !== '' && ($dup = qVal(
+            "SELECT nombre FROM clientes WHERE REGEXP_REPLACE(COALESCE(telefono,''),'[^0-9]','') = ? AND id <> ? AND id <> 1",
+            [$telDigitos, $id ?: 0]))) {
+            $error = "Ya existe un cliente con ese teléfono: $dup.";
+        }
+
+        if ($error) {
+            flash('error', $error);
         } else {
             $datos = [
                 'nombre'         => $nombre,
@@ -44,7 +73,8 @@ if (isPost()) {
                 flash('success', 'Cliente actualizado correctamente.');
             } else {
                 require_perm('clientes.crear');
-                $datos['codigo'] = nextNumero('clientes', 'codigo', 'CLI', 5);
+                $datos['codigo']     = nextNumero('clientes', 'codigo', 'CLI', 5);
+                $datos['created_by'] = current_user()['id'] ?? null;
                 $nid = dbInsert('clientes', $datos);
                 audit('clientes', 'crear', "Cliente creado: $nombre", ['tabla' => 'clientes', 'registro_id' => $nid]);
                 flash('success', 'Cliente creado correctamente.');
@@ -189,24 +219,28 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
         </div>
         <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2">
-            <label class="label">Nombre *</label>
-            <input type="text" name="nombre" x-model="form.nombre" required class="input" placeholder="Ej. Juan Pérez">
+            <label class="label" for="cli_nombre">Nombre *</label>
+            <input type="text" id="cli_nombre" name="nombre" x-model="form.nombre" required
+                   pattern="[^0-9]+" title="El nombre no puede contener números"
+                   class="input" placeholder="Ej. Juan Pérez">
           </div>
           <div>
-            <label class="label">RNC / Cédula</label>
-            <input type="text" name="rnc_cedula" x-model="form.rnc_cedula" class="input" placeholder="Opcional">
+            <label class="label" for="cli_doc">RNC / Cédula <span class="font-normal text-slate-400" x-show="form.tipo==='credito'">*</span></label>
+            <input type="text" id="cli_doc" name="rnc_cedula" x-model="form.rnc_cedula"
+                   :required="form.tipo==='credito'" class="input" :placeholder="form.tipo==='credito' ? 'Obligatorio para crédito' : 'Opcional'">
           </div>
           <div>
-            <label class="label">Teléfono</label>
-            <input type="text" name="telefono" x-model="form.telefono" class="input" placeholder="Opcional">
+            <label class="label" for="cli_tel">Teléfono *</label>
+            <input type="tel" id="cli_tel" name="telefono" x-model="form.telefono" required inputmode="tel"
+                   class="input" placeholder="Ej. 809 555 1234">
           </div>
           <div>
-            <label class="label">Email</label>
-            <input type="email" name="email" x-model="form.email" class="input" placeholder="Opcional">
+            <label class="label" for="cli_email">Email</label>
+            <input type="email" id="cli_email" name="email" x-model="form.email" class="input" placeholder="Opcional">
           </div>
           <div>
-            <label class="label">Tipo</label>
-            <select name="tipo" x-model="form.tipo" class="select">
+            <label class="label" for="cli_tipo">Tipo</label>
+            <select id="cli_tipo" name="tipo" x-model="form.tipo" class="select">
               <option value="contado">Contado</option>
               <option value="credito">Crédito</option>
             </select>

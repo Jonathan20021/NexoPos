@@ -32,7 +32,8 @@ if (get('pdf') === '1' && function_exists('pdf_render')) {
         . '<br><strong>Atendió:</strong> ' . htmlspecialchars($v['vendedor'] . ' ' . $v['vend_ape']) . '</div></td></tr></table>';
     $h .= '<table class="tbl"><thead><tr><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">ITBIS</th><th class="num">Importe</th></tr></thead><tbody>';
     foreach ($det as $d) {
-        $h .= '<tr><td>' . htmlspecialchars($d['descripcion']) . '</td><td class="num">' . qty($d['cantidad']) . '</td><td class="num">' . money($d['precio_unitario']) . '</td><td class="num">' . money($d['itbis']) . '</td><td class="num">' . money($d['subtotal']) . '</td></tr>';
+        $etq = !empty($d['es_muestra']) ? ' <strong>[MUESTRA]</strong>' : '';
+        $h .= '<tr><td>' . htmlspecialchars($d['descripcion']) . $etq . '</td><td class="num">' . qty($d['cantidad']) . '</td><td class="num">' . money($d['precio_unitario']) . '</td><td class="num">' . money($d['itbis']) . '</td><td class="num">' . money($d['subtotal']) . '</td></tr>';
     }
     $h .= '</tbody></table>';
     $h .= '<table style="width:48%; margin-left:52%; margin-top:12px;" class="totales">'

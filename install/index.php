@@ -117,7 +117,9 @@ function sembrar(): void
         $asignar($rAdmin, $todos);
         $asignar($rGerente, fn($c, $m) => !in_array($m, ['roles', 'usuarios', 'configuracion', 'auditoria', 'rrhh_nomina']) || str_ends_with($c, '.ver'));
         $ventasMods = ['pos', 'caja', 'ventas', 'devoluciones', 'clientes'];
-        $asignar($rCajero, fn($c, $m) => in_array($m, $ventasMods) || in_array($c, ['productos.ver', 'inventario.ver']));
+        // ventas.muestra queda fuera del Cajero por defecto: entregar producto a
+        // RD$0.00 es sensible. Se concede desde Roles y Permisos si el cliente lo decide.
+        $asignar($rCajero, fn($c, $m) => ($c !== 'ventas.muestra') && (in_array($m, $ventasMods) || in_array($c, ['productos.ver', 'inventario.ver'])));
         $invMods = ['categorias', 'productos', 'inventario', 'proveedores', 'compras', 'transferencias'];
         $asignar($rAlmacen, fn($c, $m) => in_array($m, $invMods));
         $asignar($rRRHH, fn($c, $m) => str_starts_with($m, 'rrhh_'));

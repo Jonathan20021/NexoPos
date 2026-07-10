@@ -6,6 +6,7 @@ $sid = current_sucursal_id();
 $uid = (int) current_user()['id'];
 $tasa = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 $moneda = setting('moneda', 'RD$');
+$puedeMuestra = can('ventas.muestra'); // habilita el toggle de muestra en el carrito
 
 layout_start('Punto de Venta', 'Registra ventas de forma rápida' . ($sid === null ? '' : ' · ' . e(current_user()['sucursal_nombre'] ?? '')));
 
@@ -93,19 +94,34 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
         <p class="text-sm">Agrega productos para iniciar la venta.</p>
       </div>
       <template x-for="(it,idx) in cart" :key="it.id">
-        <div class="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-semibold text-slate-700 truncate" x-text="it.nombre"></p>
-            <p class="text-xs text-slate-400" x-text="fmt(it.precio)"></p>
+        <div class="bg-slate-50 rounded-xl p-2.5" :class="it.muestra ? 'ring-1 ring-amber-300 bg-amber-50/60' : ''">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-slate-700 truncate" x-text="it.nombre"></p>
+              <p class="text-xs" :class="it.muestra ? 'text-amber-600 font-semibold' : 'text-slate-400'"
+                 x-text="it.muestra ? 'MUESTRA · ' + fmt(0) : fmt(it.precio)"></p>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button @click="dec(it)" class="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center"><?= icon('minus', 'w-3.5 h-3.5') ?></button>
+              <input type="text" x-model.number="it.cant" @change="qtyChange(it)" class="w-10 text-center text-sm font-bold bg-white border border-slate-200 rounded-lg py-1">
+              <button @click="inc(it)" class="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center"><?= icon('plus', 'w-3.5 h-3.5') ?></button>
+            </div>
+            <div class="w-20 text-right">
+              <p class="text-sm font-bold" :class="it.muestra ? 'text-amber-600' : 'text-slate-800'" x-text="fmt(lineTotal(it))"></p>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5">
-            <button @click="dec(it)" class="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center"><?= icon('minus', 'w-3.5 h-3.5') ?></button>
-            <input type="text" x-model.number="it.cant" @change="qtyChange(it)" class="w-10 text-center text-sm font-bold bg-white border border-slate-200 rounded-lg py-1">
-            <button @click="inc(it)" class="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center"><?= icon('plus', 'w-3.5 h-3.5') ?></button>
-          </div>
-          <div class="w-20 text-right">
-            <p class="text-sm font-bold text-slate-800" x-text="fmt(it.precio*it.cant)"></p>
-          </div>
+          <?php if ($puedeMuestra): ?>
+            <div class="flex items-center justify-end mt-1.5">
+              <button type="button" @click="toggleMuestra(it)"
+                      class="inline-flex items-center gap-1 text-xs font-semibold rounded-md px-2 py-0.5 transition-colors duration-200 cursor-pointer"
+                      :class="it.muestra ? 'bg-amber-500 text-white hover:bg-amber-600' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'"
+                      :aria-pressed="it.muestra.toString()"
+                      :title="it.muestra ? 'Cobrar esta línea normalmente' : 'Entregar esta línea como muestra (RD$0.00)'">
+                <?= icon('tag', 'w-3.5 h-3.5') ?>
+                <span x-text="it.muestra ? 'Es muestra' : 'Marcar muestra'"></span>
+              </button>
+            </div>
+          <?php endif; ?>
         </div>
       </template>
     </div>
@@ -135,7 +151,7 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
   <!-- Modal de cobro -->
   <div x-show="pay" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="pay=false" @keydown.escape.window="pay=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
-      <form method="post" action="<?= e(url('modules/pos/guardar_venta.php')) ?>" @submit="document.getElementById('cartInput').value=JSON.stringify(cart.map(i=>({id:i.id,cant:i.cant})))">
+      <form method="post" action="<?= e(url('modules/pos/guardar_venta.php')) ?>" @submit="document.getElementById('cartInput').value=JSON.stringify(cart.map(i=>({id:i.id,cant:i.cant,muestra:i.muestra?1:0})))">
         <?= csrf_field() ?>
         <input type="hidden" name="cart" id="cartInput">
         <input type="hidden" name="descuento" :value="descuento||0">
@@ -194,6 +210,7 @@ function pos() {
     pay: false, comprobante: 'consumidor', cliente_id: 1,
     metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
     tasa: <?= $tasa ?>,
+    puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,
     get filtered() {
       const s = this.search.toLowerCase();
       return this.productos.filter(p =>
@@ -204,17 +221,20 @@ function pos() {
       if (p.stock <= 0) return;
       let it = this.cart.find(i => i.id === p.id);
       if (it) { if (it.cant < p.stock) it.cant++; }
-      else this.cart.push({ id: p.id, nombre: p.nombre, precio: p.precio, itbis: p.itbis_aplica, stock: p.stock, cant: 1 });
+      else this.cart.push({ id: p.id, nombre: p.nombre, precio: p.precio, itbis: p.itbis_aplica, stock: p.stock, cant: 1, muestra: false });
     },
     inc(it) { if (it.cant < it.stock) it.cant++; },
     dec(it) { it.cant--; if (it.cant <= 0) this.remove(it); },
     remove(it) { this.cart = this.cart.filter(i => i !== it); },
     qtyChange(it) { let v = parseFloat(it.cant) || 1; it.cant = Math.max(1, Math.min(it.stock, v)); },
-    get subtotal() { return this.cart.reduce((s, i) => s + i.precio * i.cant, 0); },
+    toggleMuestra(it) { if (!this.puedeMuestra) return; it.muestra = !it.muestra; },
+    // Una muestra no aporta al cobro: su total de línea es 0.
+    lineTotal(it) { return it.muestra ? 0 : it.precio * it.cant; },
+    get subtotal() { return this.cart.reduce((s, i) => s + this.lineTotal(i), 0); },
     get itbis() {
       const desc = Math.min(this.descuento || 0, this.subtotal);
       const f = this.subtotal > 0 ? (this.subtotal - desc) / this.subtotal : 1;
-      return this.cart.reduce((s, i) => s + (i.itbis ? i.precio * i.cant * this.tasa / 100 : 0), 0) * f;
+      return this.cart.reduce((s, i) => s + (!i.muestra && i.itbis ? i.precio * i.cant * this.tasa / 100 : 0), 0) * f;
     },
     get total() { return (this.subtotal - Math.min(this.descuento || 0, this.subtotal)) + this.itbis; },
     get cambio() { return Math.max(0, (this.recibido || 0) - this.total); },

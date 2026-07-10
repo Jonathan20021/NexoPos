@@ -86,7 +86,7 @@ if ($verId) {
         <table class="data-table">
           <thead><tr><th>Producto</th><th class="text-center">Cant.</th><th class="text-right">Precio</th><th class="text-right">ITBIS</th><th class="text-right">Subtotal</th></tr></thead>
           <tbody>
-            <?php foreach ($det as $d): ?><tr><td class="font-semibold text-slate-700"><?= e($d['descripcion']) ?></td><td class="text-center"><?= qty($d['cantidad']) ?></td><td class="text-right"><?= money($d['precio_unitario']) ?></td><td class="text-right text-slate-500"><?= money($d['itbis']) ?></td><td class="text-right font-bold text-slate-800"><?= money($d['subtotal']) ?></td></tr><?php endforeach; ?>
+            <?php foreach ($det as $d): ?><tr><td class="font-semibold text-slate-700"><?= e($d['descripcion']) ?><?php if (!empty($d['es_muestra'])): ?> <span class="inline-block ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 align-middle">MUESTRA</span><?php endif; ?></td><td class="text-center"><?= qty($d['cantidad']) ?></td><td class="text-right"><?= money($d['precio_unitario']) ?></td><td class="text-right text-slate-500"><?= money($d['itbis']) ?></td><td class="text-right font-bold text-slate-800"><?= money($d['subtotal']) ?></td></tr><?php endforeach; ?>
           </tbody>
         </table>
       </div>

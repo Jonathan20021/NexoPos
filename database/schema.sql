@@ -352,6 +352,7 @@ CREATE TABLE clientes (
   limite_credito DECIMAL(12,2) NOT NULL DEFAULT 0,
   balance DECIMAL(12,2) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_by INT UNSIGNED NULL,                  -- usuario que registró el cliente (trazabilidad)
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_cliente_codigo (codigo),
@@ -408,6 +409,7 @@ CREATE TABLE caja_sesiones (
   caja_id INT UNSIGNED NOT NULL,
   sucursal_id INT UNSIGNED NOT NULL,
   usuario_id INT UNSIGNED NOT NULL,
+  turno VARCHAR(50) NULL,                            -- Mañana / Tarde / Noche (clasificación y filtro)
   monto_apertura DECIMAL(12,2) NOT NULL DEFAULT 0,
   total_ventas DECIMAL(12,2) NOT NULL DEFAULT 0,
   total_efectivo DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -514,6 +516,8 @@ CREATE TABLE venta_detalles (
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
   subtotal DECIMAL(12,2) NOT NULL,
+  es_muestra TINYINT(1) NOT NULL DEFAULT 0,          -- línea entregada como muestra (RD$0.00)
+  precio_original DECIMAL(12,2) NOT NULL DEFAULT 0,  -- precio real de la muestra (trazabilidad)
   PRIMARY KEY (id),
   KEY idx_vd_venta (venta_id),
   KEY idx_vd_producto (producto_id),
@@ -625,6 +629,32 @@ CREATE TABLE pedido_detalles (
   CONSTRAINT chk_pedido_detalle CHECK (cantidad > 0 AND precio_unitario >= 0),
   CONSTRAINT fk_pd_pedido FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE,
   CONSTRAINT fk_pd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Metas de venta / KPI (P0.6). Meta por sucursal, por vendedor o global.
+-- El progreso se deriva de `ventas`; la UI es una fase posterior.
+DROP TABLE IF EXISTS metas_ventas;
+CREATE TABLE metas_ventas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  sucursal_id INT UNSIGNED NULL,
+  usuario_id INT UNSIGNED NULL,
+  periodo_inicio DATE NOT NULL,
+  periodo_fin DATE NOT NULL,
+  moneda VARCHAR(10) NOT NULL DEFAULT 'RD$',
+  monto_objetivo DECIMAL(14,2) NOT NULL DEFAULT 0,
+  estado ENUM('activa','cerrada','cancelada') NOT NULL DEFAULT 'activa',
+  notas VARCHAR(255) NULL,
+  created_by INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_meta_sucursal (sucursal_id),
+  KEY idx_meta_usuario (usuario_id),
+  KEY idx_meta_periodo (periodo_inicio, periodo_fin),
+  CONSTRAINT chk_meta_periodo CHECK (periodo_fin >= periodo_inicio),
+  CONSTRAINT chk_meta_monto CHECK (monto_objetivo >= 0),
+  CONSTRAINT fk_meta_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE,
+  CONSTRAINT fk_meta_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Bitácora de los correos automáticos de la tienda. Sin esto, un correo que no
