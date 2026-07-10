@@ -175,10 +175,16 @@
             if (r.status === 200 && r.data && r.data.ok) {
               return del(it.uuid).then(function () { return false; });   // registrada (o duplicada) -> fuera
             }
-            if (r.status === 409) {
-              return true;   // no hay caja abierta: cortar y reintentar más tarde
+            // Condiciones TEMPORALES: no se pierde la venta, se corta y se reintenta luego.
+            //  409 = no hay caja abierta · 401 = sesión expirada · 419 = token vencido
+            //  5xx = error momentáneo del servidor.
+            // Tras volver a iniciar sesión, la página recarga con un token fresco y el
+            // reintento periódico vacía la cola solo.
+            if (r.status === 409 || r.status === 401 || r.status === 419 || r.status >= 500) {
+              return true;
             }
-            // 422 u otro: error de negocio, marcar para revisión manual.
+            // Error DEFINITIVO de negocio (422 stock/NCF, 403 permiso, 400 datos):
+            // se marca para revisión manual y se sigue con las demás.
             it.status = 'error';
             it.error  = (r.data && r.data.error) || 'No se pudo sincronizar.';
             return put(it).then(function () { return false; });
