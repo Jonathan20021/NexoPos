@@ -667,6 +667,7 @@ DROP TABLE IF EXISTS correos_enviados;
 CREATE TABLE correos_enviados (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   pedido_id INT UNSIGNED NULL,
+  campana_id INT UNSIGNED NULL,          -- campaña que originó el correo (si aplica)
   evento VARCHAR(40) NOT NULL,
   destinatario VARCHAR(180) NOT NULL,
   asunto VARCHAR(180) NOT NULL,
@@ -676,6 +677,7 @@ CREATE TABLE correos_enviados (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_correo_pedido (pedido_id),
+  KEY idx_correo_campana (campana_id),
   KEY idx_correo_estado (estado),
   KEY idx_correo_fecha (created_at),
   CONSTRAINT fk_correo_pedido FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE SET NULL
@@ -918,6 +920,44 @@ CREATE TABLE comisiones (
   KEY idx_com_sucursal (sucursal_id),
   CONSTRAINT fk_com_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
   CONSTRAINT fk_com_transaccion FOREIGN KEY (transaccion_id) REFERENCES transacciones(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Promociones (descuentos automáticos por temporada/categoría/marca/producto).
+CREATE TABLE promociones (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre       VARCHAR(120) NOT NULL,
+  tipo         ENUM('porcentaje','monto') NOT NULL DEFAULT 'porcentaje',
+  valor        DECIMAL(12,2) NOT NULL DEFAULT 0,
+  alcance      ENUM('todos','categoria','marca','producto') NOT NULL DEFAULT 'todos',
+  objetivo_id  INT UNSIGNED NULL,
+  canal        ENUM('ambos','pos','tienda') NOT NULL DEFAULT 'ambos',
+  fecha_inicio DATE NOT NULL,
+  fecha_fin    DATE NOT NULL,
+  prioridad    INT NOT NULL DEFAULT 0,
+  activo       TINYINT(1) NOT NULL DEFAULT 1,
+  created_by   INT UNSIGNED NULL,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_promo_vigencia (activo, fecha_inicio, fecha_fin),
+  KEY idx_promo_alcance (alcance, objetivo_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Campañas por correo (envío masivo sobre Resend).
+CREATE TABLE campanas (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre      VARCHAR(140) NOT NULL,
+  asunto      VARCHAR(180) NOT NULL,
+  contenido   MEDIUMTEXT NOT NULL,
+  segmento    ENUM('con_email','con_deuda') NOT NULL DEFAULT 'con_email',
+  estado      ENUM('borrador','enviada','parcial') NOT NULL DEFAULT 'borrador',
+  total       INT NOT NULL DEFAULT 0,
+  enviados    INT NOT NULL DEFAULT 0,
+  fallidos    INT NOT NULL DEFAULT 0,
+  created_by  INT UNSIGNED NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  enviada_at  DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_campana_estado (estado)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

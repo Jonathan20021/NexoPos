@@ -49,6 +49,7 @@ function permission_catalog(): array
         ],
         'Marketing' => [
             'promociones' => ['label' => 'Promociones', 'acciones' => $crud],
+            'campanas'    => ['label' => 'Campañas por correo', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'editar' => 'Editar', 'eliminar' => 'Eliminar', 'enviar' => 'Enviar']],
         ],
     ];
 }

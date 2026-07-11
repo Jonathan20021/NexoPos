@@ -38,6 +38,7 @@ function nav_groups(): array
         ]],
         ['Marketing', [
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
+            ['Campañas por correo', 'mail', url('modules/marketing/campanas.php'), 'campanas.ver'],
         ]],
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],
