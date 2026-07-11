@@ -25,16 +25,22 @@ if (!$sesion) {
 }
 
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
+    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
      FROM productos p LEFT JOIN inventario_stock s ON s.producto_id=p.id AND s.sucursal_id=?
      LEFT JOIN categorias c ON c.id=p.categoria_id
      WHERE p.activo=1 AND p.tipo='producto' ORDER BY p.nombre", [$sid]
 );
-$prodJs = array_map(fn($p) => [
-    'id' => (int) $p['id'], 'codigo' => $p['codigo'], 'nombre' => $p['nombre'],
-    'precio' => (float) $p['precio_venta'], 'itbis_aplica' => (int) $p['itbis_aplica'],
-    'categoria_id' => (int) $p['categoria_id'], 'stock' => (float) $p['stock'], 'color' => $p['color'],
-], $productos);
+$prodJs = array_map(function ($p) {
+    // El precio mostrado ya trae la promoción vigente (el servidor la recalcula al vender).
+    $pr = aplicarPromocion((float) $p['precio_venta'], $p, 'pos');
+    return [
+        'id' => (int) $p['id'], 'codigo' => $p['codigo'], 'nombre' => $p['nombre'],
+        'precio' => $pr['precio'], 'precio_lista' => $pr['original'],
+        'promo' => $pr['promo'] ? $pr['etiqueta'] : '',
+        'itbis_aplica' => (int) $p['itbis_aplica'],
+        'categoria_id' => (int) $p['categoria_id'], 'stock' => (float) $p['stock'], 'color' => $p['color'],
+    ];
+}, $productos);
 
 // Meta personal de la vendedora: se muestra un progreso compacto arriba del POS.
 $miMeta = metaPersonalActiva($uid);
@@ -114,7 +120,15 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
                   x-text="(p.stock<=0?'Agotado':p.stock+' u.')"></span>
           </div>
           <p class="text-sm font-semibold text-slate-700 leading-tight line-clamp-2" x-text="p.nombre"></p>
-          <p class="text-base font-extrabold text-blue-600 mt-1" x-text="fmt(p.precio)"></p>
+          <div class="mt-1 flex items-baseline gap-1.5 flex-wrap">
+            <p class="text-base font-extrabold text-blue-600" x-text="fmt(p.precio)"></p>
+            <template x-if="p.promo">
+              <span class="text-xs text-slate-400 line-through" x-text="fmt(p.precio_lista)"></span>
+            </template>
+            <template x-if="p.promo">
+              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500 text-white" x-text="p.promo"></span>
+            </template>
+          </div>
         </button>
       </template>
       <div x-show="filtered.length===0" class="col-span-full text-center text-slate-400 py-12 text-sm">No se encontraron productos.</div>

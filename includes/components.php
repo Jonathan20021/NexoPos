@@ -36,6 +36,9 @@ function nav_groups(): array
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],
             ['Departamentos', 'building', url('modules/rrhh/departamentos.php'), 'rrhh_departamentos.ver'],
         ]],
+        ['Marketing', [
+            ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
+        ]],
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],
             ['Cuentas', 'wallet', url('modules/finanzas/cuentas.php'), 'finanzas.ver'],

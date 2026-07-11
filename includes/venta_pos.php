@@ -61,13 +61,15 @@ function registrarVentaPOS(array $in, array $ctx): array
             if ($esMuestra && !$puedeMuestra) {
                 throw new RuntimeException('No tienes permiso para facturar muestras (RD$0.00).');
             }
-            $p = qOne("SELECT id, nombre, precio_venta, precio_compra, itbis_aplica, tipo FROM productos WHERE id = ? AND activo = 1", [$pid]);
+            $p = qOne("SELECT id, nombre, precio_venta, precio_compra, itbis_aplica, tipo, categoria_id, marca_id FROM productos WHERE id = ? AND activo = 1", [$pid]);
             if (!$p) throw new RuntimeException('Producto no disponible.');
             if ($p['tipo'] === 'producto') {
                 $stock = stockActual($pid, $sid);
                 if ($cant > $stock) throw new RuntimeException('Stock insuficiente de «' . $p['nombre'] . '» (disponible: ' . qty($stock) . ').');
             }
-            $precioReal = (float) $p['precio_venta'];
+            // Precio con promoción vigente (se calcula en el servidor). Una muestra
+            // ignora la promoción: su precio es 0 de todos modos.
+            $precioReal = aplicarPromocion((float) $p['precio_venta'], $p, 'pos')['precio'];
             $precio = $esMuestra ? 0.0 : $precioReal;
             $base   = round($precio * $cant, 2);
             $itbis  = ($esMuestra || !$p['itbis_aplica']) ? 0.0 : round($base * $tasaItbis / 100, 2);

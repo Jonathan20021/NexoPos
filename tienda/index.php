@@ -66,7 +66,7 @@ if (isPost() && post('accion') === 'pedido') {
 
                 // El precio NUNCA se toma del navegador: se relee de la base.
                 $p = qOne(
-                    "SELECT p.id, p.nombre, p.precio_venta, p.itbis_aplica,
+                    "SELECT p.id, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id,
                             COALESCE(s.cantidad, 0) AS stock
                        FROM productos p
                        LEFT JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
@@ -78,11 +78,13 @@ if (isPost() && post('accion') === 'pedido') {
                     throw new RuntimeException('No hay suficiente inventario de «' . $p['nombre'] . '». Disponible: ' . qty($p['stock']) . '.');
                 }
 
-                $base  = round((float) $p['precio_venta'] * $cant, 2);
+                // Precio con promoción vigente para la tienda (recalculado en el servidor).
+                $precioUnit = aplicarPromocion((float) $p['precio_venta'], $p, 'tienda')['precio'];
+                $base  = round($precioUnit * $cant, 2);
                 $itbis = $p['itbis_aplica'] ? round($base * $tasaItbis / 100, 2) : 0.0;
                 $subtotal += $base; $itbisTotal += $itbis;
                 $lineas[] = ['pid' => $pid, 'desc' => $p['nombre'], 'cant' => $cant,
-                             'precio' => (float) $p['precio_venta'], 'itbis' => $itbis, 'sub' => $base];
+                             'precio' => $precioUnit, 'itbis' => $itbis, 'sub' => $base];
             }
             if (!$lineas) throw new RuntimeException('Tu carrito está vacío.');
 
@@ -134,7 +136,7 @@ if ($categoriaId)   { $cond[] = "p.categoria_id = ?"; $params[] = $categoriaId; 
 $where = implode(' AND ', $cond);
 
 $productos = qAll(
-    "SELECT p.id, p.nombre, p.codigo, p.imagen, p.precio_venta, p.itbis_aplica,
+    "SELECT p.id, p.nombre, p.codigo, p.imagen, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id,
             s.cantidad AS stock, c.nombre AS categoria
        FROM productos p
        JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
@@ -143,6 +145,14 @@ $productos = qAll(
       ORDER BY p.nombre",
     $params
 );
+// Precio efectivo con promoción vigente (tienda). Se añade a cada fila para usarlo
+// tanto en las tarjetas como en el carrito de Alpine.
+foreach ($productos as &$__p) {
+    $__pr = aplicarPromocion((float) $__p['precio_venta'], $__p, 'tienda');
+    $__p['precio_efectivo'] = $__pr['precio'];
+    $__p['promo_etiqueta']  = $__pr['promo'] ? $__pr['etiqueta'] : '';
+}
+unset($__p);
 
 $categorias = qAll(
     "SELECT DISTINCT c.id, c.nombre
@@ -155,7 +165,7 @@ $categorias = qAll(
 
 $productosJs = array_map(fn($p) => [
     'id' => (int) $p['id'], 'nombre' => $p['nombre'],
-    'precio' => (float) $p['precio_venta'], 'itbis' => (int) $p['itbis_aplica'],
+    'precio' => (float) $p['precio_efectivo'], 'itbis' => (int) $p['itbis_aplica'],
     'stock' => (float) $p['stock'],
 ], $productos);
 
@@ -310,7 +320,13 @@ $mensajes = get_flashes();
               <h2 class="font-semibold text-marca-texto mt-0.5 leading-snug line-clamp-2"><?= e($p['nombre']) ?></h2>
 
               <div class="mt-2">
-                <p class="font-display text-xl font-bold text-marca leading-none"><?= money($p['precio_venta']) ?></p>
+                <div class="flex items-baseline gap-2 flex-wrap">
+                  <p class="font-display text-xl font-bold text-marca leading-none"><?= money($p['precio_efectivo']) ?></p>
+                  <?php if ($p['promo_etiqueta']): ?>
+                    <span class="text-sm text-emerald-900/40 line-through"><?= money($p['precio_venta']) ?></span>
+                    <span class="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-500 text-white"><?= e($p['promo_etiqueta']) ?></span>
+                  <?php endif; ?>
+                </div>
                 <p class="text-xs text-emerald-900/50 mt-1">
                   <?= $p['itbis_aplica'] ? 'ITBIS incluido al facturar' : 'Exento de ITBIS' ?>
                 </p>

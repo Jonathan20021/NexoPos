@@ -47,6 +47,9 @@ function permission_catalog(): array
             'metas'    => ['label' => 'Metas de Venta', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Crear/editar']],
             'dgii'     => ['label' => 'Reportes DGII', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar archivo']],
         ],
+        'Marketing' => [
+            'promociones' => ['label' => 'Promociones', 'acciones' => $crud],
+        ],
     ];
 }
 
