@@ -12,6 +12,9 @@ mensualmente, **a más tardar el día 15 del mes siguiente**:
 Se accede en **Finanzas → Reportes DGII**. Requiere el permiso `dgii.ver`
 para consultar y `dgii.generar` para descargar el archivo.
 
+Además, el sistema arma el resumen del **IT-1** (Declaración Jurada del ITBIS)
+derivado de esos mismos datos — ver la sección [IT-1](#it-1--declaración-jurada-del-itbis).
+
 ---
 
 ## Dos supuestos que debes validar antes del primer envío
@@ -79,6 +82,49 @@ y bloquea el botón si encuentra errores:
 
 Las advertencias (por ejemplo, consumidor final sin documento) no bloquean la
 descarga, pero se muestran para que las revises.
+
+---
+
+## IT-1 — Declaración Jurada del ITBIS
+
+El IT-1 **no es un archivo de envío**: es la declaración que se llena en la Oficina
+Virtual. Por eso el sistema no genera un TXT, sino el **resumen del período** para
+transcribirlo. Se accede en **Finanzas → IT-1 · ITBIS** (permiso `dgii.ver`) y se
+puede exportar en PDF para el contador.
+
+Las cifras se derivan de **las mismas filas que se declaran en el 606 y el 607**
+(`dgiiIt1()` llama a `dgiiFilas606/607`), así que el IT-1 **siempre cuadra con lo
+que se envió**. No reimplementa las reglas de inclusión.
+
+| Cifra | De dónde sale |
+|---|---|
+| Operaciones gravadas / exentas | `venta_detalles`: la **línea** es la fuente de verdad, porque una venta puede mezclar productos gravados y exentos |
+| Total de operaciones | gravadas + exentas (equivale a `subtotal − descuento` de las ventas del 607) |
+| ITBIS facturado (**débito fiscal**) | `ventas.itbis` de las ventas del 607 |
+| ITBIS adelantado (**crédito fiscal**) | 606, columna 15: **facturado − llevado al costo** |
+| Retenciones / percepciones | `ventas.itbis_retenido_terceros`, `ventas.itbis_percibido`, `compras.itbis_retenido` |
+
+**El descuento se prorratea.** Vive a nivel de venta, no de línea; si no se
+prorrateara sobre la base de cada línea, se declararían operaciones más altas que
+las reales. Las **muestras** entran con subtotal 0, así que no suman operaciones
+por construcción.
+
+**Cómo se llega al monto a pagar:**
+
+```
+débito − crédito = diferencia          (negativa = saldo a favor)
+diferencia − retenido por terceros − percibido + retenido a proveedores = a pagar
+```
+
+Lo que tus clientes te retuvieron ya lo enteraron ellos: se acredita. Lo que tú le
+retuviste a un proveedor lo debes enterar tú: se suma.
+
+### Lo que este resumen todavía no resuelve
+
+Una **devolución** rebaja el ITBIS facturado mediante una **nota de crédito (B04)**.
+El sistema registra la devolución pero aún no emite ese comprobante, así que el
+débito fiscal **no la descuenta**. Cuando hay devoluciones en el período, la
+pantalla lo avisa con el monto para que se maneje con el contador.
 
 ---
 

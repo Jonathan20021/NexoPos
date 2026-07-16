@@ -47,6 +47,7 @@ function nav_groups(): array
             ['Reportes', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
             ['Metas de Venta', 'trending', url('modules/finanzas/metas.php'), 'metas.ver'],
             ['Reportes DGII', 'shield', url('modules/finanzas/dgii.php'), 'dgii.ver'],
+            ['IT-1 · ITBIS', 'percent', url('modules/finanzas/it1.php'), 'dgii.ver'],
         ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],

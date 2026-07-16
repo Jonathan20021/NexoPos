@@ -282,3 +282,141 @@ function dgiiTxt(string $formato, array $filas, array $empresa, string $periodo)
         default => throw new InvalidArgumentException('Formato DGII no soportado.'),
     };
 }
+
+// ---------------------------------------------------------------------------
+//  IT-1 — Declaración Jurada del ITBIS
+// ---------------------------------------------------------------------------
+
+/**
+ * Resumen del IT-1 del período.
+ *
+ * Se deriva de las MISMAS filas que se declaran en el 606 y el 607, así el IT-1
+ * siempre cuadra con lo que se envió. Aquí no se reimplementan las reglas de
+ * inclusión (NCF emitido, no anulada, período): son las de dgiiFilas606/607.
+ *
+ * A diferencia del 606/607/608, el IT-1 NO es un archivo de envío: es la
+ * declaración que se llena en la Oficina Virtual. Esto produce las cifras para
+ * transcribirla, no un TXT.
+ *
+ * El desglose gravado/exento sale de `venta_detalles`, no de `ventas`: la línea
+ * es la fuente de verdad porque una misma venta puede mezclar productos gravados
+ * y exentos. Las muestras (es_muestra) ya entran con subtotal 0, así que no
+ * suman operaciones por construcción.
+ */
+function dgiiIt1(string $periodo, ?int $sucursalId = null): array
+{
+    $ventas  = dgiiFilas607($periodo, $sucursalId);
+    $compras = dgiiFilas606($periodo, $sucursalId);
+
+    // --- Ventas: operaciones gravadas vs exentas, tomadas de la línea ---
+    $porVenta = [];
+    if ($ventas) {
+        $ids = array_column($ventas, 'id');
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        foreach (qAll(
+            "SELECT venta_id,
+                    COALESCE(SUM(CASE WHEN itbis > 0 THEN subtotal ELSE 0 END), 0) AS gravada,
+                    COALESCE(SUM(CASE WHEN itbis <= 0 THEN subtotal ELSE 0 END), 0) AS exenta
+               FROM venta_detalles
+              WHERE venta_id IN ($ph)
+              GROUP BY venta_id",
+            $ids
+        ) as $r) {
+            $porVenta[(int) $r['venta_id']] = $r;
+        }
+    }
+
+    $gravadas = 0.0; $exentas = 0.0; $debito = 0.0;
+    $retenidoTerceros = 0.0; $percibidoVentas = 0.0; $totalFacturado = 0.0;
+
+    foreach ($ventas as $v) {
+        $sub  = (float) $v['subtotal'];
+        $desc = (float) $v['descuento'];
+        // El descuento se guarda a nivel de venta, no de línea: se prorratea
+        // sobre la base para no declarar operaciones más altas que las reales.
+        $factor = $sub > 0 ? ($sub - $desc) / $sub : 1.0;
+        $d = $porVenta[(int) $v['id']] ?? ['gravada' => 0, 'exenta' => 0];
+
+        $gravadas += (float) $d['gravada'] * $factor;
+        $exentas  += (float) $d['exenta']  * $factor;
+        $debito           += (float) $v['itbis'];
+        $retenidoTerceros += (float) ($v['itbis_retenido_terceros'] ?? 0);
+        $percibidoVentas  += (float) ($v['itbis_percibido'] ?? 0);
+        $totalFacturado   += (float) $v['total'];
+    }
+
+    // --- Compras: ITBIS adelantado (crédito fiscal) ---
+    // Misma regla que la columna 15 del 606: facturado − llevado al costo.
+    // No se reimplementa aparte para que 606 e IT-1 nunca discrepen.
+    $credito = 0.0; $retenidoAProveedores = 0.0; $totalCompras = 0.0;
+    foreach ($compras as $c) {
+        $credito              += (float) $c['itbis'] - (float) ($c['itbis_costo'] ?? 0);
+        $retenidoAProveedores += (float) ($c['itbis_retenido'] ?? 0);
+        $totalCompras         += (float) $c['monto_bienes'] + (float) $c['monto_servicios'];
+    }
+
+    // Débito − crédito: positivo es ITBIS a pagar, negativo es saldo a favor.
+    $diferencia = $debito - $credito;
+    // Lo que tus clientes te retuvieron ya lo enteraron ellos: se acredita.
+    // Lo que tú le retuviste a un proveedor lo debes enterar tú: se suma.
+    $aPagar = $diferencia - $retenidoTerceros - $percibidoVentas + $retenidoAProveedores;
+
+    return [
+        'periodo'                => $periodo,
+        'ventas_registros'       => count($ventas),
+        'compras_registros'      => count($compras),
+        'operaciones'            => round($gravadas + $exentas, 2),
+        'gravadas'               => round($gravadas, 2),
+        'exentas'                => round($exentas, 2),
+        'total_facturado'        => round($totalFacturado, 2),
+        'total_compras'          => round($totalCompras, 2),
+        'debito'                 => round($debito, 2),
+        'credito'                => round($credito, 2),
+        'diferencia'             => round($diferencia, 2),
+        'retenido_terceros'      => round($retenidoTerceros, 2),
+        'percibido_ventas'       => round($percibidoVentas, 2),
+        'retenido_a_proveedores' => round($retenidoAProveedores, 2),
+        'a_pagar'                => round($aPagar, 2),
+    ];
+}
+
+/**
+ * Avisos del IT-1: cosas que el sistema no puede resolver solo y el contador
+ * debe considerar antes de declarar. No bloquean nada.
+ */
+function dgiiIt1Avisos(string $periodo, array $it1, array $empresa): array
+{
+    $avisos = [];
+
+    if (empty($empresa['rnc'])) {
+        $avisos[] = ['ref' => 'Empresa', 'msg' => 'Falta el RNC en Configuración → Empresa.'];
+    }
+
+    // Una devolución rebaja el ITBIS facturado mediante una nota de crédito (B04).
+    // El sistema registra la devolución pero todavía no emite ese comprobante, así
+    // que el débito fiscal de arriba no la descuenta: hay que hacerlo a mano.
+    $dev = qOne(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(d.total), 0) AS monto
+           FROM devoluciones d
+           JOIN ventas v ON v.id = d.venta_id
+          WHERE DATE_FORMAT(d.created_at, '%Y%m') = ?",
+        [$periodo]
+    );
+    if ($dev && (int) $dev['n'] > 0) {
+        $avisos[] = [
+            'ref' => 'Devoluciones',
+            'msg' => (int) $dev['n'] . ' devolución(es) por ' . money($dev['monto']) . ' en el período. '
+                   . 'El ITBIS facturado no las descuenta: se rebajan con una nota de crédito (B04) que aún se emite fuera del sistema.',
+        ];
+    }
+
+    if ($it1['diferencia'] < 0) {
+        $avisos[] = ['ref' => 'Saldo a favor', 'msg' => 'El crédito fiscal supera al débito: el período arroja saldo a favor, no pago.'];
+    }
+
+    if ($it1['ventas_registros'] === 0 && $it1['compras_registros'] === 0) {
+        $avisos[] = ['ref' => 'Sin operaciones', 'msg' => 'No hubo operaciones con NCF. La declaración se presenta igual, en cero.'];
+    }
+
+    return $avisos;
+}
