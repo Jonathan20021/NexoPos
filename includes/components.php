@@ -43,6 +43,7 @@ function nav_groups(): array
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],
             ['Cuentas', 'wallet', url('modules/finanzas/cuentas.php'), 'finanzas.ver'],
+            ['Conciliación bancaria', 'check', url('modules/finanzas/conciliacion.php'), 'conciliacion.ver'],
             ['Comisiones', 'percent', url('modules/finanzas/comisiones.php'), 'comisiones.ver'],
             ['Reportes', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
             ['Metas de Venta', 'trending', url('modules/finanzas/metas.php'), 'metas.ver'],

@@ -43,6 +43,7 @@ function permission_catalog(): array
         'Finanzas' => [
             'finanzas'   => ['label' => 'Ingresos y Gastos', 'acciones' => $crud],
             'comisiones' => ['label' => 'Comisiones', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar/registrar', 'aprobar' => 'Aprobar', 'pagar' => 'Pagar', 'anular' => 'Anular']],
+            'conciliacion' => ['label' => 'Conciliación bancaria', 'acciones' => ['ver' => 'Ver', 'conciliar' => 'Marcar movimientos', 'cerrar' => 'Cerrar corte']],
             'reportes' => ['label' => 'Reportes', 'acciones' => ['ver' => 'Ver']],
             'metas'    => ['label' => 'Metas de Venta', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Crear/editar']],
             'dgii'     => ['label' => 'Reportes DGII', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar archivo']],

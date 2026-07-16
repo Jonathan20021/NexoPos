@@ -35,6 +35,7 @@ require_once dirname(__DIR__) . '/includes/mail.php';
 require_once dirname(__DIR__) . '/includes/correos_pedido.php';
 require_once dirname(__DIR__) . '/includes/campanas.php';
 require_once dirname(__DIR__) . '/includes/metas.php';
+require_once dirname(__DIR__) . '/includes/conciliacion.php';
 require_once dirname(__DIR__) . '/includes/promociones.php';
 require_once dirname(__DIR__) . '/includes/venta_pos.php';
 require_once dirname(__DIR__) . '/includes/export.php';
