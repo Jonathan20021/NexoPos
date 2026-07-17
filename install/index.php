@@ -29,11 +29,24 @@ function ejecutarInstalacion(bool $produccion = false): void
         paso('Usando la base de datos existente «' . DB_NAME . '».');
     }
 
+    // 1b) Borrar TODAS las tablas existentes antes del esquema. Así una reinstalación
+    //     limpia también las tablas creadas por migraciones (comisiones, conciliaciones…),
+    //     que el esquema no siempre lista para DROP.
+    $pdo = db();
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+    foreach ($pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) as $t) {
+        $pdo->exec("DROP TABLE IF EXISTS `$t`");
+    }
+    $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+
     // 2) Ejecutar esquema
     $sql = file_get_contents(dirname(__DIR__) . '/database/schema.sql');
+    // Quitar los comentarios (-- ... hasta el fin de línea) ANTES de partir en ';':
+    // un comentario puede contener ';' y, si se parte primero, corta la sentencia a
+    // la mitad. El esquema es solo DDL, así que no hay '--' dentro de datos.
+    $sql = preg_replace('/--[^\n]*/', '', $sql);
     foreach (explode(';', $sql) as $stmt) {
-        $lineas = array_filter(explode("\n", $stmt), fn($l) => strpos(ltrim($l), '--') !== 0);
-        $limpio = trim(implode("\n", $lineas));
+        $limpio = trim($stmt);
         if ($limpio === '') continue;
         db()->exec($limpio);
     }

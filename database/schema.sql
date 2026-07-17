@@ -314,9 +314,14 @@ CREATE TABLE transferencias (
   sucursal_origen_id INT UNSIGNED NOT NULL,
   sucursal_destino_id INT UNSIGNED NOT NULL,
   fecha DATE NOT NULL,
-  estado ENUM('pendiente','enviada','recibida','anulada') NOT NULL DEFAULT 'pendiente',
+  estado ENUM('borrador','pendiente','enviada','recibida','rechazada','anulada') NOT NULL DEFAULT 'borrador',
   notas VARCHAR(255) NULL,
+  motivo_rechazo VARCHAR(255) NULL,
   usuario_id INT UNSIGNED NULL,
+  enviada_por INT UNSIGNED NULL,
+  enviada_at DATETIME NULL,
+  recibida_por INT UNSIGNED NULL,
+  recibida_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_transf_numero (numero),
@@ -596,7 +601,7 @@ CREATE TABLE pedidos (
   sucursal_id INT UNSIGNED NOT NULL,
   cliente_nombre VARCHAR(150) NOT NULL,
   cliente_telefono VARCHAR(40) NOT NULL,
-  cliente_email VARCHAR(120) NULL,
+  cliente_email VARCHAR(180) NULL,
   cliente_documento VARCHAR(30) NULL,
   notas VARCHAR(500) NULL,
   metodo_pago ENUM('pickup','link_pago') NOT NULL DEFAULT 'pickup',
@@ -888,18 +893,43 @@ CREATE TABLE transacciones (
   referencia_tipo VARCHAR(30) NULL,          -- venta, compra, nomina, manual
   referencia_id INT UNSIGNED NULL,
   fecha DATE NOT NULL,
+  conciliada TINYINT(1) NOT NULL DEFAULT 0,  -- marcada en la conciliación bancaria
+  conciliacion_id INT UNSIGNED NULL,         -- corte cerrado al que pertenece (bloquea la marca)
   usuario_id INT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tr_sucursal (sucursal_id),
   KEY idx_tr_fecha (fecha),
   KEY idx_tr_tipo (tipo),
+  KEY idx_tr_conciliacion (cuenta_id, fecha, conciliada),
   CONSTRAINT chk_transaccion_monto_positivo CHECK (monto > 0),
   CONSTRAINT fk_tr_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id) ON DELETE SET NULL,
   CONSTRAINT fk_tr_categoria FOREIGN KEY (categoria_id) REFERENCES categorias_financieras(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Conciliaciones bancarias: un corte cerrado congela las transacciones marcadas.
+DROP TABLE IF EXISTS conciliaciones;
+CREATE TABLE conciliaciones (
+  id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cuenta_id         INT UNSIGNED NOT NULL,
+  fecha_corte       DATE NOT NULL,
+  saldo_banco       DECIMAL(14,2) NOT NULL DEFAULT 0,   -- lo que dice el estado del banco
+  saldo_libros      DECIMAL(14,2) NOT NULL DEFAULT 0,   -- saldo de la cuenta en el sistema
+  transito_ingresos DECIMAL(14,2) NOT NULL DEFAULT 0,   -- depósitos en tránsito (aún no en el banco)
+  transito_gastos   DECIMAL(14,2) NOT NULL DEFAULT 0,   -- cheques/pagos en tránsito
+  diferencia        DECIMAL(14,2) NOT NULL DEFAULT 0,   -- saldo_banco - saldo_libros ajustado
+  estado            ENUM('cerrada') NOT NULL DEFAULT 'cerrada',
+  notas             VARCHAR(255) NULL,
+  usuario_id        INT UNSIGNED NULL,
+  created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_conc_cuenta_corte (cuenta_id, fecha_corte),
+  KEY idx_conc_cuenta (cuenta_id),
+  CONSTRAINT fk_conc_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Comisiones de vendedores con flujo de estados: pendiente -> aprobada -> pagada.
+DROP TABLE IF EXISTS comisiones;
 CREATE TABLE comisiones (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   usuario_id     INT UNSIGNED NOT NULL,
@@ -928,6 +958,7 @@ CREATE TABLE comisiones (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Promociones (descuentos automáticos por temporada/categoría/marca/producto).
+DROP TABLE IF EXISTS promociones;
 CREATE TABLE promociones (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre       VARCHAR(120) NOT NULL,
@@ -948,6 +979,7 @@ CREATE TABLE promociones (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Campañas por correo (envío masivo sobre Resend).
+DROP TABLE IF EXISTS campanas;
 CREATE TABLE campanas (
   id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre      VARCHAR(140) NOT NULL,
