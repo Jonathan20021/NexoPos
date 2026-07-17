@@ -42,6 +42,18 @@ if (!is_array($in) || empty($in['uuid'])) {
     sync_salir(400, ['ok' => false, 'error' => 'Datos de venta incompletos.']);
 }
 
+// Si la venta trae un NCF pre-asignado (offline Fase 2), hay que resolver el
+// terminal que lo reservó para validar la pertenencia del número.
+$terminalId = 0;
+if (!empty($in['ncf']) && !empty($in['device_token'])) {
+    try {
+        $term = terminalUpsert((string) $in['device_token'], $sid);
+        $terminalId = (int) $term['id'];
+    } catch (Throwable $e) {
+        sync_salir(422, ['ok' => false, 'retry' => false, 'error' => 'Terminal no válido para el NCF offline.']);
+    }
+}
+
 try {
     $r = registrarVentaPOS([
         'cart'           => $in['cart'] ?? [],
@@ -52,8 +64,10 @@ try {
         'canal'          => $in['canal'] ?? 'Mostrador',
         'uuid'           => $in['uuid'],
         'fecha'          => $in['fecha'] ?? null,
+        'ncf'            => $in['ncf'] ?? null,
     ], [
         'sid' => $sid, 'uid' => $uid, 'sesion' => $sesion, 'puede_muestra' => can('ventas.muestra'),
+        'terminal_id' => $terminalId,
     ]);
 
     if (!$r['duplicada']) {

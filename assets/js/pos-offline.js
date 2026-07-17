@@ -8,25 +8,36 @@
  * La identidad de cada venta es un UUID generado en el navegador: reenviar la
  * misma venta (mismo UUID) NO crea un duplicado (el servidor es idempotente).
  *
+ * Fase 2: el terminal reserva NCF por adelantado (mientras hay internet) y, estando
+ * offline, imprime el comprobante fiscal DEFINITIVO tomando un número de esa reserva
+ * local. El servidor valida ese NCF contra la reserva del terminal al sincronizar.
+ *
  * API pública: window.PosOffline
- *   init({ syncUrl, csrf, onChange })   -> arranca el motor
+ *   init({ syncUrl, termUrl, csrf, onChange })  -> arranca el motor
  *   uuid()                              -> genera un UUID v4
  *   submitSale(payload)                 -> intenta enviar; si no hay red, encola
  *   flush()                             -> reintenta la cola ahora
- *   stats()                             -> Promise<{pending, errors}>
+ *   stats()                             -> Promise<{pending, errors, ncf}>
  *   listErrors()                        -> Promise<[registros con error]>
  *   dismissError(uuid)                  -> descarta una venta con error
+ *   ncfStock()                          -> Promise<{B02, B01}> NCF offline disponibles
  */
 (function () {
   'use strict';
 
   var DB_NAME = 'nexopos';
-  var DB_VER  = 1;
+  var DB_VER  = 2;                       // v2: agrega el almacén de NCF reservados
   var STORE   = 'ventas_pendientes';
+  var POOL    = 'ncf_pool';              // un registro por tipo: { tipo, list:[ncf...] }
+  var TOKEN_KEY = 'nexopos_terminal';    // token de dispositivo en localStorage
 
-  var cfg = { syncUrl: '', csrf: '', onChange: null };
+  // Colchón de NCF por tipo: se rellena cuando baja de 'low', hasta 'target'.
+  var TARGETS = { B02: { target: 40, low: 15 }, B01: { target: 12, low: 4 } };
+
+  var cfg = { syncUrl: '', termUrl: '', csrf: '', onChange: null, deviceToken: '' };
   var _db = null;
   var _flushing = false;
+  var _reserving = false;
 
   // ---- IndexedDB ---------------------------------------------------------
   function openDB() {
@@ -39,6 +50,9 @@
         if (!db.objectStoreNames.contains(STORE)) {
           db.createObjectStore(STORE, { keyPath: 'uuid' });
         }
+        if (!db.objectStoreNames.contains(POOL)) {
+          db.createObjectStore(POOL, { keyPath: 'tipo' });
+        }
       };
       rq.onsuccess = function () { _db = rq.result; resolve(_db); };
       rq.onerror   = function () { reject(rq.error); };
@@ -49,6 +63,107 @@
     return openDB().then(function (db) {
       return db.transaction(STORE, mode).objectStore(STORE);
     });
+  }
+
+  // ---- Almacén de NCF reservados (POOL) ----------------------------------
+  function poolStore(mode) {
+    return openDB().then(function (db) {
+      return db.transaction(POOL, mode).objectStore(POOL);
+    });
+  }
+
+  function poolGet(tipo) {
+    return poolStore('readonly').then(function (store) {
+      return new Promise(function (resolve) {
+        var rq = store.get(tipo);
+        rq.onsuccess = function () { resolve((rq.result && rq.result.list) || []); };
+        rq.onerror   = function () { resolve([]); };
+      });
+    });
+  }
+
+  // Toma (y consume) el primer NCF del tipo de forma atómica. null si no hay.
+  function takeNcf(tipo) {
+    return poolStore('readwrite').then(function (store) {
+      return new Promise(function (resolve) {
+        var rq = store.get(tipo);
+        rq.onsuccess = function () {
+          var rec = rq.result || { tipo: tipo, list: [] };
+          if (!rec.list.length) { resolve(null); return; }
+          var ncf = rec.list.shift();
+          var wr = store.put(rec);
+          wr.onsuccess = function () { resolve(ncf); };
+          wr.onerror   = function () { resolve(null); };
+        };
+        rq.onerror = function () { resolve(null); };
+      });
+    });
+  }
+
+  // Agrega NCF nuevos al final de la cola del tipo (sin duplicar los ya presentes).
+  function poolAppend(tipo, ncfs) {
+    if (!ncfs || !ncfs.length) return Promise.resolve();
+    return poolStore('readwrite').then(function (store) {
+      return new Promise(function (resolve) {
+        var rq = store.get(tipo);
+        rq.onsuccess = function () {
+          var rec = rq.result || { tipo: tipo, list: [] };
+          var vistos = {};
+          rec.list.forEach(function (n) { vistos[n] = 1; });
+          ncfs.forEach(function (n) { if (!vistos[n]) { rec.list.push(n); vistos[n] = 1; } });
+          var wr = store.put(rec);
+          wr.onsuccess = function () { resolve(); };
+          wr.onerror   = function () { resolve(); };
+        };
+        rq.onerror = function () { resolve(); };
+      });
+    });
+  }
+
+  function ncfStock() {
+    return Promise.all([poolGet('B02'), poolGet('B01')]).then(function (r) {
+      return { B02: r[0].length, B01: r[1].length };
+    });
+  }
+
+  // ---- Identidad del terminal -------------------------------------------
+  function deviceToken() {
+    var t = '';
+    try { t = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { t = ''; }
+    if (!t) {
+      t = uuid();
+      try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
+    }
+    return t;
+  }
+
+  // Rellena el colchón de NCF desde el servidor si estamos online y hace falta.
+  function ensurePool() {
+    if (_reserving || !navigator.onLine || !cfg.termUrl) return Promise.resolve();
+    _reserving = true;
+    return ncfStock().then(function (stock) {
+      var need = {};
+      Object.keys(TARGETS).forEach(function (tipo) {
+        var have = stock[tipo] || 0;
+        if (have <= TARGETS[tipo].low) need[tipo] = TARGETS[tipo].target - have;
+      });
+      if (!Object.keys(need).length) { _reserving = false; return; }
+      return fetch(cfg.termUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF': cfg.csrf },
+        body: JSON.stringify({ device_token: cfg.deviceToken, need: need }),
+        credentials: 'same-origin',
+      }).then(function (res) { return res.json().catch(function () { return {}; }); })
+        .then(function (data) {
+          if (!data || !data.ok || !data.ncfs) return;
+          return Promise.all([
+            poolAppend('B02', data.ncfs.B02),
+            poolAppend('B01', data.ncfs.B01),
+          ]);
+        })
+        .then(function () { _reserving = false; notify(); })
+        .catch(function () { _reserving = false; });
+    }).catch(function () { _reserving = false; });
   }
 
   function put(record) {
@@ -102,9 +217,10 @@
   }
 
   function stats() {
-    return all().then(function (rows) {
+    return Promise.all([all(), ncfStock()]).then(function (res) {
+      var rows = res[0];
       var errors = rows.filter(function (r) { return r.status === 'error'; }).length;
-      return { pending: rows.length - errors, errors: errors };
+      return { pending: rows.length - errors, errors: errors, ncf: res[1] };
     });
   }
 
@@ -144,7 +260,15 @@
    */
   function submitSale(payload) {
     if (!navigator.onLine) {
-      return enqueue(payload).then(function () { return { outcome: 'queued', reason: 'offline' }; });
+      // Offline real: se toma un NCF de la reserva del terminal para imprimir el
+      // comprobante fiscal DEFINITIVO. Si el colchón se agotó, cae a provisional.
+      var tipo = payload.comprobante === 'credito_fiscal' ? 'B01' : 'B02';
+      return takeNcf(tipo).then(function (ncf) {
+        if (ncf) { payload.ncf = ncf; payload.device_token = cfg.deviceToken; }
+        return enqueue(payload).then(function () {
+          return { outcome: 'queued', reason: 'offline', ncf: ncf || null };
+        });
+      });
     }
     return post(payload).then(function (r) {
       if (r.status === 200 && r.data && r.data.ok) {
@@ -196,6 +320,7 @@
     }).then(function () {
       _flushing = false;
       notify();
+      ensurePool();   // tras sincronizar, repone el colchón de NCF consumido offline
     }).catch(function () {
       _flushing = false;
       notify();
@@ -208,25 +333,28 @@
 
   // ---- Arranque ----------------------------------------------------------
   function init(options) {
-    cfg.syncUrl  = options.syncUrl;
-    cfg.csrf     = options.csrf;
-    cfg.onChange = options.onChange || null;
+    cfg.syncUrl     = options.syncUrl;
+    cfg.termUrl     = options.termUrl || '';
+    cfg.csrf        = options.csrf;
+    cfg.onChange    = options.onChange || null;
+    cfg.deviceToken = deviceToken();
 
-    window.addEventListener('online', function () { flush(); });
+    window.addEventListener('online', function () { flush(); ensurePool(); });
     window.addEventListener('offline', notify);
     // Al volver el foco a la pestaña y al arrancar, intentar vaciar la cola.
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') flush();
+      if (document.visibilityState === 'visible') { flush(); ensurePool(); }
     });
     // Reintento periódico suave (por si 'online' no dispara de forma fiable).
-    setInterval(function () { if (navigator.onLine) flush(); }, 30000);
+    setInterval(function () { if (navigator.onLine) { flush(); ensurePool(); } }, 30000);
 
     notify();
-    if (navigator.onLine) flush();
+    if (navigator.onLine) { flush(); ensurePool(); }
   }
 
   window.PosOffline = {
     init: init, uuid: uuid, submitSale: submitSale, flush: flush,
     stats: stats, listErrors: listErrors, dismissError: dismissError,
+    ncfStock: ncfStock, deviceToken: deviceToken,
   };
 })();

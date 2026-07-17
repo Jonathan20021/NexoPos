@@ -89,6 +89,12 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
     <button type="button" x-show="errores>0" @click="abrirErrores()" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200">
       <?= icon('alert', 'w-3.5 h-3.5') ?> <span x-text="errores"></span> venta(s) con error · revisar
     </button>
+    <span x-show="!online && (ncfB02+ncfB01)>0" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-100 text-emerald-700">
+      <?= icon('check', 'w-3.5 h-3.5') ?> NCF fiscales offline: <span x-text="ncfB02"></span> B02 · <span x-text="ncfB01"></span> B01
+    </span>
+    <span x-show="!online && (ncfB02+ncfB01)===0" class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-rose-100 text-rose-700">
+      <?= icon('alert', 'w-3.5 h-3.5') ?> Sin NCF de reserva · se emitirá ticket provisional
+    </span>
   </div>
 
   <!-- Productos -->
@@ -274,12 +280,14 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
   <div x-show="provisional" x-transition.opacity style="display:none" class="modal-overlay !bg-slate-900/50" @click.self="provisional=false" @keydown.escape.window="provisional=false">
     <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-sm" @click.stop id="ticketProvisional">
       <div class="p-6 text-center">
-        <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mx-auto mb-3"><?= icon('save', 'w-7 h-7') ?></div>
+        <div class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3" :class="prov && prov.ncf ? 'bg-emerald-50 text-emerald-500' : 'bg-amber-50 text-amber-500'"><?= icon('save', 'w-7 h-7') ?></div>
         <h3 class="text-lg font-bold text-slate-800">Venta guardada</h3>
-        <p class="text-sm text-slate-500 mt-1">Se registró sin conexión. Se enviará automáticamente y su comprobante fiscal (NCF) se asignará al sincronizar.</p>
+        <p class="text-sm text-slate-500 mt-1" x-show="prov && prov.ncf">Se registró sin conexión con su <strong>comprobante fiscal (NCF)</strong>. Se enviará automáticamente al volver el internet.</p>
+        <p class="text-sm text-slate-500 mt-1" x-show="prov && !prov.ncf">Se registró sin conexión. Se enviará automáticamente y su comprobante fiscal (NCF) se asignará al sincronizar.</p>
         <div class="text-left mt-4 border border-dashed border-slate-300 rounded-xl p-4 text-sm">
           <p class="text-center font-bold text-slate-700"><?= e($GLOBALS['empresa']['nombre'] ?? APP_NAME) ?></p>
-          <p class="text-center text-[11px] uppercase tracking-wide text-amber-600 font-bold mt-0.5">Ticket provisional · sin valor fiscal</p>
+          <p class="text-center text-[11px] uppercase tracking-wide font-bold mt-0.5 text-emerald-600" x-show="prov && prov.ncf">NCF <span x-text="prov ? prov.ncf : ''"></span></p>
+          <p class="text-center text-[11px] uppercase tracking-wide text-amber-600 font-bold mt-0.5" x-show="prov && !prov.ncf">Ticket provisional · sin valor fiscal</p>
           <p class="text-center text-xs text-slate-400 mb-3" x-text="prov ? prov.fecha.toLocaleString('es-DO') : ''"></p>
           <template x-for="(it,i) in (prov ? prov.items : [])" :key="i">
             <div class="flex justify-between gap-2 py-0.5">
@@ -337,6 +345,7 @@ function pos() {
     puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,
     // Estado del modo offline
     online: navigator.onLine, pendientes: 0, errores: 0,
+    ncfB02: 0, ncfB01: 0,
     procesando: false, payError: '',
     provisional: false, prov: null,
     verErrores: false, listaErrores: [],
@@ -346,8 +355,12 @@ function pos() {
       window.addEventListener('offline', function () { self.online = false; });
       PosOffline.init({
         syncUrl: '<?= e(url('modules/pos/sync_venta.php')) ?>',
+        termUrl: '<?= e(url('modules/pos/terminal_sync.php')) ?>',
         csrf: '<?= e(csrf_token()) ?>',
-        onChange: function (s) { self.pendientes = s.pending; self.errores = s.errors; },
+        onChange: function (s) {
+          self.pendientes = s.pending; self.errores = s.errors;
+          if (s.ncf) { self.ncfB02 = s.ncf.B02; self.ncfB01 = s.ncf.B01; }
+        },
       });
     },
     // Fecha/hora local en formato del servidor (para conservar el momento real offline).
@@ -373,7 +386,7 @@ function pos() {
       // Copia para el ticket provisional y para descontar stock local.
       var snap = {
         items: this.cart.map(function (i) { return { nombre: i.nombre, cant: i.cant, precio: i.muestra ? 0 : i.precio, muestra: i.muestra }; }),
-        total: this.total, fecha: new Date(),
+        total: this.total, fecha: new Date(), ncf: null,
       };
       var vendidos = this.cart.map(function (i) { return { id: i.id, cant: i.cant }; });
       var r = await PosOffline.submitSale(payload);
@@ -385,6 +398,7 @@ function pos() {
       if (r.outcome === 'queued') {
         this._descontarStock(vendidos);
         this.pay = false;
+        snap.ncf = r.ncf || null;   // NCF fiscal tomado de la reserva del terminal (offline)
         this.prov = snap;
         this.provisional = true;
         this.cart = []; this.descuento = 0; this.recibido = 0;

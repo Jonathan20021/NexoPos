@@ -18,6 +18,7 @@ function nav_groups(): array
             ['Devoluciones', 'undo', url('modules/pos/devoluciones.php'), 'devoluciones.ver'],
             ['Clientes', 'users', url('modules/pos/clientes.php'), 'clientes.ver'],
             ['Cuentas por Cobrar', 'wallet', url('modules/pos/cuentas_cobrar.php'), 'clientes.ver'],
+            ['Terminales offline', 'cash', url('modules/pos/terminales.php'), 'pos.terminales'],
         ]],
         ['Inventario', [
             ['Productos', 'box', url('modules/inventario/productos.php'), 'productos.ver'],

@@ -20,7 +20,7 @@
  */
 'use strict';
 
-const VERSION    = 'nexopos-v2';
+const VERSION    = 'nexopos-v3';
 const SHELL      = 'nexopos-shell-' + VERSION;
 const RUNTIME    = 'nexopos-runtime-' + VERSION;
 const CDN_CACHE  = 'nexopos-cdn-' + VERSION;

@@ -26,7 +26,7 @@ function permission_catalog(): array
             'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],
         ],
         'Ventas' => [
-            'pos'          => ['label' => 'Punto de Venta', 'acciones' => ['ver' => 'Ver', 'vender' => 'Vender']],
+            'pos'          => ['label' => 'Punto de Venta', 'acciones' => ['ver' => 'Ver', 'vender' => 'Vender', 'terminales' => 'Terminales offline (NCF)']],
             'caja'         => ['label' => 'Caja', 'acciones' => ['ver' => 'Ver', 'abrir' => 'Abrir', 'cerrar' => 'Cerrar', 'movimiento' => 'Movimientos']],
             'ventas'       => ['label' => 'Ventas', 'acciones' => ['ver' => 'Ver', 'anular' => 'Anular', 'muestra' => 'Facturar muestras (RD$0.00)']],
             'pedidos'      => ['label' => 'Pedidos en línea', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Cambiar estado']],

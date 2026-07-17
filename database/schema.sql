@@ -467,6 +467,43 @@ CREATE TABLE ncf_secuencias (
   UNIQUE KEY uq_ncf_tipo (tipo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Terminales del POS (modo offline Fase 2): identidad por token de dispositivo.
+DROP TABLE IF EXISTS pos_terminales;
+CREATE TABLE pos_terminales (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  device_token CHAR(36) NOT NULL,                 -- generado y guardado en el navegador
+  nombre       VARCHAR(80) NULL,
+  sucursal_id  INT UNSIGNED NULL,
+  ultimo_visto DATETIME NULL,
+  activo       TINYINT(1) NOT NULL DEFAULT 1,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_terminal_token (device_token),
+  KEY idx_terminal_sucursal (sucursal_id),
+  CONSTRAINT fk_terminal_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Rangos de NCF reservados (delegados) a un terminal para imprimir el comprobante
+-- fiscal definitivo estando offline. Se tallan del maestro ncf_secuencias.
+DROP TABLE IF EXISTS ncf_reservas;
+CREATE TABLE ncf_reservas (
+  id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  terminal_id     INT UNSIGNED NOT NULL,
+  secuencia_id    INT UNSIGNED NOT NULL,          -- de qué secuencia maestra se talló
+  tipo            VARCHAR(10) NOT NULL,            -- B01, B02
+  prefijo         VARCHAR(5)  NOT NULL DEFAULT 'B',
+  secuencia_desde INT UNSIGNED NOT NULL,
+  secuencia_hasta INT UNSIGNED NOT NULL,          -- rango inclusivo [desde, hasta]
+  vencimiento     DATE NULL,
+  estado          ENUM('activa','devuelta','vencida') NOT NULL DEFAULT 'activa',
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_reserva_terminal (terminal_id, tipo, estado),
+  KEY idx_reserva_rango (tipo, secuencia_desde, secuencia_hasta),
+  CONSTRAINT fk_reserva_terminal FOREIGN KEY (terminal_id) REFERENCES pos_terminales(id) ON DELETE CASCADE,
+  CONSTRAINT fk_reserva_secuencia FOREIGN KEY (secuencia_id) REFERENCES ncf_secuencias(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ===================== VENTAS =====================
 DROP TABLE IF EXISTS ventas;
 CREATE TABLE ventas (
@@ -502,7 +539,7 @@ CREATE TABLE ventas (
   PRIMARY KEY (id),
   UNIQUE KEY uq_venta_numero (numero),
   UNIQUE KEY uq_ventas_uuid (uuid),
-  KEY idx_ventas_ncf (ncf),
+  UNIQUE KEY uq_ventas_ncf (ncf),
   KEY idx_ventas_canal (canal_venta),
   KEY idx_v_sucursal (sucursal_id),
   KEY idx_v_fecha (fecha),

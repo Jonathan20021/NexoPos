@@ -34,6 +34,11 @@ function registrarVentaPOS(array $in, array $ctx): array
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
     $tasaItbis   = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
+    // NCF pre-asignado offline (Fase 2): el navegador tomó un número de la reserva
+    // del terminal y ya lo imprimió. Se validará contra esa reserva más abajo.
+    $ncfOffline  = isset($in['ncf']) && is_string($in['ncf']) ? trim($in['ncf']) : '';
+    $terminalId  = (int) ($ctx['terminal_id'] ?? 0);
+
     // Fecha: en offline se conserva el momento real de la venta; nunca a futuro.
     $fecha = date('Y-m-d H:i:s');
     if (!empty($in['fecha']) && ($ts = strtotime((string) $in['fecha'])) && $ts <= time()) {
@@ -42,7 +47,7 @@ function registrarVentaPOS(array $in, array $ctx): array
 
     if (!$cart) throw new RuntimeException('El carrito está vacío.');
 
-    return tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha) {
+    return tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -94,10 +99,30 @@ function registrarVentaPOS(array $in, array $ctx): array
         $cli = qOne("SELECT id, nombre, balance, limite_credito FROM clientes WHERE id = ? AND activo = 1 FOR UPDATE", [$clienteId]);
         if (!$cli) throw new RuntimeException('Cliente no válido o inactivo.');
 
-        // 2) NCF (siempre en el servidor).
-        $ncf = siguienteNCF($comprobante === 'credito_fiscal' ? 'B01' : 'B02');
-        if ($ncf === null) {
-            throw new RuntimeException('No hay una secuencia NCF activa, vigente y disponible para este comprobante.');
+        // 2) NCF. Online: lo asigna el servidor desde el maestro (siguienteNCF).
+        //    Offline (Fase 2): el navegador ya lo tomó de la reserva del terminal y
+        //    lo imprimió; aquí se VALIDA que pertenezca a esa reserva y no esté usado.
+        $tipoNcf = $comprobante === 'credito_fiscal' ? 'B01' : 'B02';
+        if ($ncfOffline !== '') {
+            if ($terminalId <= 0) {
+                throw new RuntimeException('Falta identificar el terminal para validar el NCF offline.');
+            }
+            $p = ncfPartes($ncfOffline);
+            if (!$p || $p['tipo'] !== $tipoNcf) {
+                throw new RuntimeException('El NCF offline no corresponde al tipo de comprobante.');
+            }
+            if (!ncfReservaDeTerminal($terminalId, $ncfOffline)) {
+                throw new RuntimeException('El NCF offline no pertenece a una reserva activa de este terminal.');
+            }
+            if (qOne("SELECT id FROM ventas WHERE ncf = ?", [$ncfOffline])) {
+                throw new RuntimeException('El NCF offline ya fue registrado en otra venta.');
+            }
+            $ncf = $ncfOffline;
+        } else {
+            $ncf = siguienteNCF($tipoNcf);
+            if ($ncf === null) {
+                throw new RuntimeException('No hay una secuencia NCF activa, vigente y disponible para este comprobante.');
+            }
         }
 
         // 3) Cabecera.
