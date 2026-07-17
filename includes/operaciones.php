@@ -175,3 +175,39 @@ function validarAperturaCaja(int $cajaId, int $usuarioId): array
         : "La caja «{$abierta['caja_nombre']}» ya está abierta por $quien" . ($desde ? " desde el $desde" : '') . '. Debe cerrarla antes de que otra persona la use.';
     return [false, $msg];
 }
+
+// ---------------------------------------------------------------------------
+//  Transferencias entre sucursales (lógica de estados/stock)
+// ---------------------------------------------------------------------------
+
+/**
+ * Envía una transferencia en borrador: valida stock y lo descuenta del origen.
+ * Se comparte entre "crear y enviar directo" y "enviar un borrador guardado".
+ * Debe llamarse DENTRO de una transacción.
+ */
+function transferenciaEnviar(int $id): void
+{
+    $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
+    if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede enviar una transferencia en borrador.');
+    if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede enviar esta transferencia.');
+    $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$id]);
+    if (!$det) throw new RuntimeException('El borrador no tiene productos.');
+    foreach ($det as $d) {
+        if (stockActual((int) $d['producto_id'], (int) $t['sucursal_origen_id']) < (float) $d['cantidad']) {
+            $nom = qVal("SELECT nombre FROM productos WHERE id=?", [$d['producto_id']]);
+            throw new RuntimeException('Stock insuficiente en origen para «' . $nom . '».');
+        }
+    }
+    foreach ($det as $d) {
+        ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], -(float) $d['cantidad'], 'transferencia_salida', 'transferencia', $id, 0, 'Transferencia ' . $t['numero'] . ' (salida)');
+    }
+    dbUpdate('transferencias', ['estado' => 'enviada', 'enviada_por' => current_user()['id'] ?? null, 'enviada_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
+}
+
+/** Devuelve el stock al origen (compartido por rechazar y anular). En transacción. */
+function transferenciaDevolverStock(array $t): void
+{
+    foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$t['id']]) as $d) {
+        ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia_devuelta', (int) $t['id'], 0, 'Devolución transferencia ' . $t['numero']);
+    }
+}

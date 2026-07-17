@@ -23,7 +23,7 @@ function permission_catalog(): array
             'inventario'     => ['label' => 'Stock y Ajustes', 'acciones' => ['ver' => 'Ver', 'ajustar' => 'Ajustar']],
             'proveedores'    => ['label' => 'Proveedores', 'acciones' => $crud],
             'compras'        => ['label' => 'Compras', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'anular' => 'Anular']],
-            'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'recibir' => 'Recibir', 'anular' => 'Anular']],
+            'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],
         ],
         'Ventas' => [
             'pos'          => ['label' => 'Punto de Venta', 'acciones' => ['ver' => 'Ver', 'vender' => 'Vender']],
