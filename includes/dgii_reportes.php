@@ -74,7 +74,55 @@ function dgiiFilas607(string $periodo, ?int $sucursalId = null): array
     foreach ($ventas as &$v) {
         $v['desglose_pago'] = $porVenta[(int) $v['id']] ?? [];
     }
+    unset($v);
+
+    // Las notas de crédito (B04) de las devoluciones también van al 607, como filas
+    // propias que referencian el NCF de la venta que corrigen.
+    foreach (dgiiNotasCredito($periodo, $sucursalId) as $n) {
+        $ventas[] = dgiiNotaCredito607Fila($n);
+    }
     return $ventas;
+}
+
+/** Devoluciones con NCF (notas de crédito B04) emitidas en el período. */
+function dgiiNotasCredito(string $periodo, ?int $sucursalId = null): array
+{
+    $cond = ["d.ncf IS NOT NULL", "d.ncf <> ''", "DATE_FORMAT(d.created_at, '%Y%m') = ?"];
+    $params = [$periodo];
+    if ($sucursalId) { $cond[] = 'd.sucursal_id = ?'; $params[] = $sucursalId; }
+    return qAll(
+        "SELECT d.id, d.numero, d.ncf, d.ncf_modificado, d.subtotal, d.itbis, d.total, d.created_at, d.sucursal_id,
+                v.tipo_comprobante, v.tipo_ingreso,
+                cl.rnc_cedula AS cliente_doc, cl.tipo_id AS cliente_tipo_id, cl.nombre AS cliente_nombre,
+                (SELECT m.dgii_tipo_pago FROM venta_pagos vp JOIN metodos_pago m ON m.id = vp.metodo_pago_id
+                  WHERE vp.venta_id = v.id ORDER BY vp.monto DESC LIMIT 1) AS pago_tipo
+           FROM devoluciones d
+           JOIN ventas v ON v.id = d.venta_id
+           LEFT JOIN clientes cl ON cl.id = v.cliente_id
+          WHERE " . implode(' AND ', $cond) . "
+          ORDER BY d.created_at, d.id",
+        $params
+    );
+}
+
+/** Da a una nota de crédito la misma forma que una fila de venta del 607. */
+function dgiiNotaCredito607Fila(array $n): array
+{
+    $tipoPago = (int) ($n['pago_tipo'] ?? 0) ?: 7; // por defecto: 7 (otras formas)
+    return [
+        'numero' => $n['numero'],
+        'cliente_doc' => $n['cliente_doc'], 'cliente_tipo_id' => $n['cliente_tipo_id'], 'cliente_nombre' => $n['cliente_nombre'],
+        'ncf' => $n['ncf'], 'ncf_modificado' => $n['ncf_modificado'],
+        'tipo_ingreso' => (int) ($n['tipo_ingreso'] ?: 1),
+        'tipo_comprobante' => $n['tipo_comprobante'],   // hereda el de la venta (RNC si era crédito fiscal)
+        'fecha' => date('Y-m-d', strtotime($n['created_at'])), 'fecha_retencion' => null,
+        'subtotal' => (float) $n['subtotal'], 'descuento' => 0.0, 'itbis' => (float) $n['itbis'],
+        'itbis_retenido_terceros' => 0, 'itbis_percibido' => 0, 'retencion_renta_terceros' => 0,
+        'isr_percibido' => 0, 'impuesto_selectivo' => 0, 'otros_impuestos' => 0, 'propina_legal' => 0,
+        'total' => (float) $n['total'],
+        'desglose_pago' => [$tipoPago => (float) $n['total']],
+        'es_nota_credito' => true,
+    ];
 }
 
 /** Comprobantes anulados del período. */
@@ -328,8 +376,20 @@ function dgiiIt1(string $periodo, ?int $sucursalId = null): array
 
     $gravadas = 0.0; $exentas = 0.0; $debito = 0.0;
     $retenidoTerceros = 0.0; $percibidoVentas = 0.0; $totalFacturado = 0.0;
+    $ventasReg = 0; $notasReg = 0;
 
     foreach ($ventas as $v) {
+        // Las notas de crédito (B04) vienen mezcladas en las filas del 607: RESTAN.
+        // Traen su base y su ITBIS ya calculados, sin desglose por línea.
+        if (!empty($v['es_nota_credito'])) {
+            $debito -= (float) $v['itbis'];
+            if ((float) $v['itbis'] > 0) $gravadas -= (float) $v['subtotal'];
+            else                          $exentas  -= (float) $v['subtotal'];
+            $totalFacturado -= (float) $v['total'];
+            $notasReg++;
+            continue;
+        }
+
         $sub  = (float) $v['subtotal'];
         $desc = (float) $v['descuento'];
         // El descuento se guarda a nivel de venta, no de línea: se prorratea
@@ -343,6 +403,7 @@ function dgiiIt1(string $periodo, ?int $sucursalId = null): array
         $retenidoTerceros += (float) ($v['itbis_retenido_terceros'] ?? 0);
         $percibidoVentas  += (float) ($v['itbis_percibido'] ?? 0);
         $totalFacturado   += (float) $v['total'];
+        $ventasReg++;
     }
 
     // --- Compras: ITBIS adelantado (crédito fiscal) ---
@@ -363,7 +424,8 @@ function dgiiIt1(string $periodo, ?int $sucursalId = null): array
 
     return [
         'periodo'                => $periodo,
-        'ventas_registros'       => count($ventas),
+        'ventas_registros'       => $ventasReg,
+        'notas_credito'          => $notasReg,
         'compras_registros'      => count($compras),
         'operaciones'            => round($gravadas + $exentas, 2),
         'gravadas'               => round($gravadas, 2),
@@ -392,21 +454,26 @@ function dgiiIt1Avisos(string $periodo, array $it1, array $empresa): array
         $avisos[] = ['ref' => 'Empresa', 'msg' => 'Falta el RNC en Configuración → Empresa.'];
     }
 
-    // Una devolución rebaja el ITBIS facturado mediante una nota de crédito (B04).
-    // El sistema registra la devolución pero todavía no emite ese comprobante, así
-    // que el débito fiscal de arriba no la descuenta: hay que hacerlo a mano.
-    $dev = qOne(
+    // Las devoluciones CON nota de crédito (B04) ya bajan el débito de arriba.
+    // Las que NO tienen NCF (devoluciones de ventas sin comprobante fiscal, o
+    // registradas cuando no había secuencia B04) no se reflejan: eso sí se avisa.
+    $devSinNcf = qOne(
         "SELECT COUNT(*) AS n, COALESCE(SUM(d.total), 0) AS monto
            FROM devoluciones d
-           JOIN ventas v ON v.id = d.venta_id
-          WHERE DATE_FORMAT(d.created_at, '%Y%m') = ?",
+          WHERE DATE_FORMAT(d.created_at, '%Y%m') = ? AND (d.ncf IS NULL OR d.ncf = '')",
         [$periodo]
     );
-    if ($dev && (int) $dev['n'] > 0) {
+    if ($devSinNcf && (int) $devSinNcf['n'] > 0) {
         $avisos[] = [
-            'ref' => 'Devoluciones',
-            'msg' => (int) $dev['n'] . ' devolución(es) por ' . money($dev['monto']) . ' en el período. '
-                   . 'El ITBIS facturado no las descuenta: se rebajan con una nota de crédito (B04) que aún se emite fuera del sistema.',
+            'ref' => 'Devoluciones sin NCF',
+            'msg' => (int) $devSinNcf['n'] . ' devolución(es) por ' . money($devSinNcf['monto']) . ' sin nota de crédito '
+                   . '(la venta no tenía NCF o no había secuencia B04). Su ITBIS no baja el débito automáticamente.',
+        ];
+    }
+    if (($it1['notas_credito'] ?? 0) > 0) {
+        $avisos[] = [
+            'ref' => 'Notas de crédito',
+            'msg' => (int) $it1['notas_credito'] . ' nota(s) de crédito (B04) del período ya están restadas del débito y van en el 607.',
         ];
     }
 

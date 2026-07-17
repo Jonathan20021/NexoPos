@@ -26,7 +26,7 @@ if (isPost()) {
                 if (!$v || $v['estado'] === 'anulada') throw new RuntimeException('Venta no válida.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
                 if ($motivo === '') throw new RuntimeException('Indica el motivo de la devolución.');
-                $totalDev = 0; $lineas = []; $totVendido = 0;
+                $totalDev = 0; $subtotalDev = 0; $itbisDev = 0; $lineas = []; $totVendido = 0;
                 $factorVenta = (float) $v['subtotal'] > 0
                     ? ((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal']
                     : 1.0;
@@ -50,15 +50,26 @@ if (isPost()) {
                     $maxDev = (float) $d['cantidad'] - $yaDev;
                     if ($cant > $maxDev) throw new RuntimeException('Cantidad a devolver excede lo vendido para «' . $d['descripcion'] . '».');
                     // Reembolsa el importe realmente cobrado: descuento proporcional + ITBIS.
-                    $importeLineaCobrado = ((float) $d['subtotal'] * $factorVenta) + (float) $d['itbis'];
-                    $sub = round($importeLineaCobrado * ($cant / (float) $d['cantidad']), 2);
+                    // Se separan la base y el ITBIS para la nota de crédito (el 607 los pide aparte).
+                    $prop = $cant / (float) $d['cantidad'];
+                    $baseLinea  = round((float) $d['subtotal'] * $factorVenta * $prop, 2);
+                    $itbisLinea = round((float) $d['itbis'] * $prop, 2);
+                    $sub = round($baseLinea + $itbisLinea, 2);
                     $precioReembolso = round($sub / $cant, 2);
-                    $totalDev += $sub;
+                    $totalDev += $sub; $subtotalDev += $baseLinea; $itbisDev += $itbisLinea;
                     $lineas[] = ['vdid' => $d['id'], 'pid' => $d['producto_id'], 'es_stock' => $d['producto_tipo'] === 'producto', 'desc' => $d['descripcion'], 'cant' => $cant, 'precio' => $precioReembolso, 'costo' => (float) $d['costo_unitario'], 'sub' => $sub];
                 }
                 if (!$lineas) throw new RuntimeException('Indica al menos una cantidad a devolver.');
                 $numero = nextNumero('devoluciones', 'numero', 'DEV');
-                $devId = dbInsert('devoluciones', ['numero' => $numero, 'venta_id' => $ventaId, 'sucursal_id' => $v['sucursal_id'], 'usuario_id' => current_user()['id'], 'motivo' => $motivo, 'total' => $totalDev]);
+                // Nota de crédito (B04): solo si la venta llevaba NCF fiscal. Referencia
+                // el NCF original y baja el ITBIS facturado en el 607 / IT-1.
+                $b04 = null; $b04Faltante = false;
+                if (!empty($v['ncf'])) {
+                    $b04 = siguienteNCF('B04');
+                    if (!$b04) $b04Faltante = true; // sin secuencia B04 activa: no bloquea, pero avisa
+                }
+                $devId = dbInsert('devoluciones', ['numero' => $numero, 'venta_id' => $ventaId, 'sucursal_id' => $v['sucursal_id'], 'usuario_id' => current_user()['id'], 'motivo' => $motivo, 'ncf' => $b04, 'ncf_modificado' => $b04 ? $v['ncf'] : null, 'subtotal' => $subtotalDev, 'itbis' => $itbisDev, 'total' => $totalDev]);
+                if ($b04Faltante) flash('warning', 'La devolución se registró, pero no hay una secuencia NCF B04 activa para emitir la nota de crédito. Configúrala en Configuración → Comprobantes.');
                 foreach ($lineas as $l) {
                     dbInsert('devolucion_detalles', ['devolucion_id' => $devId, 'venta_detalle_id' => $l['vdid'], 'producto_id' => $l['pid'], 'descripcion' => $l['desc'], 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'subtotal' => $l['sub']]);
                     if ($l['pid'] && $l['es_stock']) ajustarStock((int) $l['pid'], (int) $v['sucursal_id'], $l['cant'], 'devolucion', 'devolucion', $devId, $l['costo'], 'Devolución ' . $numero);
@@ -97,10 +108,11 @@ if (isPost()) {
                 // ¿Devolución total?
                 $totDevuelto = (float) qVal("SELECT COALESCE(SUM(dd.cantidad),0) FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id WHERE de.venta_id=?", [$ventaId]);
                 if ($totDevuelto >= $totVendido) dbUpdate('ventas', ['estado' => 'devuelta'], 'id = ?', [$ventaId]);
-                return $devId;
+                return ['id' => $devId, 'ncf' => $b04];
             });
-            audit('devoluciones', 'crear', 'Devolución registrada', ['tabla' => 'devoluciones', 'registro_id' => $devId]);
-            flash('success', 'Devolución registrada y stock actualizado.');
+            $devNcf = $devId['ncf'] ?? null; $devId = $devId['id'];
+            audit('devoluciones', 'crear', 'Devolución registrada' . ($devNcf ? " (NC $devNcf)" : ''), ['tabla' => 'devoluciones', 'registro_id' => $devId]);
+            flash('success', 'Devolución registrada y stock actualizado.' . ($devNcf ? ' Nota de crédito ' . $devNcf . ' emitida.' : ''));
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -206,11 +218,12 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Devolución</th><th>Venta</th><th>Sucursal</th><th>Motivo</th><th>Usuario</th><th>Fecha</th><th class="text-right">Total</th></tr></thead>
+        <thead><tr><th>Devolución</th><th>Nota de crédito</th><th>Venta</th><th>Sucursal</th><th>Motivo</th><th>Usuario</th><th>Fecha</th><th class="text-right">Total</th></tr></thead>
         <tbody>
           <?php foreach ($devs as $d): ?>
             <tr>
               <td class="font-semibold text-slate-700"><?= e($d['numero']) ?></td>
+              <td class="font-mono text-xs"><?= $d['ncf'] ? e($d['ncf']) : '<span class="text-slate-300">—</span>' ?></td>
               <td class="text-slate-600"><?= e($d['venta_numero']) ?></td>
               <td class="text-slate-500"><?= e($d['sucursal']) ?></td>
               <td class="text-slate-500 max-w-xs truncate"><?= e($d['motivo'] ?: '—') ?></td>

@@ -551,11 +551,16 @@ CREATE TABLE devoluciones (
   sucursal_id INT UNSIGNED NOT NULL,
   usuario_id INT UNSIGNED NULL,
   motivo VARCHAR(255) NULL,
+  ncf VARCHAR(19) NULL,               -- NCF de la nota de crédito (B04)
+  ncf_modificado VARCHAR(19) NULL,    -- NCF de la venta que corrige
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_dev_numero (numero),
   KEY idx_dev_venta (venta_id),
+  KEY idx_dev_ncf (ncf),
   CONSTRAINT fk_dev_venta FOREIGN KEY (venta_id) REFERENCES ventas(id),
   CONSTRAINT fk_dev_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

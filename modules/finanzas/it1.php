@@ -110,7 +110,8 @@ layout_start('IT-1 · Declaración de ITBIS', 'Resumen del período para la Ofic
       <p class="text-3xl font-extrabold <?= $esAFavor ? 'text-emerald-600' : 'text-slate-800' ?> mt-1"><?= money(abs($aPagar)) ?></p>
       <p class="text-xs text-slate-500 mt-1">
         Derivado de <?= number_format($it1['ventas_registros']) ?> venta(s) del 607 y
-        <?= number_format($it1['compras_registros']) ?> compra(s) del 606.
+        <?= number_format($it1['compras_registros']) ?> compra(s) del 606<?php if (($it1['notas_credito'] ?? 0) > 0): ?>,
+        menos <?= number_format($it1['notas_credito']) ?> nota(s) de crédito (B04)<?php endif; ?>.
       </p>
     </div>
     <span class="w-14 h-14 rounded-2xl <?= $esAFavor ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600' ?> flex items-center justify-center shrink-0">

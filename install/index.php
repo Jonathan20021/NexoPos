@@ -140,6 +140,7 @@ function sembrar(): void
         // ----- NCF -----
         dbInsert('ncf_secuencias', ['tipo' => 'B02', 'descripcion' => 'Consumidor Final', 'prefijo' => 'B', 'secuencia_actual' => 1, 'secuencia_hasta' => 99999999, 'vencimiento' => date('Y-12-31', strtotime('+1 year'))]);
         dbInsert('ncf_secuencias', ['tipo' => 'B01', 'descripcion' => 'Crédito Fiscal', 'prefijo' => 'B', 'secuencia_actual' => 1, 'secuencia_hasta' => 99999999, 'vencimiento' => date('Y-12-31', strtotime('+1 year'))]);
+        dbInsert('ncf_secuencias', ['tipo' => 'B04', 'descripcion' => 'Nota de Crédito', 'prefijo' => 'B', 'secuencia_actual' => 1, 'secuencia_hasta' => 99999999, 'vencimiento' => date('Y-12-31', strtotime('+1 year'))]);
 
         // ----- Unidades -----
         $unidades = [];

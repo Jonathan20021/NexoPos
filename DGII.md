@@ -6,7 +6,7 @@ mensualmente, **a más tardar el día 15 del mes siguiente**:
 | Formato | Qué reporta | Columnas | Origen de los datos |
 |---|---|---|---|
 | **606** | Compras de bienes y servicios | 23 | `compras` con NCF, estado ≠ anulada |
-| **607** | Ventas de bienes y servicios | 23 | `ventas` con NCF, estado ≠ anulada |
+| **607** | Ventas de bienes y servicios | 23 | `ventas` con NCF (≠ anulada) + notas de crédito **B04** de `devoluciones` |
 | **608** | Comprobantes anulados | 3 | `comprobantes_anulados` |
 
 Se accede en **Finanzas → Reportes DGII**. Requiere el permiso `dgii.ver`
@@ -119,12 +119,23 @@ diferencia − retenido por terceros − percibido + retenido a proveedores = a 
 Lo que tus clientes te retuvieron ya lo enteraron ellos: se acredita. Lo que tú le
 retuviste a un proveedor lo debes enterar tú: se suma.
 
-### Lo que este resumen todavía no resuelve
+### Devoluciones y notas de crédito (B04)
 
-Una **devolución** rebaja el ITBIS facturado mediante una **nota de crédito (B04)**.
-El sistema registra la devolución pero aún no emite ese comprobante, así que el
-débito fiscal **no la descuenta**. Cuando hay devoluciones en el período, la
-pantalla lo avisa con el monto para que se maneje con el contador.
+Una **devolución** rebaja el ITBIS facturado mediante una **nota de crédito (B04)**,
+y el sistema **la emite automáticamente**: al devolver una venta que llevaba NCF, se
+consume la secuencia B04, se guarda el NCF de la venta corregida (`ncf_modificado`) y
+se registra el desglose base/ITBIS de lo devuelto.
+
+- La B04 **entra en el 607** como una fila propia que referencia el NCF original, y
+  **hereda el tipo de comprobante de la venta** (así, si corrige un crédito fiscal,
+  exige el RNC del cliente igual que la factura).
+- La B04 **baja el débito del IT-1** por su ITBIS (probado: el débito cae exactamente
+  el ITBIS devuelto). El hueco anterior quedó cerrado.
+
+Configura la secuencia B04 en **Configuración → Comprobantes (NCF)** con el rango real
+que asignó la DGII. Si la venta original **no tenía NCF** (o no había secuencia B04
+activa), la devolución se registra igual pero **sin** nota de crédito; el IT-1 lo avisa
+para que ese caso se maneje con el contador.
 
 ---
 
@@ -176,6 +187,9 @@ del Estado · 8 Juegos telefónicos · 9 Ganadería de carne bovina.
    El valor por defecto es `7` (Otras formas), que probablemente no es lo que quieres.
 4. Verifica que tus proveedores tengan RNC o cédula. Sin eso, sus compras no
    pasan la validación del 606.
+5. Configura la secuencia **B04 (nota de crédito)** en Configuración → Comprobantes
+   con el rango real que asignó la DGII. Sin ella, las devoluciones no emiten nota de
+   crédito y su ITBIS no baja el débito automáticamente.
 
 ## Si no tuviste operaciones en el mes
 
