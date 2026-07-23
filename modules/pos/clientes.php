@@ -181,6 +181,9 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
               <td><?= $c['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
+                  <?php if (can('crm.ver') && (int) $c['id'] !== 1): ?>
+                    <a href="<?= e(url('modules/crm/cliente.php?id=' . (int) $c['id'])) ?>" class="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" title="Ficha 360° (CRM)"><?= icon('id', 'w-4 h-4') ?></a>
+                  <?php endif; ?>
                   <?php if (can('clientes.editar')): ?>
                     <button onclick="<?= jsEvent('cli:edit', ['id' => $c['id'], 'nombre' => $c['nombre'], 'rnc_cedula' => $c['rnc_cedula'], 'telefono' => $c['telefono'], 'email' => $c['email'], 'direccion' => $c['direccion'], 'tipo' => $c['tipo'], 'limite_credito' => $c['limite_credito'], 'activo' => $c['activo']]) ?>"
                             class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>

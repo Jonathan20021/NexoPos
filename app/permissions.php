@@ -52,6 +52,15 @@ function permission_catalog(): array
             'promociones' => ['label' => 'Promociones', 'acciones' => $crud],
             'campanas'    => ['label' => 'Campañas por correo', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'editar' => 'Editar', 'eliminar' => 'Eliminar', 'enviar' => 'Enviar']],
         ],
+        'CRM' => [
+            'crm' => ['label' => 'CRM (ficha 360°, embudo y seguimientos)', 'acciones' => [
+                'ver'      => 'Ver',
+                'crear'    => 'Crear oportunidades, interacciones y tareas',
+                'editar'   => 'Editar',
+                'eliminar' => 'Eliminar',
+                'avanzar'  => 'Mover etapa del embudo (ganar/perder)',
+            ]],
+        ],
     ];
 }
 

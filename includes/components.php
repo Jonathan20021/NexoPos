@@ -37,6 +37,12 @@ function nav_groups(): array
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],
             ['Departamentos', 'building', url('modules/rrhh/departamentos.php'), 'rrhh_departamentos.ver'],
         ]],
+        ['CRM', [
+            ['Embudo de Ventas', 'trending', url('modules/crm/index.php'), 'crm.ver'],
+            ['Oportunidades', 'briefcase', url('modules/crm/oportunidades.php'), 'crm.ver'],
+            ['Interacciones', 'phone', url('modules/crm/interacciones.php'), 'crm.ver'],
+            ['Tareas y Seguimientos', 'check', url('modules/crm/tareas.php'), 'crm.ver'],
+        ]],
         ['Marketing', [
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
             ['Campañas por correo', 'mail', url('modules/marketing/campanas.php'), 'campanas.ver'],
