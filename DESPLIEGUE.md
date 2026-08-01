@@ -48,6 +48,23 @@ que haga falta, sobre una instalación vieja o sobre una recién instalada, y nu
 modifica datos existentes. Sustituye a las migraciones sueltas `migracion_notificaciones_p3.sql`
 y `migracion_concurrencia_p4.sql` (que siguen ahí por historial, pero con este archivo basta).
 
+Las migraciones posteriores se aplican aparte, en orden:
+
+| Archivo | Qué añade |
+|---|---|
+| `migracion_conteos_p5.sql` | Conteo físico de inventario (toma de inventario) |
+
+Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
+
+> **El orden importa: primero el código, después la base.** Si la base va por delante,
+> los permisos nuevos existen pero el código viejo no los conoce, y **editar un rol en esa
+> ventana los borraría de ese rol** (la pantalla de Roles reescribe los permisos con los que
+> conoce). No es grave —se vuelven a marcar— pero se evita desplegando antes.
+
+> **Cuidado con MySQL 8.** El servidor del cliente trae `ONLY_FULL_GROUP_BY` y el XAMPP de
+> desarrollo no. Antes de dar por bueno un despliegue, revisa que las pantallas nuevas carguen
+> de verdad. Ver la sección correspondiente en `docs/CONVENCIONES-DEV.md`.
+
 ---
 
 ## 3. Después del primer «Update From Remote» — qué debes cambiar
