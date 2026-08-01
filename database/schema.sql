@@ -573,6 +573,11 @@ CREATE TABLE venta_detalles (
   KEY idx_vd_venta (venta_id),
   KEY idx_vd_producto (producto_id),
   KEY idx_vd_producto_venta (producto_id, venta_id),
+  -- Cobertura: los reportes entran por `ventas` filtrando fecha y saltan aquí por
+  -- venta_id. Con estas columnas dentro del índice la unión no toca la tabla.
+  -- Sin él, el top de productos del dashboard pasa de 318 ms a 3 segundos con
+  -- un mes de 10.800 ventas. Ver database/migracion_rendimiento_p8.sql.
+  KEY idx_vd_venta_cobertura (venta_id, producto_id, cantidad, subtotal, descuento),
   CONSTRAINT chk_venta_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND costo_unitario >= 0 AND descuento >= 0 AND itbis >= 0 AND subtotal >= 0),
   CONSTRAINT fk_vd_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
   CONSTRAINT fk_vd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL

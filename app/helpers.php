@@ -9,9 +9,30 @@
 
 function q(string $sql, array $params = []): PDOStatement
 {
+    // Perfilado opcional. SQL_PROFILE no se define nunca en producción; sirve
+    // para saber qué consulta de una página cuesta el tiempo, que es la única
+    // forma fiable de perseguir una página lenta (ver docs/CONVENCIONES-DEV.md).
+    $perfilar = defined('SQL_PROFILE');
+    if ($perfilar) $t0 = microtime(true);
     $st = db()->prepare($sql);
     $st->execute($params);
+    if ($perfilar) sqlPerfil(round((microtime(true) - $t0) * 1000, 2), $sql);
     return $st;
+}
+
+/**
+ * Acumulador del perfilado. Sin argumentos devuelve lo registrado, de la
+ * consulta más lenta a la más rápida: [['ms'=>..., 'sql'=>...], ...].
+ */
+function sqlPerfil(?float $ms = null, string $sql = ''): array
+{
+    static $registro = [];
+    if ($ms !== null) {
+        $registro[] = ['ms' => $ms, 'sql' => preg_replace('/\s+/', ' ', trim($sql))];
+        return [];
+    }
+    usort($registro, fn($a, $b) => $b['ms'] <=> $a['ms']);
+    return $registro;
 }
 
 function qAll(string $sql, array $params = []): array

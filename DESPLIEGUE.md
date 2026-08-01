@@ -53,8 +53,14 @@ Las migraciones posteriores se aplican aparte, en orden:
 | Archivo | Qué añade |
 |---|---|
 | `migracion_conteos_p5.sql` | Conteo físico de inventario (toma de inventario) |
+| `migracion_activos_p6.sql` | Activos fijos y depreciación mensual |
+| `migracion_rendimiento_p7.sql` | Índices de kardex, ventas y transacciones |
+| `migracion_rendimiento_p8.sql` | Índice de cobertura de las líneas de venta (reportes y dashboard) |
 
 Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
+
+Las de rendimiento (p7 y p8) solo añaden índices: no tocan ni un dato, se pueden correr
+con el sistema en uso y da igual si se aplican antes o después de subir el código.
 
 > **El orden importa: primero el código, después la base.** Si la base va por delante,
 > los permisos nuevos existen pero el código viejo no los conoce, y **editar un rol en esa

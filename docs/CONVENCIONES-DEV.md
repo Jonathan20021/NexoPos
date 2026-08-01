@@ -199,10 +199,17 @@ Modal (al final de la página):
 </form>
 ```
 
-## ⚠ Rendimiento: dos errores que no se ven con datos de demo
+## ⚠ Rendimiento: cuatro errores que no se ven con datos de demo
 
 Medido con **60.000 ventas, 180.000 líneas y 180.000 movimientos** (unos dos años con
-varias sucursales). Con los 67 registros de la demo ninguno de los dos se nota.
+varias sucursales). Con los 67 registros de la demo ninguno de los cuatro se nota.
+
+**Cómo medir.** Define `SQL_PROFILE` antes de cargar `app/bootstrap.php` y luego llama a
+`sqlPerfil()`: devuelve cada consulta de la página con su tiempo, de la más lenta a la más
+rápida. Es la única forma fiable de saber qué cuesta; a ojo se acierta poco. Dos avisos:
+la **primera** ejecución mide el arranque en frío de PHP y no sirve (una vez creí que
+Auditoría tardaba 4,87 s y en caliente eran 0,05 s), y `SHOW PROFILES` del cliente de
+MySQL da números que no se parecen a los de la aplicación — mide siempre desde PHP.
 
 **1. `DATE(columna)` en un WHERE anula el índice.** `ventas.fecha` es DATETIME e indexada;
 envolverla en `DATE()` obliga a recorrer la tabla entera: medimos **59.558 filas escaneadas
@@ -221,6 +228,25 @@ por la columna cruda.
 **2. Una consulta por iteración.** El dashboard pedía la serie de 14 días con 14 consultas
 en un bucle. Una sola agrupada da lo mismo. Igual la verificación de integridad: una
 subconsulta correlacionada por fila tardaba 4.255 ms; agrupando una vez y cruzando, 200 ms.
+
+**3. `ORDER BY ... LIMIT` sobre una consulta con JOIN ordena *después* de unir.** «Las 6
+últimas ventas» con cuatro JOIN tardaba **387 ms**: el motor unía las 60.000 filas y
+ordenaba al final. Se elige primero por índice y se une después:
+
+```sql
+-- MAL: filesort sobre todo el histórico para devolver 6 filas
+SELECT v.*, su.nombre, cl.nombre FROM ventas v JOIN ... ORDER BY v.fecha DESC LIMIT 6
+-- BIEN: 1 ms. idx_v_fecha se lee al revés y para en la sexta
+FROM (SELECT id FROM ventas WHERE ... ORDER BY fecha DESC LIMIT 6) ult
+JOIN ventas v ON v.id = ult.id JOIN ...
+```
+
+**4. Un índice que no cubre obliga a ir a buscar la fila.** Los reportes entran por
+`ventas` filtrando fecha y saltan a `venta_detalles` por `venta_id`; con un mes de 10.800
+ventas son ~32.000 saltos aleatorios a disco. El top de productos del dashboard tardaba
+**3.039 ms**. Metiendo las columnas que se leen dentro del propio índice
+(`idx_vd_venta_cobertura`, ver `database/migracion_rendimiento_p8.sql`) la unión se
+resuelve sin tocar la tabla: **318 ms**. En el `EXPLAIN` se ve como `Using index`.
 
 **Cuidado con SUM sobre un JOIN que multiplica filas.** Sumar `v.subtotal` cruzando con
 `venta_detalles` cuenta el total de la venta una vez por línea: en el comparativo daba
