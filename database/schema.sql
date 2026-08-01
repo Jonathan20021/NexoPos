@@ -1131,6 +1131,50 @@ CREATE TABLE crm_tareas (
   CONSTRAINT fk_tar_asignado    FOREIGN KEY (asignado_a)     REFERENCES usuarios(id)          ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ===================== CONTEO FÍSICO DE INVENTARIO =====================
+-- La toma de inventario: contar el almacén, comparar contra el sistema y
+-- cuadrar. La existencia teórica se congela al abrir el conteo para que la
+-- diferencia sea contra una foto fija y la tienda pueda seguir vendiendo.
+DROP TABLE IF EXISTS conteo_detalles;
+DROP TABLE IF EXISTS conteos;
+CREATE TABLE conteos (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero         VARCHAR(30)  NOT NULL,
+  sucursal_id    INT UNSIGNED NOT NULL,
+  categoria_id   INT UNSIGNED NULL,              -- NULL = todo el catálogo
+  descripcion    VARCHAR(150) NOT NULL,
+  estado         ENUM('abierto','aplicado','cancelado') NOT NULL DEFAULT 'abierto',
+  notas          VARCHAR(500) NULL,
+  usuario_id     INT UNSIGNED NULL,
+  aplicado_por   INT UNSIGNED NULL,
+  aplicado_at    DATETIME NULL,
+  cancelado_por  INT UNSIGNED NULL,
+  cancelado_at   DATETIME NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_conteo_numero (numero),
+  KEY idx_conteo_sucursal (sucursal_id, estado),
+  CONSTRAINT fk_conteo_sucursal  FOREIGN KEY (sucursal_id)  REFERENCES sucursales(id),
+  CONSTRAINT fk_conteo_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE conteo_detalles (
+  id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  conteo_id      INT UNSIGNED NOT NULL,
+  producto_id    INT UNSIGNED NOT NULL,
+  stock_teorico  DECIMAL(12,3) NOT NULL DEFAULT 0,   -- foto al abrir el conteo
+  stock_contado  DECIMAL(12,3) NULL,                 -- NULL = todavía sin contar
+  costo_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,   -- congelado, para valorizar
+  contado_por    INT UNSIGNED NULL,
+  contado_at     DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_conteo_producto (conteo_id, producto_id),
+  KEY idx_cd_producto (producto_id),
+  CONSTRAINT fk_cdet_conteo   FOREIGN KEY (conteo_id)   REFERENCES conteos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_cdet_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ===================== SISTEMA / CONCURRENCIA =====================
 -- Correlativos (VTA-000123, COM-000045...). Un contador por serie.
 -- El número se reserva con un UPDATE atómico en vez de «SELECT MAX(...)+1»:

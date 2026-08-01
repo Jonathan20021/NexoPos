@@ -111,6 +111,7 @@ $inventario[] = chk(
                   FROM inventario_stock s) t
               WHERE ABS(c - k) > 0.001"
         ),
+        // (el detalle se arma abajo)
         qAll(
             "SELECT p.nombre, su.nombre sucursal, s.cantidad,
                     (SELECT COALESCE(SUM(m.cantidad),0) FROM movimientos_inventario m
@@ -121,7 +122,9 @@ $inventario[] = chk(
               HAVING ABS(s.cantidad - kardex) > 0.001 LIMIT 10"
         ),
     ],
-    'Registra un ajuste de inventario para dejar constancia de la diferencia.'
+    can('conteos.crear')
+        ? 'Levanta un conteo físico (Inventario → Conteo físico): cuenta el almacén y el sistema ajusta la diferencia dejando el movimiento en el kardex.'
+        : 'Registra un ajuste de inventario para dejar constancia de la diferencia.'
 );
 
 $grupos[] = ['titulo' => 'Inventario', 'icono' => 'box', 'color' => 'amber', 'checks' => $inventario];

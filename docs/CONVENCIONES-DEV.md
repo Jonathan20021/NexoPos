@@ -248,6 +248,21 @@ Varias sucursales operan a la vez. Estas reglas no son opcionales:
 Comprobación permanente: Administración → **Integridad de datos**
 (`modules/admin/integridad.php`), 14 chequeos de solo lectura.
 
+## Conteo físico de inventario (`modules/inventario/conteos.php` y `conteo.php`)
+La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
+
+- Al abrir se congela `stock_teorico` y `costo_unitario` de cada producto del alcance en
+  `conteo_detalles`. Solo puede haber **un conteo abierto por sucursal**.
+- `stock_contado = NULL` significa «sin contar»; esos productos **no se tocan** al aplicar.
+- Al aplicar se ajusta por la **diferencia** (`contado − teórico`), no por el valor absoluto.
+  Es lo correcto porque la tienda sigue vendiendo mientras se cuenta: forzar el absoluto
+  borraría del inventario las ventas hechas durante el conteo. La columna «Ahora» avisa
+  cuándo el stock se movió desde la foto inicial.
+- Si un ajuste dejaría la existencia en negativo, esa línea se **omite y se avisa**, en vez
+  de abortar el conteo entero.
+- `conteos.aplicar` y `conteos.cancelar` **no** se conceden automáticamente: aplicar es la
+  firma que mueve el inventario y se otorga a mano desde Roles.
+
 ## Operaciones de negocio (solo si tu página mueve stock/dinero) — usar DENTRO de `tx()`
 - `ajustarStock($productoId,$sucursalId,$delta,$tipo,$refTipo,$refId,$costo,$motivo)` — $delta + entra, − sale; registra kardex. $tipo ∈ entrada,salida,ajuste,compra,venta,devolucion,transferencia_salida,transferencia_entrada
 - `stockActual($productoId,$sucursalId)` → float

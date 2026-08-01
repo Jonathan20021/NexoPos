@@ -21,6 +21,13 @@ function permission_catalog(): array
             'categorias'     => ['label' => 'Categorías', 'acciones' => $crud],
             'productos'      => ['label' => 'Productos', 'acciones' => $crud],
             'inventario'     => ['label' => 'Stock y Ajustes', 'acciones' => ['ver' => 'Ver', 'ajustar' => 'Ajustar']],
+            'conteos'        => ['label' => 'Conteo físico de inventario', 'acciones' => [
+                'ver'      => 'Ver',
+                'crear'    => 'Abrir conteo',
+                'contar'   => 'Capturar cantidades',
+                'aplicar'  => 'Aplicar ajustes al stock',
+                'cancelar' => 'Cancelar conteo',
+            ]],
             'proveedores'    => ['label' => 'Proveedores', 'acciones' => $crud],
             'compras'        => ['label' => 'Compras', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'anular' => 'Anular']],
             'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],

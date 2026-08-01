@@ -25,6 +25,7 @@ function nav_groups(): array
             ['Categorías', 'tag', url('modules/inventario/categorias.php'), 'categorias.ver'],
             ['Marcas y Unidades', 'layers', url('modules/inventario/catalogos.php'), 'productos.ver'],
             ['Stock', 'layers', url('modules/inventario/stock.php'), 'inventario.ver'],
+            ['Conteo físico', 'clipboard', url('modules/inventario/conteos.php'), 'conteos.ver'],
             ['Movimientos', 'history', url('modules/inventario/movimientos.php'), 'inventario.ver'],
             ['Compras', 'truck', url('modules/inventario/compras.php'), 'compras.ver'],
             ['Proveedores', 'briefcase', url('modules/inventario/proveedores.php'), 'proveedores.ver'],
