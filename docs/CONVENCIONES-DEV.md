@@ -248,6 +248,24 @@ Varias sucursales operan a la vez. Estas reglas no son opcionales:
 Comprobación permanente: Administración → **Integridad de datos**
 (`modules/admin/integridad.php`), 14 chequeos de solo lectura.
 
+## Activos fijos y depreciación (`includes/activos.php`, `modules/finanzas/activos.php`)
+Método **línea recta**: cuota mensual = (costo − valor residual) ÷ vida útil en meses, desde
+el **mes siguiente** al de adquisición. La última cuota se ajusta para no pasarse del valor
+residual.
+
+- La depreciación se registra como gasto **sin `cuenta_id`**: baja la utilidad pero **no mueve
+  efectivo**. Por eso el flujo de caja la excluye con `rep_where_flujo()`. Si añades otro
+  movimiento no monetario (provisiones, amortizaciones), añádelo a esa función.
+- `UNIQUE (activo_id, periodo)` impide depreciar dos veces el mismo mes. La corrida releé el
+  activo con `FOR UPDATE` y comprueba el periodo antes de insertar.
+- Un activo con depreciación registrada **no permite cambiar** costo, vida útil, valor residual
+  ni fecha: descuadraría asientos que ya afectaron el resultado. Se da de baja y se registra otro.
+- `activosResumen()` alimenta el activo fijo del balance general (costo − depreciación).
+- La **categoría DGII** (art. 287) se guarda solo como referencia: el cálculo fiscal dominicano
+  usa saldo decreciente por categorías y difiere del contable, que es el que lleva el sistema.
+- `activosDisponible()` se comprueba **antes de cualquier consulta** en la página, para que
+  desplegar el código antes que la migración muestre un aviso y no un error de tabla inexistente.
+
 ## Conteo físico de inventario (`modules/inventario/conteos.php` y `conteo.php`)
 La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
 

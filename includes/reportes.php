@@ -490,6 +490,18 @@ function rep_where_otros_ingresos(string $a = 't'): string
     return "$a.tipo = 'ingreso' AND ($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('venta','abono'))";
 }
 
+/**
+ * WHERE del flujo de EFECTIVO: excluye los movimientos que no mueven dinero.
+ *
+ * La depreciación es el caso claro: es un gasto real que baja la utilidad, pero
+ * no sale un peso de la caja. Contarla como salida de efectivo haría que el
+ * flujo mostrara menos dinero del que hay de verdad.
+ */
+function rep_where_flujo(string $a = 't'): string
+{
+    return "($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('depreciacion'))";
+}
+
 /** Gasto operativo del periodo dentro del alcance actual. */
 function rep_gastos_operativos(string $desde, string $hasta): float
 {

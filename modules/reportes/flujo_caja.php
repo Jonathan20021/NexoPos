@@ -18,7 +18,7 @@ $tot = qOne(
     "SELECT COALESCE(SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE 0 END),0) entradas,
             COALESCE(SUM(CASE WHEN t.tipo='gasto'   THEN t.monto ELSE 0 END),0) salidas,
             COUNT(*) n
-       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT",
+       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "",
     $par
 ) ?: ['entradas' => 0, 'salidas' => 0, 'n' => 0];
 $entradas = (float) $tot['entradas'];
@@ -28,7 +28,7 @@ $flujo    = $entradas - $salidas;
 $prev = qOne(
     "SELECT COALESCE(SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE 0 END),0) e,
             COALESCE(SUM(CASE WHEN t.tipo='gasto'   THEN t.monto ELSE 0 END),0) s
-       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT",
+       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "",
     array_merge([$p['prev_desde'], $p['prev_hasta']], $scopeTP)
 ) ?: ['e' => 0, 's' => 0];
 
@@ -37,7 +37,7 @@ $saldoInicial = (float) qVal(
     "SELECT COALESCE(SUM(cf.saldo_inicial),0) FROM cuentas_financieras cf WHERE cf.activo = 1"
 ) + (float) qVal(
     "SELECT COALESCE(SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE -t.monto END),0)
-       FROM transacciones t WHERE t.fecha < ? AND $scopeT",
+       FROM transacciones t WHERE t.fecha < ? AND $scopeT AND " . rep_where_flujo() . "",
     array_merge([$p['desde']], $scopeTP)
 );
 
@@ -46,7 +46,7 @@ $porDia = qAll(
     "SELECT t.fecha,
             COALESCE(SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE 0 END),0) entradas,
             COALESCE(SUM(CASE WHEN t.tipo='gasto'   THEN t.monto ELSE 0 END),0) salidas
-       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT
+       FROM transacciones t WHERE t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "
       GROUP BY t.fecha ORDER BY t.fecha",
     $par
 );
@@ -79,7 +79,7 @@ $porCuenta = qAll(
             COALESCE(SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE 0 END),0) entradas,
             COALESCE(SUM(CASE WHEN t.tipo='gasto'   THEN t.monto ELSE 0 END),0) salidas
        FROM cuentas_financieras cf
-       LEFT JOIN transacciones t ON t.cuenta_id = cf.id AND t.fecha BETWEEN ? AND ? AND $scopeT
+       LEFT JOIN transacciones t ON t.cuenta_id = cf.id AND t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "
       WHERE cf.activo = 1
       GROUP BY cf.id ORDER BY cf.nombre",
     $par
@@ -90,7 +90,7 @@ $entradasCat = qAll(
     "SELECT COALESCE(cf.nombre, CASE t.referencia_tipo WHEN 'venta' THEN 'Ventas' WHEN 'abono' THEN 'Cobros a clientes' ELSE 'Otros' END) AS categoria,
             COALESCE(SUM(t.monto),0) monto, COUNT(*) n
        FROM transacciones t LEFT JOIN categorias_financieras cf ON cf.id = t.categoria_id
-      WHERE t.tipo = 'ingreso' AND t.fecha BETWEEN ? AND ? AND $scopeT
+      WHERE t.tipo = 'ingreso' AND t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "
       GROUP BY categoria ORDER BY monto DESC",
     $par
 );
@@ -98,7 +98,7 @@ $salidasCat = qAll(
     "SELECT COALESCE(cf.nombre, CASE t.referencia_tipo WHEN 'compra' THEN 'Compra de mercancía' WHEN 'nomina' THEN 'Nómina' ELSE 'Otros' END) AS categoria,
             COALESCE(SUM(t.monto),0) monto, COUNT(*) n
        FROM transacciones t LEFT JOIN categorias_financieras cf ON cf.id = t.categoria_id
-      WHERE t.tipo = 'gasto' AND t.fecha BETWEEN ? AND ? AND $scopeT
+      WHERE t.tipo = 'gasto' AND t.fecha BETWEEN ? AND ? AND $scopeT AND " . rep_where_flujo() . "
       GROUP BY categoria ORDER BY monto DESC",
     $par
 );

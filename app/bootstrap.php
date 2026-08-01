@@ -39,6 +39,7 @@ require_once dirname(__DIR__) . '/includes/conciliacion.php';
 require_once dirname(__DIR__) . '/includes/promociones.php';
 require_once dirname(__DIR__) . '/includes/ncf_reservas.php';
 require_once dirname(__DIR__) . '/includes/venta_pos.php';
+require_once dirname(__DIR__) . '/includes/activos.php';
 require_once dirname(__DIR__) . '/includes/notificaciones.php';
 require_once dirname(__DIR__) . '/includes/busqueda.php';
 require_once dirname(__DIR__) . '/includes/reportes.php';

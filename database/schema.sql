@@ -1131,6 +1131,66 @@ CREATE TABLE crm_tareas (
   CONSTRAINT fk_tar_asignado    FOREIGN KEY (asignado_a)     REFERENCES usuarios(id)          ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ===================== ACTIVOS FIJOS Y DEPRECIACIÓN =====================
+-- El mostrador, la nevera, la camioneta: patrimonio que se desgasta cada mes.
+-- Sin esto el balance subestima el activo y el estado de resultados se salta la
+-- depreciación, que es un gasto real aunque no salga dinero de la caja.
+DROP TABLE IF EXISTS depreciaciones;
+DROP TABLE IF EXISTS activos_fijos;
+CREATE TABLE activos_fijos (
+  id                     INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo                 VARCHAR(20)  NOT NULL,
+  nombre                 VARCHAR(150) NOT NULL,
+  descripcion            VARCHAR(500) NULL,
+  -- Categoría fiscal del Código Tributario dominicano (art. 287):
+  -- 1 = edificaciones (5%) · 2 = vehículos y equipos (25%) · 3 = otros (15%).
+  categoria_dgii         TINYINT UNSIGNED NOT NULL DEFAULT 3,
+  tipo                   VARCHAR(40)  NOT NULL DEFAULT 'otros',
+  sucursal_id            INT UNSIGNED NULL,
+  proveedor_id           INT UNSIGNED NULL,
+  factura                VARCHAR(40)  NULL,
+  fecha_adquisicion      DATE NOT NULL,
+  costo                  DECIMAL(14,2) NOT NULL DEFAULT 0,
+  valor_residual         DECIMAL(14,2) NOT NULL DEFAULT 0,
+  vida_util_meses        SMALLINT UNSIGNED NOT NULL DEFAULT 60,
+  depreciacion_acumulada DECIMAL(14,2) NOT NULL DEFAULT 0,
+  estado                 ENUM('activo','depreciado','baja','vendido') NOT NULL DEFAULT 'activo',
+  fecha_baja             DATE NULL,
+  motivo_baja            VARCHAR(255) NULL,
+  valor_venta            DECIMAL(14,2) NULL,
+  notas                  VARCHAR(500) NULL,
+  usuario_id             INT UNSIGNED NULL,
+  created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_activo_codigo (codigo),
+  KEY idx_activo_estado (estado),
+  KEY idx_activo_sucursal (sucursal_id),
+  CONSTRAINT chk_activo_valores CHECK (costo >= 0 AND valor_residual >= 0 AND vida_util_meses > 0),
+  CONSTRAINT fk_activo_sucursal  FOREIGN KEY (sucursal_id)  REFERENCES sucursales(id)  ON DELETE SET NULL,
+  CONSTRAINT fk_activo_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Un asiento por activo y periodo. La clave única impide depreciar dos veces el
+-- mismo mes, que es el error clásico al correr la depreciación repetida.
+CREATE TABLE depreciaciones (
+  id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  activo_id         INT UNSIGNED NOT NULL,
+  periodo           CHAR(7) NOT NULL,               -- 'YYYY-MM'
+  monto             DECIMAL(14,2) NOT NULL DEFAULT 0,
+  acumulado_antes   DECIMAL(14,2) NOT NULL DEFAULT 0,
+  acumulado_despues DECIMAL(14,2) NOT NULL DEFAULT 0,
+  valor_neto        DECIMAL(14,2) NOT NULL DEFAULT 0,
+  transaccion_id    BIGINT UNSIGNED NULL,
+  usuario_id        INT UNSIGNED NULL,
+  created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_dep_activo_periodo (activo_id, periodo),
+  KEY idx_dep_periodo (periodo),
+  CONSTRAINT fk_dep_activo      FOREIGN KEY (activo_id)      REFERENCES activos_fijos(id) ON DELETE CASCADE,
+  CONSTRAINT fk_dep_transaccion FOREIGN KEY (transaccion_id) REFERENCES transacciones(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ===================== CONTEO FÍSICO DE INVENTARIO =====================
 -- La toma de inventario: contar el almacén, comparar contra el sistema y
 -- cuadrar. La existencia teórica se congela al abrir el conteo para que la

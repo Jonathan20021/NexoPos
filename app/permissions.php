@@ -49,6 +49,13 @@ function permission_catalog(): array
         ],
         'Finanzas' => [
             'finanzas'   => ['label' => 'Ingresos y Gastos', 'acciones' => $crud],
+            'activos'    => ['label' => 'Activos fijos y depreciación', 'acciones' => [
+                'ver'       => 'Ver',
+                'crear'     => 'Registrar',
+                'editar'    => 'Editar',
+                'depreciar' => 'Correr la depreciación mensual',
+                'baja'      => 'Dar de baja o vender',
+            ]],
             'comisiones' => ['label' => 'Comisiones', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar/registrar', 'aprobar' => 'Aprobar', 'pagar' => 'Pagar', 'anular' => 'Anular']],
             'conciliacion' => ['label' => 'Conciliación bancaria', 'acciones' => ['ver' => 'Ver', 'conciliar' => 'Marcar movimientos', 'cerrar' => 'Cerrar corte']],
             'metas'    => ['label' => 'Metas de Venta', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Crear/editar']],

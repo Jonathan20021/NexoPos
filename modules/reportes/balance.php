@@ -42,7 +42,12 @@ $itbisVentas = (float) qVal(
 $itbisSaldo = $itbisVentas - $itbisCompras;   // > 0 → por pagar; < 0 → a favor
 
 $activoCorriente = $efectivo + $bancos + $cxc + $inventario + max(0, -$itbisSaldo);
-$activoTotal     = $activoCorriente;
+
+// Activo fijo: lo que la empresa posee y no se vende (mobiliario, equipos,
+// vehículos), a su valor en libros = costo − depreciación acumulada.
+$af = activosResumen(current_sucursal_id());
+$activoFijo  = $af['neto'];
+$activoTotal = $activoCorriente + $activoFijo;
 
 /* ============================================================
  *  PASIVO
@@ -93,6 +98,10 @@ $activo = [
     ['Inventario de mercancías', $inventario, 'Existencias valoradas a costo de compra'],
 ];
 if ($itbisSaldo < 0) $activo[] = ['ITBIS a favor', -$itbisSaldo, 'Crédito fiscal del periodo ' . $mesFiscal];
+if ($af['cantidad'] > 0) {
+    $activo[] = ['Activos fijos (valor en libros)', $activoFijo,
+        $af['cantidad'] . ' activo(s) · costo ' . money($af['costo']) . ' − depreciación ' . money($af['depreciacion'])];
+}
 
 $pasivo = [
     ['Cuentas por pagar a proveedores', $cxp, 'Compras a crédito sin fecha de pago'],
@@ -244,9 +253,19 @@ echo rep_filtros($p, ['sucursal' => true]);
   </div>
   <div class="px-5 py-4 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500 leading-relaxed">
     <strong class="text-slate-600">Alcance.</strong>
-    Este balance se construye con los saldos operativos del sistema (caja, bancos, clientes, inventario, proveedores,
-    nómina e ITBIS). No incluye activos fijos, préstamos ni aportes de capital que se lleven fuera del sistema:
-    esos los añade la contabilidad formal.
+    Este balance se construye con los saldos operativos del sistema: caja, bancos, clientes, inventario, proveedores,
+    nómina, ITBIS y
+    <?php if ($af['cantidad'] > 0): ?>
+      los activos fijos registrados a su valor en libros
+      (<a href="<?= e(url('modules/finanzas/activos.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 no-print">ver el registro</a>).
+    <?php else: ?>
+      los activos fijos, que todavía no tienen ninguno registrado
+      <?php if (can('activos.crear')): ?>
+        (<a href="<?= e(url('modules/finanzas/activos.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 no-print">registrarlos</a>
+        hace que el activo deje de estar subestimado).
+      <?php endif; ?>
+    <?php endif; ?>
+    No incluye préstamos ni aportes de capital que se lleven fuera del sistema: esos los añade la contabilidad formal.
   </div>
 <?= rep_fin() ?>
 
