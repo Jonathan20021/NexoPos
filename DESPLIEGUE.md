@@ -29,6 +29,27 @@ Lo que **NO** se sube (protegido por `.gitignore`): `config/config.local.php`, `
 
 ---
 
+## 0. Actualizar una instalación que YA está en producción
+
+Si el sistema ya está corriendo y solo vas a subir cambios:
+
+1. **Respalda primero.** cPanel → *Copias de seguridad*, o desde el propio sistema en
+   Administración → Respaldo.
+2. cPanel → *Git Version Control* → **Update From Remote**.
+3. Aplica la puesta al día de la base: phpMyAdmin → selecciona la base → pestaña
+   **Importar** → `database/migracion_produccion.sql`.
+   O por consola: `mysql -u USUARIO -p NOMBRE_BASE < database/migracion_produccion.sql`
+4. Al terminar, el script imprime una tabla de verificación: **todo debe decir `OK`**.
+5. Entra al sistema y abre **Administración → Integridad de datos** para confirmar que
+   los datos cuadran.
+
+`migracion_produccion.sql` es **idempotente y no destructivo**: se puede correr las veces
+que haga falta, sobre una instalación vieja o sobre una recién instalada, y nunca borra ni
+modifica datos existentes. Sustituye a las migraciones sueltas `migracion_notificaciones_p3.sql`
+y `migracion_concurrencia_p4.sql` (que siguen ahí por historial, pero con este archivo basta).
+
+---
+
 ## 3. Después del primer «Update From Remote» — qué debes cambiar
 
 ### 3.1. Crear `config/config.local.php` (con tus credenciales)

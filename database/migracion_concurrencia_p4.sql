@@ -68,12 +68,28 @@ SELECT 'crm_oportunidades.codigo.OPT', COALESCE(MAX(CAST(SUBSTRING_INDEX(codigo,
 -- ============================================================
 --  Índices que faltaban para el trabajo concurrente
 -- ============================================================
--- Sin este índice, «¿esta caja ya está abierta?» hacía un recorrido completo de
--- caja_sesiones en cada apertura y en cada venta.
-CREATE INDEX idx_cs_caja_estado ON caja_sesiones (caja_id, estado);
+--  Se crean de forma CONDICIONAL: MySQL no tiene CREATE INDEX IF NOT EXISTS y
+--  repetir un CREATE INDEX aborta el script completo con el error 1061. Sin
+--  esto, correr la migración sobre una instalación nueva (donde schema.sql ya
+--  los trae) reventaría el despliegue a medias.
 
--- La búsqueda global y el POS filtran por código de barras constantemente.
-CREATE INDEX idx_p_activo_nombre ON productos (activo, nombre);
+-- «¿Esta caja ya está abierta?» recorría toda caja_sesiones en cada apertura.
+SET @s := IF((SELECT COUNT(*) FROM information_schema.STATISTICS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'caja_sesiones'
+                AND INDEX_NAME = 'idx_cs_caja_estado') > 0,
+             'DO 0', 'CREATE INDEX idx_cs_caja_estado ON caja_sesiones (caja_id, estado)');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
--- El aging de cuentas por cobrar recorre las ventas a crédito por cliente.
-CREATE INDEX idx_v_cliente_estado ON ventas (cliente_id, estado, fecha);
+-- La búsqueda global y el POS listan productos activos por nombre sin parar.
+SET @s := IF((SELECT COUNT(*) FROM information_schema.STATISTICS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'productos'
+                AND INDEX_NAME = 'idx_p_activo_nombre') > 0,
+             'DO 0', 'CREATE INDEX idx_p_activo_nombre ON productos (activo, nombre)');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- La antigüedad de cuentas por cobrar recorre las ventas a crédito por cliente.
+SET @s := IF((SELECT COUNT(*) FROM information_schema.STATISTICS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ventas'
+                AND INDEX_NAME = 'idx_v_cliente_estado') > 0,
+             'DO 0', 'CREATE INDEX idx_v_cliente_estado ON ventas (cliente_id, estado, fecha)');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
