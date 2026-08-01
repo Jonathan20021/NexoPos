@@ -15,11 +15,8 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
     <span x-show="sidebarCollapsed" style="display:none"><?= icon('arrow-right', 'w-5 h-5') ?></span>
   </button>
 
-  <!-- Buscador -->
-  <form action="<?= e(url('modules/inventario/productos.php')) ?>" method="get" class="hidden sm:flex items-center gap-2 bg-slate-100 rounded-xl px-3.5 h-10 w-72 max-w-full focus-within:ring-2 focus-within:ring-blue-500/20 transition">
-    <span class="text-slate-400"><?= icon('search', 'w-4 h-4') ?></span>
-    <input type="text" name="q" placeholder="Buscar productos..." class="bg-transparent outline-none text-sm flex-1 placeholder:text-slate-400">
-  </form>
+  <!-- Buscador global (Ctrl/⌘ + K) -->
+  <?php include __DIR__ . '/buscador.php'; ?>
 
   <div class="flex items-center gap-2 sm:gap-3 ml-auto">
     <!-- Selector de sucursal -->
@@ -49,10 +46,7 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
     </div>
 
     <!-- Notificaciones -->
-    <a href="<?= e(url('modules/inventario/stock.php')) ?>" class="relative w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition" title="Productos con stock bajo">
-      <?= icon('bell', 'w-5 h-5') ?>
-      <?php if (!empty($lowStock)): ?><span class="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center"><?= (int) $lowStock ?></span><?php endif; ?>
-    </a>
+    <?php include __DIR__ . '/notificaciones.php'; ?>
 
     <!-- Usuario -->
     <div class="relative" x-data="{open:false}">

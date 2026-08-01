@@ -83,12 +83,50 @@ $stockBajo = qAll(
 
 $catColors = ['blue'=>'#2563eb','emerald'=>'#10b981','amber'=>'#f59e0b','rose'=>'#f43f5e','indigo'=>'#6366f1','cyan'=>'#06b6d4','sky'=>'#0ea5e9','pink'=>'#ec4899','slate'=>'#64748b','violet'=>'#8b5cf6'];
 
+// Alertas críticas del centro de notificaciones (lo que no puede esperar).
+$alertas = array_slice(array_filter(
+    notif_listar(['limit' => 20]),
+    fn($n) => in_array($n['prioridad'], ['critica', 'alta'], true)
+), 0, 4);
+
 $acciones = '';
 if (can('pos.vender')) $acciones .= '<a href="' . url('modules/pos/index.php') . '" class="btn btn-primary">' . icon('cart', 'w-4 h-4') . ' Nueva venta</a>';
-if (can('reportes.ver')) $acciones .= '<a href="' . url('modules/finanzas/reportes.php') . '" class="btn btn-ghost">' . icon('chart', 'w-4 h-4') . ' Reportes</a>';
+if (can('reportes.ver')) $acciones .= '<a href="' . url('modules/reportes/index.php') . '" class="btn btn-ghost">' . icon('chart', 'w-4 h-4') . ' Centro de reportes</a>';
 
 layout_start('Dashboard', 'Resumen general de ' . e(current_user()['sucursal_nombre'] ?? 'tu negocio') . ' · ' . fechaLarga($hoy), $acciones);
 ?>
+
+<?php if ($alertas): ?>
+<!-- Alertas que requieren acción -->
+<div class="card p-4 mb-5 border-l-4 border-l-rose-500">
+  <div class="flex items-center justify-between gap-3 mb-3">
+    <h3 class="font-bold text-slate-800 flex items-center gap-2">
+      <span class="w-7 h-7 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center"><?= icon('alert', 'w-4 h-4') ?></span>
+      Requiere tu atención
+    </h3>
+    <a href="<?= e(url('modules/notificaciones/index.php')) ?>" class="text-sm font-semibold text-blue-600 hover:text-blue-700 no-print">Ver todas →</a>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+    <?php foreach ($alertas as $a):
+      [$icoCls, $barra] = notif_estilo($a['color']);
+      $href = $a['url']
+          ? url('modules/notificaciones/ir.php?id=' . (int) $a['id'] . '&_t=' . urlencode(csrf_token()))
+          : url('modules/notificaciones/index.php');
+    ?>
+      <a href="<?= e($href) ?>" class="flex items-start gap-3 rounded-xl border border-slate-200 p-3 hover:border-blue-200 hover:bg-slate-50/70 transition group">
+        <span class="w-9 h-9 rounded-xl <?= $icoCls ?> flex items-center justify-center shrink-0"><?= icon($a['icono'], 'w-4 h-4') ?></span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-[13.5px] font-semibold text-slate-800 leading-snug group-hover:text-blue-700 transition-colors"><?= e($a['titulo']) ?></span>
+          <?php if ($a['mensaje']): ?>
+            <span class="block text-xs text-slate-500 mt-0.5 line-clamp-2"><?= e($a['mensaje']) ?></span>
+          <?php endif; ?>
+        </span>
+        <span class="text-slate-300 group-hover:text-blue-600 shrink-0 mt-1"><?= icon('arrow-right', 'w-4 h-4') ?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- KPIs principales -->
 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
@@ -134,7 +172,7 @@ layout_start('Dashboard', 'Resumen general de ' . e(current_user()['sucursal_nom
 
 <!-- Gráfico + categorías -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
-  <div class="card p-5 lg:col-span-2">
+  <div class="card p-5 lg:col-span-2 h-full flex flex-col">
     <div class="flex items-center justify-between mb-5">
       <div><h3 class="font-bold text-slate-800">Ventas de los últimos 14 días</h3><p class="text-sm text-slate-400">Ingresos diarios</p></div>
       <span class="badge badge-blue"><?= icon('trending', 'w-3.5 h-3.5') ?> <?= money(array_sum($serieVals)) ?></span>
@@ -142,11 +180,12 @@ layout_start('Dashboard', 'Resumen general de ' . e(current_user()['sucursal_nom
     <?= barChart($serie, 'bg-gradient-to-t from-blue-500 to-blue-400') ?>
   </div>
 
-  <div class="card p-5">
+  <div class="card p-5 h-full flex flex-col">
     <h3 class="font-bold text-slate-800 mb-1">Ventas por categoría</h3>
     <p class="text-sm text-slate-400 mb-4">Este mes</p>
+    <div class="flex-1 flex flex-col justify-center">
     <?php if (!$porCategoria): ?>
-      <p class="text-sm text-slate-400 py-8 text-center">Sin datos este mes.</p>
+      <?= empty_state('Sin ventas este mes', 'Aquí verás qué categorías mueven el negocio.', 'tag') ?>
     <?php else: foreach ($porCategoria as $pc):
         $pct = round(($pc['total'] / $totalCat) * 100); $col = $catColors[$pc['color']] ?? '#64748b'; ?>
       <div class="mb-3.5">
@@ -159,12 +198,13 @@ layout_start('Dashboard', 'Resumen general de ' . e(current_user()['sucursal_nom
         </div>
       </div>
     <?php endforeach; endif; ?>
+    </div>
   </div>
 </div>
 
 <!-- Recientes + stock bajo -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-  <div class="card lg:col-span-2 overflow-hidden">
+  <div class="card lg:col-span-2 overflow-hidden h-full flex flex-col">
     <div class="flex items-center justify-between p-5 pb-3">
       <h3 class="font-bold text-slate-800">Ventas recientes</h3>
       <?php if (can('ventas.ver')): ?><a href="<?= e(url('modules/pos/ventas.php')) ?>" class="text-sm font-semibold text-blue-600 hover:text-blue-700">Ver todas →</a><?php endif; ?>
@@ -190,16 +230,17 @@ layout_start('Dashboard', 'Resumen general de ' . e(current_user()['sucursal_nom
     </div>
   </div>
 
-  <div class="card overflow-hidden">
+  <div class="card overflow-hidden h-full flex flex-col">
     <div class="flex items-center justify-between p-5 pb-3">
       <h3 class="font-bold text-slate-800">Stock bajo</h3>
       <?php if (can('inventario.ver')): ?><a href="<?= e(url('modules/inventario/stock.php')) ?>" class="text-sm font-semibold text-blue-600 hover:text-blue-700">Ver →</a><?php endif; ?>
     </div>
-    <div class="px-5 pb-5 space-y-3">
+    <div class="px-5 pb-5 space-y-3 flex-1 flex flex-col <?= $stockBajo ? '' : 'justify-center' ?>">
       <?php if (!$stockBajo): ?>
         <div class="flex flex-col items-center text-center py-8">
-          <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-500 flex items-center justify-center mb-2"><?= icon('check', 'w-6 h-6') ?></div>
-          <p class="text-sm text-slate-500">Todo el inventario está en niveles correctos.</p>
+          <div class="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-500 flex items-center justify-center mb-3"><?= icon('check', 'w-7 h-7') ?></div>
+          <p class="text-sm font-semibold text-slate-700">Inventario en orden</p>
+          <p class="text-xs text-slate-400 mt-1 max-w-[200px]">Ningún producto está por debajo de su stock mínimo.</p>
         </div>
       <?php else: foreach ($stockBajo as $sb): ?>
         <div class="flex items-center gap-3">

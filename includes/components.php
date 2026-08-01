@@ -52,10 +52,18 @@ function nav_groups(): array
             ['Cuentas', 'wallet', url('modules/finanzas/cuentas.php'), 'finanzas.ver'],
             ['Conciliación bancaria', 'check', url('modules/finanzas/conciliacion.php'), 'conciliacion.ver'],
             ['Comisiones', 'percent', url('modules/finanzas/comisiones.php'), 'comisiones.ver'],
-            ['Reportes', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
             ['Metas de Venta', 'trending', url('modules/finanzas/metas.php'), 'metas.ver'],
             ['Reportes DGII', 'shield', url('modules/finanzas/dgii.php'), 'dgii.ver'],
             ['IT-1 · ITBIS', 'percent', url('modules/finanzas/it1.php'), 'dgii.ver'],
+        ]],
+        ['Reportes', [
+            ['Centro de Reportes', 'grid', url('modules/reportes/index.php'), 'reportes.ver'],
+            ['Panel ejecutivo', 'trending', url('modules/reportes/ejecutivo.php'), 'reportes.ejecutivo'],
+            ['Estado de resultados', 'receipt', url('modules/reportes/estado_resultados.php'), 'reportes.finanzas'],
+            ['Flujo de efectivo', 'cash', url('modules/reportes/flujo_caja.php'), 'reportes.finanzas'],
+            ['Cuentas por cobrar', 'wallet', url('modules/reportes/cxc.php'), 'reportes.finanzas'],
+            ['Contabilidad y DGII', 'shield', url('modules/reportes/libro_diario.php'), 'reportes.contabilidad'],
+            ['Reporte gerencial', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
         ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],
@@ -63,6 +71,7 @@ function nav_groups(): array
             ['Roles y Permisos', 'shield', url('modules/admin/roles.php'), 'roles.ver'],
             ['Configuración', 'settings', url('modules/admin/configuracion.php'), 'configuracion.ver'],
             ['Auditoría / Logs', 'list', url('modules/admin/auditoria.php'), 'auditoria.ver'],
+            ['Integridad de datos', 'shield', url('modules/admin/integridad.php'), 'configuracion.ver'],
             ['Respaldo', 'download', url('modules/admin/respaldo.php'), 'configuracion.ver'],
         ]],
     ];
@@ -113,23 +122,48 @@ function avatar(string $nombre, string $size = 'w-9 h-9'): string
     return '<span class="' . $size . ' rounded-full ' . $c . ' inline-flex items-center justify-center font-semibold text-sm shrink-0">' . e($ini) . '</span>';
 }
 
-/** Renderiza los mensajes flash. */
+/**
+ * Renderiza los mensajes flash como avisos flotantes.
+ *
+ * Se muestran arriba a la derecha y se van solos a los 6 segundos (los errores
+ * se quedan hasta que el usuario los cierre: si algo falló, hay que leerlo).
+ * El temporizador se detiene al pasar el ratón por encima.
+ */
 function render_flashes(): void
 {
+    $flashes = get_flashes();
+    if (!$flashes) return;
+
     $iconos = ['success' => 'check', 'error' => 'alert', 'warning' => 'alert', 'info' => 'bell'];
     $estilos = [
-        'success' => 'bg-emerald-50 border-emerald-200 text-emerald-800',
-        'error'   => 'bg-rose-50 border-rose-200 text-rose-800',
-        'warning' => 'bg-amber-50 border-amber-200 text-amber-800',
-        'info'    => 'bg-sky-50 border-sky-200 text-sky-800',
+        'success' => ['border-emerald-200', 'bg-emerald-50 text-emerald-600'],
+        'error'   => ['border-rose-200',    'bg-rose-50 text-rose-600'],
+        'warning' => ['border-amber-200',   'bg-amber-50 text-amber-600'],
+        'info'    => ['border-sky-200',     'bg-sky-50 text-sky-600'],
     ];
-    foreach (get_flashes() as $f) {
-        $est = $estilos[$f['tipo']] ?? $estilos['info'];
-        $ic = $iconos[$f['tipo']] ?? 'bell';
-        echo '<div x-data="{show:true}" x-show="show" x-transition class="flex items-start gap-3 rounded-xl border px-4 py-3 mb-4 text-sm font-medium ' . $est . '">'
-            . icon($ic, 'w-5 h-5 shrink-0 mt-0.5') . '<span class="flex-1">' . e($f['mensaje']) . '</span>'
-            . '<button @click="show=false" class="opacity-60 hover:opacity-100">' . icon('x', 'w-4 h-4') . '</button></div>';
+
+    echo '<div class="toast-stack no-print" role="status" aria-live="polite">';
+    foreach ($flashes as $f) {
+        $tipo = $f['tipo'];
+        [$borde, $ico] = $estilos[$tipo] ?? $estilos['info'];
+        $auto = $tipo === 'error' ? '0' : '6000';
+        echo '<div x-data="{show:false, t:null}" x-init="'
+            . '$nextTick(() => show = true);'
+            . 'if (' . $auto . ') t = setTimeout(() => show = false, ' . $auto . ')"'
+            . ' @mouseenter="clearTimeout(t)"'
+            . ' x-show="show"'
+            . ' x-transition:enter="transition ease-out duration-200"'
+            . ' x-transition:enter-start="opacity-0 translate-x-6"'
+            . ' x-transition:enter-end="opacity-100 translate-x-0"'
+            . ' x-transition:leave="transition ease-in duration-150"'
+            . ' x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0 translate-x-6"'
+            . ' style="display:none" class="toast ' . $borde . '">'
+            . '<span class="w-8 h-8 rounded-xl ' . $ico . ' flex items-center justify-center shrink-0">' . icon($iconos[$tipo] ?? 'bell', 'w-4 h-4') . '</span>'
+            . '<span class="flex-1 text-slate-700 leading-relaxed pt-1">' . e($f['mensaje']) . '</span>'
+            . '<button type="button" @click="show=false" aria-label="Cerrar aviso" class="text-slate-300 hover:text-slate-600 transition p-1 -m-1 shrink-0">'
+            . icon('x', 'w-4 h-4') . '</button></div>';
     }
+    echo '</div>';
 }
 
 /** Estado vacío para tablas/listas. */

@@ -80,6 +80,28 @@ tailwind.config = {
     .nav-section { @apply px-3 pt-5 pb-1.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-300; }
     .stat-trend-up { @apply text-emerald-600 bg-emerald-50; }
     .stat-trend-down { @apply text-rose-600 bg-rose-50; }
+    /* Foco visible coherente en todo lo interactivo (accesibilidad). */
+    .btn:focus-visible, .input:focus-visible, .select:focus-visible {
+      @apply ring-4 ring-blue-500/20 outline-none;
+    }
+    /* Tarjeta que no se debe partir entre dos páginas al imprimir. */
+    .print-break { break-inside: avoid; page-break-inside: avoid; }
+    .print-only { display: none; }
+    /*
+     * Toda tarjeta que sea celda directa de un grid ocupa la altura de su fila.
+     * Sin esto, dos tarjetas de distinto alto dejan un escalón blanco al lado de
+     * la más alta. Si la tarjeta declara su propia altura (h-fit, h-full, h-64…)
+     * se respeta y esta regla no interviene.
+     */
+    .grid > .card:not([class*="h-"]) { height: 100%; }
+    /* Pila de avisos flotantes (mensajes flash). */
+    .toast-stack {
+      @apply fixed z-[60] flex flex-col gap-2.5 pointer-events-none;
+      top: 4.5rem; right: 1rem; width: min(24rem, calc(100vw - 2rem));
+    }
+    .toast {
+      @apply pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm font-medium shadow-pop bg-white;
+    }
     .modal-overlay {
       @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40;
       padding: 1rem;
@@ -168,11 +190,17 @@ tailwind.config = {
     .app-shell { transition-duration: 0.01ms !important; }
   }
   @media print {
-    aside, header.sticky, footer, .no-print { display: none !important; }
+    aside, header.sticky, footer, .no-print, .toast-stack { display: none !important; }
     .lg\:pl-\[260px\] { padding-left: 0 !important; }
+    .app-shell { padding-left: 0 !important; }
     body { background: #fff !important; }
-    .card { box-shadow: none !important; border-color: #e5e7eb !important; }
+    .card { box-shadow: none !important; border-color: #e5e7eb !important; break-inside: avoid; }
     main { overflow: visible !important; }
+    .print-only { display: block !important; }
+    a[href]::after { content: '' !important; }
+    /* Las tablas largas repiten su cabecera en cada página. */
+    thead { display: table-header-group; }
+    tr, .print-break { break-inside: avoid; }
     @page { margin: 12mm; }
   }
 </style>
@@ -196,6 +224,13 @@ tailwind.config = {
     this.sidebarTooltip = {visible:true, label, top:rect.top + rect.height / 2};
   }
 }">
+<!-- Salto al contenido: primer tabulador de la página, para quien navega con teclado. -->
+<a href="#contenido"
+   class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[80] focus:bg-blue-600 focus:text-white
+          focus:px-4 focus:py-2.5 focus:rounded-xl focus:font-semibold focus:shadow-lg focus:outline-none">
+  Saltar al contenido
+</a>
+
 <div class="min-h-full" :class="{'sidebar-is-collapsed': sidebarCollapsed}">
   <?php include __DIR__ . '/sidebar.php'; ?>
 
@@ -205,7 +240,7 @@ tailwind.config = {
   <div class="app-shell flex flex-col min-h-screen">
     <?php include __DIR__ . '/topbar.php'; ?>
 
-    <main class="flex-1">
+    <main id="contenido" tabindex="-1" class="flex-1 focus:outline-none">
       <div class="px-4 sm:px-6 lg:px-8 py-6 mx-auto w-full max-w-[1500px]">
         <!-- Cabecera de página -->
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

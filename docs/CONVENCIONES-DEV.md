@@ -66,7 +66,9 @@ dashboard, store, box, tag, layers, truck, cart, receipt, cash, undo, users, use
 briefcase, calendar, clock, wallet, chart, pie, settings, logout, search, bell, plus, edit, trash,
 eye, check, x, filter, chevron-down, chevron-right, menu, download, print, arrow-up, arrow-down,
 arrow-left, arrow-right, transfer, trending, package, alert, building, id, dollar, percent, list,
-grid, mail, phone, map, minus, save, lock, sun, history, barcode.
+grid, mail, phone, map, minus, save, lock, sun, history, barcode, megaphone, bank, scale, file,
+target, trending-down, card, coins, book, pulse.
+(Un nombre inexistente cae en `box`, así que no rompe la página pero se nota.)
 
 ## Clases de UI (Tailwind con @apply, ya definidas en el layout)
 - `card` (contenedor blanco redondeado con borde y sombra)
@@ -82,6 +84,86 @@ grid, mail, phone, map, minus, save, lock, sun, history, barcode.
 - `search_box('Buscar...')` → formulario GET de búsqueda (lee `$_GET['q']`)
 - `badge($txt,$color)`, `badgeFor($estado)`, `avatar($nombreCompleto, 'w-9 h-9')`
 - `empty_state($titulo,$mensaje,$icono,$accionHtml='')`
+- `tiempoRelativo($fecha)` → «hace 5 min»; `mesNombre($n,$corto=false)`
+- Los `flash()` se pintan como **avisos flotantes** arriba a la derecha y se van solos
+  (los de tipo `error` se quedan hasta que el usuario los cierre).
+- Las confirmaciones de borrado se muestran en un **modal**: basta con dejar el
+  `onsubmit="return confirm('...')"` de siempre; `includes/layout/footer.php` lo
+  reenruta al modal global. Sin JavaScript sigue funcionando el confirm nativo.
+
+## Búsqueda global (`includes/busqueda.php`)
+Un solo cuadro en la barra superior (`Ctrl`/`⌘` + `K`) que encuentra productos, clientes,
+ventas, proveedores, compras, empleados y oportunidades, y además navega a cualquier
+pantalla. **Respeta permisos y sucursal activa**: lo que no puedes ver en su módulo
+tampoco sale aquí.
+
+- `buscar_global($q, $tope)` → grupos con items `[titulo, subtitulo, etiqueta, etiqueta_color, url]`
+- `buscar_navegacion($q)` → pantallas de `nav_groups()` filtradas por permiso
+- `buscar_atajos()` → accesos rápidos del buscador vacío
+- Endpoint JSON: `modules/busqueda/api.php` (401 si no hay sesión)
+- Respaldo sin JavaScript: `modules/busqueda/index.php` (misma lógica, renderizada en servidor)
+
+Para añadir una entidad, agrega su bloque en `buscar_global()` dentro de un `if (can(...))`
+y aplica `sucursalScope()` cuando la tabla tenga `sucursal_id`. Limita siempre con `$tope`.
+
+## Notificaciones (`includes/notificaciones.php`)
+Una fila por **situación viva** del negocio, no por evento: la `clave` deduplica y,
+cuando el problema se resuelve, la notificación pasa a `resuelta` sola. El barrido
+corre solo (sin cron) como máximo cada `NOTIF_SCAN_MINUTOS`.
+
+Para añadir una alerta nueva: escribe una función `notif_gen_<algo>()` que arme la
+lista de items y llame a `notif_sync('<tipo>', $items)`, y regístrala en `notif_generar()`.
+Cada item admite: `clave` (única), `titulo`, `mensaje`, `categoria`, `prioridad`
+(`critica|alta|media|baja`), `url`, `icono`, `color`, `sucursal_id`, `usuario_id`, `permiso`.
+El `permiso` decide quién la ve; `usuario_id` la dirige a una sola persona.
+
+## Reportes (`includes/reportes.php` + `modules/reportes/`)
+Todos los reportes comparten periodo, alcance por sucursal y estética:
+
+```php
+require_perm('reportes.finanzas');            // ver, ejecutivo, finanzas, contabilidad, operacion
+$p = rep_periodo('mes');                      // desde/hasta/ini/fin/label + periodo anterior
+[$scope, $scopeP] = rep_scope('v.sucursal_id');
+if (export_solicitado()) { export_tabla(...); }   // Excel y PDF de cada reporte
+layout_start('Título', rep_subtitulo($p), rep_barra_titulo());
+echo rep_abrir('Título', $p, ['sucursal' => true]);   // impresión + barra de filtros
+echo rep_kpis([...]);                          // tarjetas con variación vs. periodo anterior
+echo rep_seccion('Bloque','subtítulo','icono','color') . rep_tabla($headers,$filas) . rep_fin();
+layout_end();
+```
+Otros: `rep_delta()`, `rep_barra()`, `rep_color()`, `rep_color_nombre()`, `rep_meses_atras()`,
+`rep_mes_label()`, `rep_alcance_sucursal()`. Para dar de alta un reporte nuevo, añádelo al
+arreglo de `rep_catalogo()`: el hub y los permisos salen de ahí.
+
+**Criterio contable (obligatorio para que los reportes cuadren entre sí):**
+- Ingresos = `subtotal − descuento` (SIN ITBIS: el ITBIS se recauda para la DGII).
+- Utilidad bruta = ingresos − `ventas.costo_total`.
+- Gastos operativos: usa `rep_where_gastos()` / `rep_gastos_operativos()`. **Nunca**
+  sumes `transacciones` de tipo gasto a secas: incluyen la compra de mercancía
+  (que es inventario, no gasto) y las devoluciones (que ya restan del ingreso).
+- Otros ingresos: `rep_where_otros_ingresos()` (excluye ventas y cobros de abonos).
+
+## Gráficos (`includes/charts.php`, SVG puro, sin librerías)
+`sparkline()`, `barChart()`, `barChartComparado()`, `lineChart($series,$labels,$opts)`,
+`donutMulti($items,$centroTitulo,$centroValor)`, `barraApilada()`, `donut()`, `numAbrev($n)`.
+
+`lineChart()` calcula el margen izquierdo a partir de la etiqueta más ancha del eje y
+abrevia los valores (`200K`, `1.25M`); la cifra exacta va en el tooltip de cada punto.
+No fijes márgenes a ojo: con cifras grandes el eje se recorta contra el borde.
+
+## Distribución: nada de huecos en blanco
+- Toda tarjeta que sea **celda directa de un grid** se estira sola a la altura de la fila
+  (regla `.grid > .card:not([class*="h-"])` en el layout). Si la tarjeta necesita otra
+  altura, declárala (`h-fit`) y la regla no interviene.
+- Cuando hay un wrapper `<div>` entre el grid y la tarjeta, ponle `h-full` a la tarjeta.
+  `rep_seccion()` ya lo trae y además reparte el cuerpo con `flex-1`.
+- El contenido de una tarjeta con gráfico o barras va en
+  `<div class="px-5 pb-5 flex-1 flex flex-col justify-center">` para que se centre en vez
+  de quedarse pegado arriba.
+- Una tarjeta sin datos usa `empty_state($titulo,$mensaje,$icono,$accionHtml)`, nunca un
+  `<p>` suelto: el estado vacío debe llenar el espacio y ofrecer la acción que lo resuelve.
+- Ajusta las columnas al contenido (`lg:grid-cols-5` con `col-span-3`/`col-span-2` para
+  tabla + gráfico) en vez de dos mitades iguales con pesos distintos.
 
 ## Patrón de modal (Alpine.js ya está cargado globalmente)
 Cabecera: `btn_nuevo('cli:new','Nuevo cliente')`.
@@ -116,6 +198,28 @@ Modal (al final de la página):
   <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash','w-4 h-4') ?></button>
 </form>
 ```
+
+## Concurrencia (OBLIGATORIO si tu página escribe) — ver `docs/CONCURRENCIA.md`
+Varias sucursales operan a la vez. Estas reglas no son opcionales:
+
+1. **Correlativos:** `nextNumero($tabla,$col,$prefijo)` reserva el número con un contador
+   atómico. **Nunca** hagas `SELECT MAX(...)+1`: con dos cajas vendiendo a la vez genera el
+   mismo número y una venta muere contra el UNIQUE. Para *mostrar* el próximo número en un
+   formulario usa `previewNumero()`, que no lo consume.
+2. **Orden de bloqueo:** si recorres varios productos moviendo stock, hazlo **siempre en
+   orden de `producto_id`** (`ORDER BY producto_id` o `usort()`). Órdenes distintos entre dos
+   procesos = interbloqueo.
+3. **Transacciones:** usa `txReintentable(fn)` en vez de `tx(fn)` cuando la operación mueva
+   stock o dinero. Reintenta solo los choques transitorios de InnoDB (1213/1205); los errores
+   de negocio suben tal cual.
+4. **Saldos:** siempre `UPDATE ... SET balance = balance ± ?`. Nunca leer, sumar en PHP y
+   escribir: se pierden actualizaciones.
+5. **Unicidad condicional** (una sesión de caja abierta por cajón): bloquea la fila padre con
+   `SELECT ... FOR UPDATE` dentro de la misma transacción que inserta.
+6. Las validaciones que dependen de un valor bloqueado van **después** del `FOR UPDATE`.
+
+Comprobación permanente: Administración → **Integridad de datos**
+(`modules/admin/integridad.php`), 14 chequeos de solo lectura.
 
 ## Operaciones de negocio (solo si tu página mueve stock/dinero) — usar DENTRO de `tx()`
 - `ajustarStock($productoId,$sucursalId,$delta,$tipo,$refTipo,$refId,$costo,$motivo)` — $delta + entra, − sale; registra kardex. $tipo ∈ entrada,salida,ajuste,compra,venta,devolucion,transferencia_salida,transferencia_entrada

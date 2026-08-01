@@ -62,7 +62,7 @@ if (isPost()) {
                 throw new RuntimeException('La DGII exige la Fecha de Pago cuando se informan retenciones de ITBIS o ISR.');
             }
 
-            $compraId = tx(function () use ($proveedorId, $sucursalId, $fecha, $lineas, $tasaItbis, $dgii) {
+            $compraId = txReintentable(function () use ($proveedorId, $sucursalId, $fecha, $lineas, $tasaItbis, $dgii) {
                 $subtotal = 0; $itbisTotal = 0; $det = [];
                 $montoBienes = 0; $montoServicios = 0;
                 foreach ($lineas as $l) {
@@ -81,6 +81,9 @@ if (isPost()) {
                     $det[] = ['pid' => $pid, 'cant' => $cant, 'costo' => $costo, 'itbis' => $itbis, 'base' => $base];
                 }
                 if (!$det) throw new RuntimeException('No hay líneas válidas.');
+                // Siempre en el mismo orden de producto: si dos compras coinciden y
+                // tocan los mismos artículos en orden distinto, se bloquean en cruz.
+                usort($det, fn($a, $b) => $a['pid'] <=> $b['pid']);
                 $total = $subtotal + $itbisTotal;
                 $numero = nextNumero('compras', 'numero', 'COM');
                 $compraId = dbInsert('compras', array_merge([
@@ -109,11 +112,11 @@ if (isPost()) {
         require_perm('compras.anular');
         $id = postInt('id');
         try {
-            tx(function () use ($id) {
+            txReintentable(function () use ($id) {
                 $c = qOne("SELECT * FROM compras WHERE id = ? FOR UPDATE", [$id]);
                 if (!$c || $c['estado'] !== 'recibida') throw new RuntimeException('La compra no se puede anular.');
                 if (!can_access_sucursal($c['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta compra.');
-                foreach (qAll("SELECT * FROM compra_detalles WHERE compra_id = ?", [$id]) as $d) {
+                foreach (qAll("SELECT * FROM compra_detalles WHERE compra_id = ? ORDER BY producto_id", [$id]) as $d) {
                     if (stockActual((int) $d['producto_id'], (int) $c['sucursal_id']) < $d['cantidad']) {
                         throw new RuntimeException('No se puede anular: ya se vendió parte de la mercancía.');
                     }

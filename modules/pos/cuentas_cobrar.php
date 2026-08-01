@@ -11,7 +11,7 @@ if (isPost()) {
         $metodoId = postInt('metodo_pago_id') ?: null;
         $notas = trim(post('notas'));
         try {
-            tx(function () use ($clienteId, $monto, $metodoId, $notas) {
+            txReintentable(function () use ($clienteId, $monto, $metodoId, $notas) {
                 $cli = qOne("SELECT nombre, balance FROM clientes WHERE id = ? FOR UPDATE", [$clienteId]);
                 if (!$cli) throw new RuntimeException('Cliente no válido.');
                 if ($monto <= 0) throw new RuntimeException('El monto del abono debe ser mayor a cero.');

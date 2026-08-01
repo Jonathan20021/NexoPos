@@ -47,7 +47,11 @@ function registrarVentaPOS(array $in, array $ctx): array
 
     if (!$cart) throw new RuntimeException('El carrito está vacío.');
 
-    return tx(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId) {
+    // txReintentable y no tx: con varias cajas vendiendo a la vez, InnoDB puede
+    // abortar una transacción por interbloqueo o espera de bloqueo. Eso no es un
+    // problema del negocio y no debe llegarle al cajero como «error»: se reintenta
+    // y la venta entra. Los errores reales (stock, crédito, NCF) suben igual.
+    return txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -135,7 +139,7 @@ function registrarVentaPOS(array $in, array $ctx): array
             'canal_venta' => $canal, 'uuid' => $uuid,
         ]);
 
-        // 4) Detalles + descuento de stock.
+        // 4) Detalles, en el orden en que el cajero armó el carrito (así sale el ticket).
         foreach ($lineas as $l) {
             $itbisLinea = $l['es_muestra'] ? 0.0 : round($l['itbis'] * $factor, 2);
             dbInsert('venta_detalles', [
@@ -144,16 +148,25 @@ function registrarVentaPOS(array $in, array $ctx): array
                 'descuento' => 0, 'itbis' => $itbisLinea, 'subtotal' => $l['base'],
                 'es_muestra' => $l['es_muestra'], 'precio_original' => $l['precio_original'],
             ]);
-            if ($l['tipo'] === 'producto') {
-                $motivo = $l['es_muestra'] ? 'Muestra ' . $numero : 'Venta ' . $numero;
-                ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], $motivo);
-            }
         }
 
-        // 5) Pago.
+        // 5) Descuento de stock SIEMPRE en orden de producto_id.
+        //    Dos cajas de la misma sucursal vendiendo los mismos artículos en
+        //    distinto orden se bloqueaban en cruz (A espera el lápiz que tiene B,
+        //    B espera el cuaderno que tiene A) y InnoDB mataba una de las dos.
+        //    Bloqueando siempre en el mismo orden, ese interbloqueo no existe.
+        $ordenStock = $lineas;
+        usort($ordenStock, fn($a, $b) => $a['pid'] <=> $b['pid']);
+        foreach ($ordenStock as $l) {
+            if ($l['tipo'] !== 'producto') continue;
+            $motivo = $l['es_muestra'] ? 'Muestra ' . $numero : 'Venta ' . $numero;
+            ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], $motivo);
+        }
+
+        // 6) Pago.
         dbInsert('venta_pagos', ['venta_id' => $ventaId, 'metodo_pago_id' => $metodoId, 'monto' => $total]);
 
-        // 6) Crédito vs contado.
+        // 7) Crédito vs contado.
         if ((int) $metodo['es_credito'] === 1) {
             if ($clienteId <= 1) throw new RuntimeException('Selecciona un cliente registrado para una venta a crédito.');
             if ((float) $cli['limite_credito'] > 0 && ((float) $cli['balance'] + $total) > (float) $cli['limite_credito']) {

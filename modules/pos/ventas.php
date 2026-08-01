@@ -13,7 +13,7 @@ if (isPost()) {
             if (!isset(dgiiTiposAnulacion()[$tipoAnulacion])) {
                 throw new RuntimeException('Selecciona un motivo de anulación válido para el reporte 608.');
             }
-            tx(function () use ($id, $tipoAnulacion) {
+            txReintentable(function () use ($id, $tipoAnulacion) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$id]);
                 if (!$v || $v['estado'] !== 'completada') throw new RuntimeException('La venta no se puede anular.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
@@ -21,7 +21,7 @@ if (isPost()) {
                 if ($v['caja_sesion_id'] && qVal("SELECT 1 FROM caja_sesiones WHERE id = ? AND estado = 'cerrada'", [$v['caja_sesion_id']])) {
                     throw new RuntimeException('La caja de esta venta ya fue cerrada. Registra una devolución para mantener el cuadre.');
                 }
-                foreach (qAll("SELECT vd.*, p.tipo AS producto_tipo FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id WHERE vd.venta_id = ?", [$id]) as $d) {
+                foreach (qAll("SELECT vd.*, p.tipo AS producto_tipo FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id WHERE vd.venta_id = ? ORDER BY vd.producto_id", [$id]) as $d) {
                     if ($d['producto_id'] && $d['producto_tipo'] === 'producto') {
                         ajustarStock((int) $d['producto_id'], (int) $v['sucursal_id'], (float) $d['cantidad'], 'entrada', 'venta_anulada', $id, (float) $d['costo_unitario'], 'Anulación venta ' . $v['numero']);
                     }

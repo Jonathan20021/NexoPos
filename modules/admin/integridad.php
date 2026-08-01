@@ -1,0 +1,408 @@
+<?php
+/**
+ * Verificación de integridad de los datos.
+ *
+ * Comprueba que las cifras del sistema cuadran entre sí: que el stock coincide
+ * con el kardex, que ningún comprobante está duplicado, que los balances de
+ * clientes y cuentas se corresponden con sus movimientos. Es el chequeo que
+ * conviene mirar después de un día fuerte con todas las sucursales vendiendo.
+ *
+ * Solo LEE. Nada de lo que hay aquí modifica datos.
+ */
+require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
+require_perm('configuracion.ver');
+
+/** Ejecuta una comprobación y devuelve su resultado normalizado. */
+function chk(string $titulo, string $explica, callable $consulta, string $comoArreglar = ''): array
+{
+    try {
+        [$n, $detalle] = $consulta();
+        return ['titulo' => $titulo, 'explica' => $explica, 'n' => (int) $n,
+                'detalle' => $detalle, 'arreglar' => $comoArreglar, 'error' => null];
+    } catch (Throwable $e) {
+        return ['titulo' => $titulo, 'explica' => $explica, 'n' => -1, 'detalle' => [],
+                'arreglar' => $comoArreglar, 'error' => $e->getMessage()];
+    }
+}
+
+$grupos = [];
+
+/* ============================================================
+ *  Comprobantes y correlativos
+ * ============================================================ */
+$comprobantes = [];
+
+$comprobantes[] = chk(
+    'Números de documento duplicados',
+    'Dos ventas, compras o devoluciones no pueden compartir el mismo número. Si ocurriera, la contabilidad no cuadraría.',
+    function () {
+        $t = 0; $d = [];
+        foreach ([['ventas', 'numero'], ['compras', 'numero'], ['devoluciones', 'numero'],
+                  ['transferencias', 'numero'], ['pedidos', 'numero']] as [$tabla, $col]) {
+            $rows = qAll("SELECT `$col` v, COUNT(*) c FROM `$tabla` GROUP BY `$col` HAVING c > 1 LIMIT 10");
+            foreach ($rows as $r) $d[] = $tabla . ': ' . $r['v'] . ' (' . $r['c'] . ' veces)';
+            $t += count($rows);
+        }
+        return [$t, $d];
+    },
+    'Contacta soporte: hay que renumerar los documentos afectados.'
+);
+
+$comprobantes[] = chk(
+    'NCF duplicados',
+    'Un mismo comprobante fiscal usado en dos ventas es un problema serio ante la DGII.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM (SELECT ncf FROM ventas WHERE ncf IS NOT NULL GROUP BY ncf HAVING COUNT(*)>1) x"),
+        qCol("SELECT ncf FROM ventas WHERE ncf IS NOT NULL GROUP BY ncf HAVING COUNT(*)>1 LIMIT 10"),
+    ],
+    'Anula una de las ventas y vuelve a emitirla con un NCF nuevo.'
+);
+
+$comprobantes[] = chk(
+    'NCF consumidos sin comprobante emitido',
+    'La secuencia avanzó más que los comprobantes realmente emitidos. Un hueco pequeño es normal si se anuló una venta; uno grande hay que justificarlo.',
+    function () {
+        $d = [];
+        $total = 0;
+        foreach (qAll("SELECT tipo, secuencia_actual FROM ncf_secuencias WHERE activo = 1") as $s) {
+            $consumidos = (int) $s['secuencia_actual'] - 1;
+            $emitidos = (int) qVal("SELECT COUNT(*) FROM ventas WHERE ncf LIKE ?", [$s['tipo'] . '%'])
+                      + (int) qVal("SELECT COUNT(*) FROM devoluciones WHERE ncf LIKE ?", [$s['tipo'] . '%']);
+            $hueco = $consumidos - $emitidos;
+            if ($hueco > 0) {
+                $total += $hueco;
+                $d[] = $s['tipo'] . ': ' . $hueco . ' número(s) consumidos sin comprobante';
+            }
+        }
+        return [$total, $d];
+    },
+    'Repórtalos en el formato 608 (comprobantes anulados) si corresponde.'
+);
+
+$grupos[] = ['titulo' => 'Comprobantes fiscales', 'icono' => 'receipt', 'color' => 'blue', 'checks' => $comprobantes];
+
+/* ============================================================
+ *  Inventario
+ * ============================================================ */
+$inventario = [];
+
+$inventario[] = chk(
+    'Existencias en negativo',
+    'Ningún producto puede tener menos de cero unidades. Si aparece, se vendió mercancía que el sistema no tenía registrada.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM inventario_stock WHERE cantidad < 0"),
+        qAll("SELECT p.nombre, su.nombre sucursal, s.cantidad
+                FROM inventario_stock s JOIN productos p ON p.id=s.producto_id
+                JOIN sucursales su ON su.id=s.sucursal_id
+               WHERE s.cantidad < 0 LIMIT 10"),
+    ],
+    'Haz un ajuste de inventario con el conteo físico real.'
+);
+
+$inventario[] = chk(
+    'Existencias que no cuadran con el kardex',
+    'La cantidad guardada debe ser exactamente la suma de todos los movimientos del producto. Si no lo es, alguien tocó la existencia por fuera del sistema.',
+    fn() => [
+        (int) qVal(
+            "SELECT COUNT(*) FROM (
+                SELECT s.cantidad c,
+                       (SELECT COALESCE(SUM(m.cantidad),0) FROM movimientos_inventario m
+                         WHERE m.producto_id=s.producto_id AND m.sucursal_id=s.sucursal_id) k
+                  FROM inventario_stock s) t
+              WHERE ABS(c - k) > 0.001"
+        ),
+        qAll(
+            "SELECT p.nombre, su.nombre sucursal, s.cantidad,
+                    (SELECT COALESCE(SUM(m.cantidad),0) FROM movimientos_inventario m
+                      WHERE m.producto_id=s.producto_id AND m.sucursal_id=s.sucursal_id) AS kardex
+               FROM inventario_stock s
+               JOIN productos p ON p.id=s.producto_id
+               JOIN sucursales su ON su.id=s.sucursal_id
+              HAVING ABS(s.cantidad - kardex) > 0.001 LIMIT 10"
+        ),
+    ],
+    'Registra un ajuste de inventario para dejar constancia de la diferencia.'
+);
+
+$grupos[] = ['titulo' => 'Inventario', 'icono' => 'box', 'color' => 'amber', 'checks' => $inventario];
+
+/* ============================================================
+ *  Documentos incompletos
+ * ============================================================ */
+$documentos = [];
+
+$documentos[] = chk(
+    'Ventas sin líneas de detalle',
+    'Una venta sin productos indica que algo se cortó a mitad de camino.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM ventas v WHERE NOT EXISTS(SELECT 1 FROM venta_detalles d WHERE d.venta_id=v.id)"),
+        qCol("SELECT numero FROM ventas v WHERE NOT EXISTS(SELECT 1 FROM venta_detalles d WHERE d.venta_id=v.id) LIMIT 10"),
+    ],
+    'Anula esas ventas: no representan una operación real.'
+);
+
+$documentos[] = chk(
+    'Ventas completadas sin forma de pago',
+    'Toda venta cerrada debe tener registrado cómo se cobró.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM ventas v WHERE v.estado='completada' AND NOT EXISTS(SELECT 1 FROM venta_pagos p WHERE p.venta_id=v.id)"),
+        qCol("SELECT numero FROM ventas v WHERE v.estado='completada' AND NOT EXISTS(SELECT 1 FROM venta_pagos p WHERE p.venta_id=v.id) LIMIT 10"),
+    ]
+);
+
+$documentos[] = chk(
+    'Compras sin líneas de detalle',
+    'Una compra sin productos no pudo haber movido inventario.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM compras c WHERE NOT EXISTS(SELECT 1 FROM compra_detalles d WHERE d.compra_id=c.id)"),
+        qCol("SELECT numero FROM compras c WHERE NOT EXISTS(SELECT 1 FROM compra_detalles d WHERE d.compra_id=c.id) LIMIT 10"),
+    ]
+);
+
+$documentos[] = chk(
+    'Devoluciones por encima de lo vendido',
+    'No se puede devolver más cantidad de la que salió en la factura original.',
+    fn() => [
+        (int) qVal(
+            "SELECT COUNT(*) FROM (
+                SELECT dd.venta_detalle_id, SUM(dd.cantidad) dev
+                  FROM devolucion_detalles dd
+                 WHERE dd.venta_detalle_id IS NOT NULL
+                 GROUP BY dd.venta_detalle_id) t
+              JOIN venta_detalles vd ON vd.id = t.venta_detalle_id
+             WHERE t.dev > vd.cantidad + 0.001"
+        ),
+        [],
+    ],
+    'Revisa esas devoluciones y corrige las cantidades.'
+);
+
+$grupos[] = ['titulo' => 'Documentos completos', 'icono' => 'file', 'color' => 'indigo', 'checks' => $documentos];
+
+/* ============================================================
+ *  Dinero
+ * ============================================================ */
+$dinero = [];
+
+$dinero[] = chk(
+    'Saldo de clientes contra sus facturas a crédito',
+    'El saldo pendiente de cada cliente debe ser lo facturado a crédito menos lo abonado y lo devuelto.',
+    function () {
+        $rows = qAll(
+            "SELECT c.id, c.nombre, c.balance,
+                    COALESCE((SELECT SUM(vp.monto) FROM ventas v
+                                JOIN venta_pagos vp ON vp.venta_id = v.id
+                                JOIN metodos_pago mp ON mp.id = vp.metodo_pago_id AND mp.es_credito = 1
+                               WHERE v.cliente_id = c.id AND v.estado = 'completada'),0) AS credito,
+                    COALESCE((SELECT SUM(pc.monto) FROM pagos_clientes pc WHERE pc.cliente_id = c.id),0) AS abonos,
+                    COALESCE((SELECT SUM(d.total) FROM devoluciones d
+                                JOIN ventas v2 ON v2.id = d.venta_id
+                               WHERE v2.cliente_id = c.id),0) AS devuelto
+               FROM clientes c
+              WHERE c.balance <> 0
+                 OR EXISTS (SELECT 1 FROM ventas v3 WHERE v3.cliente_id = c.id)"
+        );
+        $malos = [];
+        foreach ($rows as $r) {
+            $esperado = (float) $r['credito'] - (float) $r['abonos'] - (float) $r['devuelto'];
+            if (abs((float) $r['balance'] - $esperado) > 0.05) {
+                $malos[] = $r['nombre'] . ': registra ' . money($r['balance']) . ', debería ser ' . money(max(0, $esperado));
+            }
+        }
+        return [count($malos), array_slice($malos, 0, 10)];
+    },
+    'Una diferencia suele venir de un abono registrado sin factura de respaldo. Revísalo en Cuentas por Cobrar.'
+);
+
+$dinero[] = chk(
+    'Balance de cuentas contra sus movimientos',
+    'El balance de cada cuenta debe ser su saldo inicial más los ingresos menos los gastos registrados.',
+    function () {
+        $rows = qAll(
+            "SELECT cf.id, cf.nombre, cf.balance, cf.saldo_inicial,
+                    COALESCE((SELECT SUM(CASE WHEN t.tipo='ingreso' THEN t.monto ELSE -t.monto END)
+                                FROM transacciones t WHERE t.cuenta_id = cf.id),0) AS movimientos
+               FROM cuentas_financieras cf WHERE cf.activo = 1"
+        );
+        $malos = [];
+        foreach ($rows as $r) {
+            $esperado = (float) $r['saldo_inicial'] + (float) $r['movimientos'];
+            if (abs((float) $r['balance'] - $esperado) > 0.05) {
+                $malos[] = $r['nombre'] . ': registra ' . money($r['balance']) . ', sus movimientos dan ' . money($esperado);
+            }
+        }
+        return [count($malos), array_slice($malos, 0, 10)];
+    },
+    'Suele pasar si se editó el balance a mano. La conciliación bancaria toma los movimientos como fuente de verdad.'
+);
+
+$grupos[] = ['titulo' => 'Dinero', 'icono' => 'wallet', 'color' => 'emerald', 'checks' => $dinero];
+
+/* ============================================================
+ *  Operación concurrente
+ * ============================================================ */
+$operacion = [];
+
+$operacion[] = chk(
+    'Cajas con más de una sesión abierta',
+    'Una caja solo puede tener un turno abierto a la vez; si no, el arqueo no cuadra.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM (SELECT caja_id FROM caja_sesiones WHERE estado='abierta' GROUP BY caja_id HAVING COUNT(*)>1) x"),
+        qCol("SELECT c.nombre FROM caja_sesiones cs JOIN cajas c ON c.id=cs.caja_id
+               WHERE cs.estado='abierta' GROUP BY cs.caja_id HAVING COUNT(*)>1 LIMIT 10"),
+    ],
+    'Cierra las sesiones sobrantes desde Caja.'
+);
+
+$operacion[] = chk(
+    'Contadores de numeración desfasados',
+    'El contador de cada serie debe ir por delante del último documento emitido. Si se queda atrás, el sistema tendría que buscar hueco en cada venta.',
+    function () {
+        $series = [
+            ['ventas.numero.VTA', 'ventas', 'numero', 'VTA'],
+            ['compras.numero.COM', 'compras', 'numero', 'COM'],
+            ['devoluciones.numero.DEV', 'devoluciones', 'numero', 'DEV'],
+            ['transferencias.numero.TRF', 'transferencias', 'numero', 'TRF'],
+        ];
+        $malos = [];
+        foreach ($series as [$clave, $tabla, $col, $pref]) {
+            $contador = qVal("SELECT valor FROM contadores WHERE nombre = ?", [$clave]);
+            if ($contador === null) continue;
+            $max = (int) qVal(
+                "SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(`$col`,'-',-1) AS UNSIGNED)),0) FROM `$tabla` WHERE `$col` LIKE ?",
+                [$pref . '-%']
+            );
+            if ((int) $contador < $max) {
+                $malos[] = $pref . ': contador en ' . $contador . ', último documento ' . $max;
+            }
+        }
+        return [count($malos), $malos];
+    },
+    'Ejecuta de nuevo database/migracion_concurrencia_p4.sql: vuelve a sembrar los contadores.'
+);
+
+$operacion[] = chk(
+    'Ventas sin sucursal o sin usuario válidos',
+    'Toda venta debe poder rastrearse hasta la sucursal y el cajero que la hizo.',
+    fn() => [
+        (int) qVal("SELECT COUNT(*) FROM ventas v LEFT JOIN sucursales s ON s.id=v.sucursal_id
+                     LEFT JOIN usuarios u ON u.id=v.usuario_id WHERE s.id IS NULL OR u.id IS NULL"),
+        [],
+    ]
+);
+
+$grupos[] = ['titulo' => 'Operación multi-sucursal', 'icono' => 'store', 'color' => 'violet', 'checks' => $operacion];
+
+/* ---------- Resumen ---------- */
+$totalChecks = 0; $conProblema = 0; $conError = 0;
+foreach ($grupos as $g) {
+    foreach ($g['checks'] as $c) {
+        $totalChecks++;
+        if ($c['n'] > 0) $conProblema++;
+        if ($c['n'] < 0) $conError++;
+    }
+}
+$todoBien = $conProblema === 0 && $conError === 0;
+
+layout_start(
+    'Verificación de integridad',
+    $totalChecks . ' comprobaciones sobre los datos del sistema',
+    '<button type="button" onclick="location.reload()" class="btn btn-ghost no-print">' . icon('history', 'w-4 h-4') . ' Volver a verificar</button>'
+);
+?>
+
+<!-- Resumen -->
+<div class="card p-6 mb-5 <?= $todoBien ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40' ?>">
+  <div class="flex items-start gap-4">
+    <span class="w-14 h-14 rounded-2xl <?= $todoBien ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600' ?> flex items-center justify-center shrink-0">
+      <?= icon($todoBien ? 'check' : 'alert', 'w-7 h-7') ?>
+    </span>
+    <div class="flex-1 min-w-0">
+      <h2 class="text-lg font-extrabold text-slate-800">
+        <?= $todoBien ? 'Los datos están consistentes' : $conProblema . ' comprobación(es) con hallazgos' ?>
+      </h2>
+      <p class="text-sm text-slate-600 mt-1 leading-relaxed">
+        <?php if ($todoBien): ?>
+          Las <?= $totalChecks ?> comprobaciones pasaron. Los comprobantes no están duplicados, el inventario
+          cuadra con su kardex y los balances coinciden con sus movimientos.
+        <?php else: ?>
+          Nada de esto detiene la operación, pero conviene revisarlo. Cada hallazgo explica qué significa y cómo corregirlo.
+        <?php endif; ?>
+      </p>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <?= badge($totalChecks - $conProblema - $conError . ' correctas', 'emerald') ?>
+        <?php if ($conProblema): ?><?= badge($conProblema . ' con hallazgos', 'amber') ?><?php endif; ?>
+        <?php if ($conError): ?><?= badge($conError . ' no se pudieron ejecutar', 'rose') ?><?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+
+<?php foreach ($grupos as $g):
+  $fondo = ['blue' => 'bg-blue-50 text-blue-600', 'amber' => 'bg-amber-50 text-amber-600',
+            'indigo' => 'bg-indigo-50 text-indigo-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
+            'violet' => 'bg-violet-50 text-violet-600'][$g['color']];
+?>
+  <section class="card overflow-hidden mb-5">
+    <div class="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+      <span class="w-9 h-9 rounded-xl <?= $fondo ?> flex items-center justify-center shrink-0"><?= icon($g['icono'], 'w-4 h-4') ?></span>
+      <h3 class="font-bold text-slate-800"><?= e($g['titulo']) ?></h3>
+    </div>
+    <ul class="divide-y divide-slate-100">
+      <?php foreach ($g['checks'] as $c):
+        $estado = $c['n'] < 0 ? 'error' : ($c['n'] > 0 ? 'aviso' : 'ok');
+        $ico = ['ok' => ['check', 'bg-emerald-50 text-emerald-600'],
+                'aviso' => ['alert', 'bg-amber-50 text-amber-600'],
+                'error' => ['x', 'bg-rose-50 text-rose-600']][$estado];
+      ?>
+        <li class="flex items-start gap-4 px-5 py-4">
+          <span class="w-9 h-9 rounded-xl <?= $ico[1] ?> flex items-center justify-center shrink-0"><?= icon($ico[0], 'w-4 h-4') ?></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <h4 class="font-semibold text-slate-800"><?= e($c['titulo']) ?></h4>
+              <?php if ($estado === 'ok'): ?>
+                <?= badge('Correcto', 'emerald') ?>
+              <?php elseif ($estado === 'aviso'): ?>
+                <?= badge($c['n'] . ' hallazgo' . ($c['n'] === 1 ? '' : 's'), 'amber') ?>
+              <?php else: ?>
+                <?= badge('No se pudo verificar', 'rose') ?>
+              <?php endif; ?>
+            </div>
+            <p class="text-[13px] text-slate-500 mt-1 leading-relaxed"><?= e($c['explica']) ?></p>
+
+            <?php if ($c['error']): ?>
+              <p class="text-xs text-rose-600 mt-2 font-mono bg-rose-50 rounded-lg px-3 py-2"><?= e($c['error']) ?></p>
+            <?php endif; ?>
+
+            <?php if ($c['n'] > 0 && $c['detalle']): ?>
+              <ul class="mt-2.5 space-y-1">
+                <?php foreach ($c['detalle'] as $d): ?>
+                  <li class="text-[12.5px] text-slate-600 bg-slate-50 rounded-lg px-3 py-1.5">
+                    <?php if (is_array($d)): ?>
+                      <?= e(implode(' · ', array_map(fn($v) => is_numeric($v) ? qty($v) : (string) $v, $d))) ?>
+                    <?php else: ?>
+                      <?= e((string) $d) ?>
+                    <?php endif; ?>
+                  </li>
+                <?php endforeach; ?>
+              </ul>
+            <?php endif; ?>
+
+            <?php if ($c['n'] > 0 && $c['arreglar']): ?>
+              <p class="text-[12.5px] text-blue-700 mt-2.5 flex items-start gap-1.5">
+                <?= icon('arrow-right', 'w-3.5 h-3.5 shrink-0 mt-0.5') ?>
+                <span><?= e($c['arreglar']) ?></span>
+              </p>
+            <?php endif; ?>
+          </div>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </section>
+<?php endforeach; ?>
+
+<p class="text-xs text-slate-400 text-center">
+  Esta pantalla solo lee datos: nada de lo que se muestra aquí modifica el sistema.
+</p>
+
+<?php layout_end(); ?>

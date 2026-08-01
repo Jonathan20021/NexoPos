@@ -83,7 +83,7 @@ if (isPost()) {
         $uid         = (int) current_user()['id'];
 
         try {
-            $ventaId = tx(function () use ($id, $metodoId, $comprobante, $uid) {
+            $ventaId = txReintentable(function () use ($id, $metodoId, $comprobante, $uid) {
                 $ped = qOne("SELECT * FROM pedidos WHERE id = ? FOR UPDATE", [$id]);
                 if (!$ped) throw new RuntimeException('Pedido no encontrado.');
                 if (!can_access_sucursal($ped['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de este pedido.');
@@ -125,7 +125,7 @@ if (isPost()) {
                 }
 
                 // ---- Líneas: precio cotizado, costo actual, stock revalidado ----
-                $detalles = qAll("SELECT * FROM pedido_detalles WHERE pedido_id = ?", [$id]);
+                $detalles = qAll("SELECT * FROM pedido_detalles WHERE pedido_id = ? ORDER BY producto_id", [$id]);
                 if (!$detalles) throw new RuntimeException('El pedido no tiene líneas.');
 
                 $subtotal = 0.0; $itbisTotal = 0.0; $costoTotal = 0.0; $lineas = [];

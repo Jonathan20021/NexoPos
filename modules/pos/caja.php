@@ -55,13 +55,26 @@ if (isPost()) {
         if ($monto < 0) { flash('error', 'El monto de apertura no puede ser negativo.'); redirect('modules/pos/caja.php'); }
         $caja = qOne("SELECT * FROM cajas WHERE id = ? AND sucursal_id = ?", [$cajaId, $sid]);
         if (!$caja) { flash('error', 'Caja inválida.'); redirect('modules/pos/caja.php'); }
-        // Bloqueo por terminal: nadie abre una caja que otra persona dejó abierta.
-        [$puede, $motivo] = validarAperturaCaja($cajaId, $uid);
-        if (!$puede) { flash('error', $motivo); redirect('modules/pos/caja.php'); }
-        $nid = dbInsert('caja_sesiones', [
-            'caja_id' => $cajaId, 'sucursal_id' => $sid, 'usuario_id' => $uid, 'turno' => $turno,
-            'monto_apertura' => $monto, 'estado' => 'abierta', 'abierta_at' => date('Y-m-d H:i:s'),
-        ]);
+
+        // La comprobación y la apertura van juntas dentro de una transacción, con
+        // la caja bloqueada. Antes se consultaba y después se insertaba: si dos
+        // cajeros pulsaban «Abrir» a la vez, los dos veían la caja libre y quedaban
+        // DOS sesiones abiertas sobre el mismo cajón, con el arqueo descuadrado.
+        try {
+            $nid = tx(function () use ($cajaId, $sid, $uid, $turno, $monto) {
+                q("SELECT id FROM cajas WHERE id = ? FOR UPDATE", [$cajaId]);
+                [$puede, $motivo] = validarAperturaCaja($cajaId, $uid);
+                if (!$puede) throw new RuntimeException($motivo);
+                return dbInsert('caja_sesiones', [
+                    'caja_id' => $cajaId, 'sucursal_id' => $sid, 'usuario_id' => $uid, 'turno' => $turno,
+                    'monto_apertura' => $monto, 'estado' => 'abierta', 'abierta_at' => date('Y-m-d H:i:s'),
+                ]);
+            });
+        } catch (RuntimeException $ex) {
+            flash('error', $ex->getMessage());
+            redirect('modules/pos/caja.php');
+        }
+
         audit('caja', 'abrir', "Apertura de caja {$caja['nombre']} con " . money($monto), ['tabla' => 'caja_sesiones', 'registro_id' => $nid]);
         flash('success', 'Caja abierta. ¡Listo para vender!');
         redirect('modules/pos/caja.php');

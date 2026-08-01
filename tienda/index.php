@@ -56,7 +56,7 @@ if (isPost() && post('accion') === 'pedido') {
         if (!is_array($carrito) || !$carrito) throw new RuntimeException('Tu carrito está vacío.');
         if (count($carrito) > 50) throw new RuntimeException('Demasiados productos en el carrito.');
 
-        $creado = tx(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis) {
+        $creado = txReintentable(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis) {
             $subtotal = 0; $itbisTotal = 0; $lineas = [];
             foreach ($carrito as $item) {
                 $pid  = (int) ($item['id'] ?? 0);

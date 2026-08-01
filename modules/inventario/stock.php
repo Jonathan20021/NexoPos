@@ -16,7 +16,7 @@ if (isPost()) {
             flash('error', 'Completa todos los campos del ajuste.');
         } else {
             try {
-                tx(function () use ($pid, $suc, $modo, $cantidad, $motivo) {
+                txReintentable(function () use ($pid, $suc, $modo, $cantidad, $motivo) {
                     $actual = stockActual($pid, $suc);
                     if ($modo === 'exacta') $delta = $cantidad - $actual;
                     elseif ($modo === 'salida') $delta = -abs($cantidad);

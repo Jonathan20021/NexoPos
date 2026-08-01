@@ -201,6 +201,7 @@ CREATE TABLE productos (
   KEY idx_p_barras (codigo_barras),
   KEY idx_p_categoria (categoria_id),
   KEY idx_p_nombre (nombre),
+  KEY idx_p_activo_nombre (activo, nombre),
   CONSTRAINT chk_producto_valores_no_negativos CHECK (precio_compra >= 0 AND precio_venta >= 0 AND stock_minimo >= 0),
   CONSTRAINT fk_p_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_marca FOREIGN KEY (marca_id) REFERENCES marcas(id) ON DELETE SET NULL,
@@ -433,6 +434,7 @@ CREATE TABLE caja_sesiones (
   PRIMARY KEY (id),
   KEY idx_cs_sucursal (sucursal_id),
   KEY idx_cs_estado (estado),
+  KEY idx_cs_caja_estado (caja_id, estado),
   CONSTRAINT fk_cs_caja FOREIGN KEY (caja_id) REFERENCES cajas(id),
   CONSTRAINT fk_cs_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
   CONSTRAINT fk_cs_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
@@ -544,6 +546,7 @@ CREATE TABLE ventas (
   KEY idx_v_sucursal (sucursal_id),
   KEY idx_v_fecha (fecha),
   KEY idx_v_cliente (cliente_id),
+  KEY idx_v_cliente_estado (cliente_id, estado, fecha),
   KEY idx_v_sesion (caja_sesion_id),
   CONSTRAINT fk_v_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
   CONSTRAINT fk_v_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE SET NULL,
@@ -1126,6 +1129,77 @@ CREATE TABLE crm_tareas (
   CONSTRAINT fk_tar_oportunidad FOREIGN KEY (oportunidad_id) REFERENCES crm_oportunidades(id) ON DELETE CASCADE,
   CONSTRAINT fk_tar_sucursal    FOREIGN KEY (sucursal_id)    REFERENCES sucursales(id),
   CONSTRAINT fk_tar_asignado    FOREIGN KEY (asignado_a)     REFERENCES usuarios(id)          ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== SISTEMA / CONCURRENCIA =====================
+-- Correlativos (VTA-000123, COM-000045...). Un contador por serie.
+-- El número se reserva con un UPDATE atómico en vez de «SELECT MAX(...)+1»:
+-- con dos cajas vendiendo en el mismo segundo, el método viejo generaba el mismo
+-- número en ambas y una de las dos ventas moría contra el índice UNIQUE.
+DROP TABLE IF EXISTS contadores;
+CREATE TABLE contadores (
+  nombre     VARCHAR(60) NOT NULL,          -- ej. ventas.numero.VTA
+  valor      BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== SISTEMA / NOTIFICACIONES =====================
+-- Estado interno llave/valor. Acota cada cuánto corre el motor de
+-- notificaciones sin necesidad de cron: un UPDATE atómico gana la carrera
+-- entre peticiones simultáneas.
+DROP TABLE IF EXISTS sistema_estado;
+CREATE TABLE sistema_estado (
+  clave      VARCHAR(60)  NOT NULL,
+  valor      VARCHAR(255) NULL,
+  updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (clave)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Una fila por «situación viva» del negocio (no por evento). La `clave`
+-- deduplica: si el stock sigue bajo mañana se actualiza la misma fila en vez de
+-- crear otra. Cuando la situación desaparece, estado='resuelta'.
+DROP TABLE IF EXISTS notificacion_lecturas;
+DROP TABLE IF EXISTS notificaciones;
+CREATE TABLE notificaciones (
+  id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  clave           VARCHAR(120) NOT NULL,                 -- deduplicación (ej. stock_bajo:3)
+  tipo            VARCHAR(40)  NOT NULL,                 -- familia: stock_bajo, cxc_vencida, ...
+  categoria       ENUM('inventario','ventas','finanzas','fiscal','crm','rrhh','sistema') NOT NULL DEFAULT 'sistema',
+  prioridad       ENUM('baja','media','alta','critica') NOT NULL DEFAULT 'media',
+  titulo          VARCHAR(150) NOT NULL,
+  mensaje         VARCHAR(300) NULL,
+  url             VARCHAR(255) NULL,
+  icono           VARCHAR(30)  NOT NULL DEFAULT 'bell',
+  color           VARCHAR(20)  NOT NULL DEFAULT 'blue',
+  sucursal_id     INT UNSIGNED NULL,                     -- NULL = todas las sucursales
+  usuario_id      INT UNSIGNED NULL,                     -- NULL = para todo el que tenga el permiso
+  permiso         VARCHAR(60)  NULL,                     -- permiso requerido para verla
+  referencia_tipo VARCHAR(30)  NULL,
+  referencia_id   INT UNSIGNED NULL,
+  estado          ENUM('activa','resuelta') NOT NULL DEFAULT 'activa',
+  resuelta_at     DATETIME NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_notif_clave (clave),
+  KEY idx_notif_estado (estado, prioridad),
+  KEY idx_notif_tipo (tipo, estado),
+  KEY idx_notif_sucursal (sucursal_id),
+  KEY idx_notif_usuario (usuario_id),
+  CONSTRAINT fk_notif_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_usuario  FOREIGN KEY (usuario_id)  REFERENCES usuarios(id)   ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Marca de lectura por usuario (una notificación la ven varios usuarios).
+CREATE TABLE notificacion_lecturas (
+  notificacion_id BIGINT UNSIGNED NOT NULL,
+  usuario_id      INT UNSIGNED NOT NULL,
+  leida_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (notificacion_id, usuario_id),
+  KEY idx_nl_usuario (usuario_id),
+  CONSTRAINT fk_nl_notif   FOREIGN KEY (notificacion_id) REFERENCES notificaciones(id) ON DELETE CASCADE,
+  CONSTRAINT fk_nl_usuario FOREIGN KEY (usuario_id)      REFERENCES usuarios(id)       ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

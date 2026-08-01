@@ -99,6 +99,35 @@ function tx(callable $fn)
     }
 }
 
+/**
+ * Transacción que reintenta sola ante un choque transitorio de concurrencia.
+ *
+ * Con varias sucursales vendiendo a la vez, InnoDB puede abortar una transacción
+ * por interbloqueo (1213) o por agotar la espera de un bloqueo (1205). No es un
+ * error del negocio: es la base pidiendo «vuelve a intentarlo». Si eso llega a la
+ * pantalla, el cajero pierde la venta sin motivo.
+ *
+ * Solo se reintentan esos dos códigos. Cualquier otro error (stock insuficiente,
+ * cliente sin crédito, dato inválido) sube tal cual: reintentarlo no arreglaría
+ * nada y ocultaría el problema real.
+ */
+function txReintentable(callable $fn, int $intentos = 3)
+{
+    for ($i = 1; ; $i++) {
+        try {
+            return tx($fn);
+        } catch (PDOException $e) {
+            $codigo = (int) ($e->errorInfo[1] ?? 0);
+            if ($i >= $intentos || !in_array($codigo, [1213, 1205], true)) {
+                throw $e;
+            }
+            // Espera creciente con algo de azar para que los reintentos no
+            // vuelvan a chocar entre ellos en el mismo instante.
+            usleep(random_int(30000, 120000) * $i);
+        }
+    }
+}
+
 /* ============================================================
  *  CONFIGURACIÓN DE EMPRESA
  * ============================================================ */
@@ -151,6 +180,30 @@ function fechaLarga($d): string
     $t = is_numeric($d) ? (int) $d : strtotime($d);
     if (!$t) return '—';
     return date('d', $t) . ' ' . $meses[(int) date('n', $t)] . ', ' . date('Y', $t);
+}
+
+/** Tiempo transcurrido en lenguaje natural: «hace 5 min», «hace 3 días». */
+function tiempoRelativo($d): string
+{
+    if (!$d) return '—';
+    $t = is_numeric($d) ? (int) $d : strtotime($d);
+    if (!$t) return '—';
+    $seg = time() - $t;
+    if ($seg < 0)     return fechaCorta($d);
+    if ($seg < 60)    return 'hace un momento';
+    if ($seg < 3600)  { $m = (int) ($seg / 60);    return 'hace ' . $m . ' min'; }
+    if ($seg < 86400) { $h = (int) ($seg / 3600);  return 'hace ' . $h . ' hora' . ($h === 1 ? '' : 's'); }
+    if ($seg < 604800){ $d2 = (int) ($seg / 86400); return 'hace ' . $d2 . ' día' . ($d2 === 1 ? '' : 's'); }
+    return fechaCorta($d);
+}
+
+/** Nombre del mes en español (1-12). */
+function mesNombre(int $m, bool $corto = false): string
+{
+    $largos = [1 => 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+               'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    $n = $largos[$m] ?? '';
+    return $corto ? mb_substr($n, 0, 3) : $n;
 }
 
 /* ============================================================
@@ -334,11 +387,65 @@ function isPost(): bool
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
 }
 
-/** Genera un número correlativo con prefijo (ej. VTA-000123). */
+/**
+ * Reserva y devuelve el siguiente correlativo con prefijo (ej. VTA-000123).
+ *
+ * El número se toma de la tabla `contadores` con un UPDATE atómico. Esto NO es
+ * un detalle de estilo: la versión anterior hacía «SELECT MAX(...) + 1» y luego
+ * insertaba, así que dos cajas vendiendo en el mismo segundo generaban el mismo
+ * número y una de las dos ventas moría contra el índice UNIQUE. Un UPDATE es
+ * indivisible: cada llamada se lleva un número distinto, vengan de donde vengan.
+ *
+ * Consume el número, así que solo debe llamarse cuando el registro se va a
+ * insertar de verdad. Para mostrarlo en un formulario usa previewNumero().
+ */
 function nextNumero(string $tabla, string $columna, string $prefijo, int $padding = 6): string
 {
-    $max = (int) qVal("SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(`$columna`,'-',-1) AS UNSIGNED)),0) FROM `$tabla`");
-    return $prefijo . '-' . str_pad((string) ($max + 1), $padding, '0', STR_PAD_LEFT);
+    $clave = $tabla . '.' . $columna . '.' . $prefijo;
+
+    // Primera vez: el contador arranca donde terminaron los datos que ya existen.
+    if (!qVal("SELECT 1 FROM contadores WHERE nombre = ?", [$clave])) {
+        q(
+            "INSERT IGNORE INTO contadores (nombre, valor)
+             SELECT ?, COALESCE(MAX(CAST(SUBSTRING_INDEX(`$columna`,'-',-1) AS UNSIGNED)),0)
+               FROM `$tabla` WHERE `$columna` LIKE ?",
+            [$clave, $prefijo . '-%']
+        );
+    }
+
+    // Hasta 5 vueltas por si alguien insertó un número a mano por fuera del
+    // contador: se salta el ocupado en vez de reventar contra el UNIQUE.
+    for ($i = 0; $i < 5; $i++) {
+        q("UPDATE contadores SET valor = LAST_INSERT_ID(valor + 1) WHERE nombre = ?", [$clave]);
+        $n = (int) db()->lastInsertId();
+        if ($n <= 0) {
+            throw new RuntimeException('No se pudo reservar el correlativo de ' . $tabla . '.');
+        }
+        $numero = $prefijo . '-' . str_pad((string) $n, $padding, '0', STR_PAD_LEFT);
+        if (!qVal("SELECT 1 FROM `$tabla` WHERE `$columna` = ?", [$numero])) {
+            return $numero;
+        }
+    }
+    throw new RuntimeException('No se pudo generar un correlativo libre para ' . $tabla . '.');
+}
+
+/**
+ * Muestra cuál sería el próximo correlativo SIN consumirlo.
+ * Para rellenar un campo de formulario: si se usara nextNumero(), cada vez que
+ * alguien abre la pantalla se quemaría un número.
+ */
+function previewNumero(string $tabla, string $columna, string $prefijo, int $padding = 6): string
+{
+    $clave = $tabla . '.' . $columna . '.' . $prefijo;
+    $actual = qVal("SELECT valor FROM contadores WHERE nombre = ?", [$clave]);
+    if ($actual === null) {
+        $actual = qVal(
+            "SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(`$columna`,'-',-1) AS UNSIGNED)),0)
+               FROM `$tabla` WHERE `$columna` LIKE ?",
+            [$prefijo . '-%']
+        );
+    }
+    return $prefijo . '-' . str_pad((string) ((int) $actual + 1), $padding, '0', STR_PAD_LEFT);
 }
 
 function badgeEstado(string $estado): array

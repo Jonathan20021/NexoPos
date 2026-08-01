@@ -27,8 +27,15 @@ $pVentas = array_merge([$ini, $fin], $scopeP);
 /* ============================================================
  *  a) Estado de resultados resumido
  * ============================================================ */
+// Mismo criterio que el Centro de Reportes (ver docs/REPORTES-Y-NOTIFICACIONES.md):
+// el ingreso va SIN ITBIS, porque el ITBIS se recauda por cuenta de la DGII.
 $ingresosVentas = (float) qVal(
-    "SELECT COALESCE(SUM(v.total),0) FROM ventas v
+    "SELECT COALESCE(SUM(v.subtotal - v.descuento),0) FROM ventas v
+     WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scopeW",
+    $pVentas
+);
+$itbisFacturado = (float) qVal(
+    "SELECT COALESCE(SUM(v.itbis),0) FROM ventas v
      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scopeW",
     $pVentas
 );
@@ -39,9 +46,11 @@ $costoVentas = (float) qVal(
 );
 $utilidadBruta = $ingresosVentas - $costoVentas;
 
+// Solo gasto OPERATIVO: la compra de mercancía es inventario (su costo entra
+// cuando el producto se vende) y la devolución ya resta del ingreso.
 $otrosGastos = (float) qVal(
     "SELECT COALESCE(SUM(t.monto),0) FROM transacciones t
-     WHERE t.tipo = 'gasto' AND t.fecha BETWEEN ? AND ? AND $scopeT",
+     WHERE " . rep_where_gastos() . " AND t.fecha BETWEEN ? AND ? AND $scopeT",
     array_merge([$desde, $hasta], $scopeTP)
 );
 $utilidadNeta = $utilidadBruta - $otrosGastos;
@@ -256,7 +265,7 @@ layout_start('Reportes Gerenciales', 'Análisis de ventas y resultados · ' . fe
   </div>
   <div class="divide-y divide-slate-100">
     <div class="flex items-center justify-between py-2.5">
-      <span class="text-slate-600">Ingresos por ventas</span>
+      <span class="text-slate-600">Ingresos por ventas <span class="text-xs text-slate-400">(sin ITBIS)</span></span>
       <span class="font-semibold text-slate-800"><?= money($ingresosVentas) ?></span>
     </div>
     <div class="flex items-center justify-between py-2.5">
@@ -276,6 +285,14 @@ layout_start('Reportes Gerenciales', 'Análisis de ventas y resultados · ' . fe
       <span class="text-lg font-extrabold <?= $utilidadNeta >= 0 ? 'text-emerald-600' : 'text-rose-600' ?>"><?= money($utilidadNeta) ?></span>
     </div>
   </div>
+  <p class="text-xs text-slate-400 mt-4 leading-relaxed">
+    El ITBIS facturado (<?= money($itbisFacturado) ?>) no cuenta como ingreso: se recauda para la DGII.
+    Las compras de mercancía tampoco figuran como gasto — son inventario.
+    <?php if (can('reportes.finanzas')): ?>
+      Para el detalle completo abre el
+      <a href="<?= e(url('modules/reportes/estado_resultados.php')) ?>" class="font-semibold text-blue-600 hover:text-blue-700 no-print">estado de resultados</a>.
+    <?php endif; ?>
+  </p>
 </div>
 
 <!-- b) Ventas por día -->

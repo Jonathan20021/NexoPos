@@ -12,6 +12,17 @@
 function ajustarStock(int $productoId, int $sucursalId, float $delta, string $tipo,
                       ?string $refTipo = null, ?int $refId = null, float $costo = 0, string $motivo = ''): float
 {
+    // Se garantiza que la fila exista ANTES de bloquearla. Si no, dos ventas
+    // simultáneas del primer movimiento de un producto no encontraban fila, las
+    // dos intentaban insertarla y una moría contra el índice UNIQUE (o quedaban
+    // enganchadas en un bloqueo de hueco). Con la fila ya creada, el FOR UPDATE
+    // siempre cae sobre un registro real y solo serializa.
+    q(
+        "INSERT INTO inventario_stock (producto_id, sucursal_id, cantidad) VALUES (?, ?, 0)
+         ON DUPLICATE KEY UPDATE producto_id = producto_id",
+        [$productoId, $sucursalId]
+    );
+
     $row = qOne("SELECT id, cantidad FROM inventario_stock WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE", [$productoId, $sucursalId]);
     $anterior = $row ? (float) $row['cantidad'] : 0.0;
     $nuevo = round($anterior + $delta, 3);
@@ -22,11 +33,7 @@ function ajustarStock(int $productoId, int $sucursalId, float $delta, string $ti
         throw new RuntimeException('Stock insuficiente para completar la operación. Disponible: ' . qty($anterior) . '.');
     }
 
-    if ($row) {
-        q("UPDATE inventario_stock SET cantidad = ? WHERE id = ?", [$nuevo, $row['id']]);
-    } else {
-        dbInsert('inventario_stock', ['producto_id' => $productoId, 'sucursal_id' => $sucursalId, 'cantidad' => $nuevo]);
-    }
+    q("UPDATE inventario_stock SET cantidad = ? WHERE id = ?", [$nuevo, $row['id']]);
 
     $u = current_user();
     dbInsert('movimientos_inventario', [
@@ -190,7 +197,7 @@ function transferenciaEnviar(int $id): void
     $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
     if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede enviar una transferencia en borrador.');
     if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede enviar esta transferencia.');
-    $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$id]);
+    $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]);
     if (!$det) throw new RuntimeException('El borrador no tiene productos.');
     foreach ($det as $d) {
         if (stockActual((int) $d['producto_id'], (int) $t['sucursal_origen_id']) < (float) $d['cantidad']) {
@@ -207,7 +214,7 @@ function transferenciaEnviar(int $id): void
 /** Devuelve el stock al origen (compartido por rechazar y anular). En transacción. */
 function transferenciaDevolverStock(array $t): void
 {
-    foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$t['id']]) as $d) {
+    foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$t['id']]) as $d) {
         ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia_devuelta', (int) $t['id'], 0, 'Devolución transferencia ' . $t['numero']);
     }
 }

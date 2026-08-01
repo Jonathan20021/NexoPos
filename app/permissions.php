@@ -44,9 +44,17 @@ function permission_catalog(): array
             'finanzas'   => ['label' => 'Ingresos y Gastos', 'acciones' => $crud],
             'comisiones' => ['label' => 'Comisiones', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar/registrar', 'aprobar' => 'Aprobar', 'pagar' => 'Pagar', 'anular' => 'Anular']],
             'conciliacion' => ['label' => 'Conciliación bancaria', 'acciones' => ['ver' => 'Ver', 'conciliar' => 'Marcar movimientos', 'cerrar' => 'Cerrar corte']],
-            'reportes' => ['label' => 'Reportes', 'acciones' => ['ver' => 'Ver']],
             'metas'    => ['label' => 'Metas de Venta', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Crear/editar']],
             'dgii'     => ['label' => 'Reportes DGII', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar archivo']],
+        ],
+        'Reportes' => [
+            'reportes' => ['label' => 'Centro de Reportes', 'acciones' => [
+                'ver'          => 'Ver el centro de reportes',
+                'ejecutivo'    => 'Reportes de dirección (CEO)',
+                'finanzas'     => 'Reportes financieros',
+                'contabilidad' => 'Reportes contables y fiscales',
+                'operacion'    => 'Reportes de operación y ventas',
+            ]],
         ],
         'Marketing' => [
             'promociones' => ['label' => 'Promociones', 'acciones' => $crud],

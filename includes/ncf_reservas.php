@@ -61,7 +61,7 @@ function reservarNCF(int $terminalId, string $tipo, int $cantidad): array
     $cantidad = max(0, min(500, $cantidad)); // techo defensivo por llamada
     if ($cantidad === 0) return ['ncfs' => [], 'reserva_id' => 0, 'vencimiento' => null];
 
-    return tx(function () use ($terminalId, $tipo, $cantidad) {
+    return txReintentable(function () use ($terminalId, $tipo, $cantidad) {
         $seq = qOne("SELECT * FROM ncf_secuencias WHERE tipo = ? AND activo = 1 FOR UPDATE", [$tipo]);
         if (!$seq) return ['ncfs' => [], 'reserva_id' => 0, 'vencimiento' => null];
         if (!empty($seq['vencimiento']) && $seq['vencimiento'] < date('Y-m-d')) {

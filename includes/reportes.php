@@ -1,0 +1,531 @@
+<?php
+/**
+ * Centro de Reportes — cimientos compartidos.
+ *
+ * Todos los reportes usan el mismo periodo, el mismo alcance por sucursal, la
+ * misma barra de filtros y las mismas tarjetas de KPI. Así la dirección, finanzas
+ * y contabilidad leen SIEMPRE los mismos números con la misma cara.
+ */
+
+/* ============================================================
+ *  Catálogo de reportes (fuente única: hub, menú y buscador)
+ * ============================================================ */
+
+/**
+ * @return array<string,array{titulo:string,descripcion:string,icono:string,color:string,permiso:string,reportes:array}>
+ */
+function rep_catalogo(): array
+{
+    return [
+        'direccion' => [
+            'titulo' => 'Dirección General',
+            'descripcion' => 'La foto completa del negocio para quien decide.',
+            'icono' => 'trending', 'color' => 'violet', 'permiso' => 'reportes.ejecutivo',
+            'reportes' => [
+                ['ejecutivo.php', 'Panel ejecutivo', 'KPIs del periodo, tendencia de 12 meses, márgenes, metas y alertas en una sola pantalla.', 'dashboard'],
+                ['comparativo.php', 'Comparativo de periodos', 'Mes contra mes y año contra año, con variación por sucursal, canal y categoría.', 'chart'],
+                ['clientes.php', 'Clientes y concentración', 'Ranking ABC (Pareto), recencia, frecuencia y riesgo de dependencia de pocos clientes.', 'users'],
+                ['sucursales.php', 'Comparativo de sucursales', 'Venta, margen, ticket y productividad por local, lado a lado.', 'store'],
+            ],
+        ],
+        'finanzas' => [
+            'titulo' => 'Finanzas',
+            'descripcion' => 'Rentabilidad, liquidez y cobranza.',
+            'icono' => 'dollar', 'color' => 'emerald', 'permiso' => 'reportes.finanzas',
+            'reportes' => [
+                ['estado_resultados.php', 'Estado de resultados', 'P&L mensual con % sobre ventas y comparación contra el periodo anterior.', 'receipt'],
+                ['flujo_caja.php', 'Flujo de efectivo', 'Entradas, salidas y saldo acumulado por día y por cuenta.', 'cash'],
+                ['cxc.php', 'Cuentas por cobrar', 'Antigüedad de saldos 0-30/31-60/61-90/+90 por cliente y exposición al crédito.', 'wallet'],
+                ['cxp.php', 'Cuentas por pagar', 'Compras a crédito por proveedor con antigüedad y vencimientos.', 'truck'],
+                ['gastos.php', 'Análisis de gastos', 'Gasto por categoría y sucursal, tendencia mensual y peso sobre la venta.', 'pie'],
+                ['rentabilidad.php', 'Rentabilidad', 'Margen por producto, categoría, sucursal y vendedor. Detecta ventas bajo costo.', 'percent'],
+            ],
+        ],
+        'contabilidad' => [
+            'titulo' => 'Contabilidad',
+            'descripcion' => 'Soporte para el cierre y la DGII.',
+            'icono' => 'shield', 'color' => 'blue', 'permiso' => 'reportes.contabilidad',
+            'reportes' => [
+                ['libro_diario.php', 'Libro diario', 'Todos los asientos del periodo: ventas, compras, gastos, nómina y movimientos de caja.', 'list'],
+                ['balance.php', 'Balance general', 'Activo, pasivo y patrimonio a una fecha, derivado de los saldos del sistema.', 'layers'],
+                ['impuestos.php', 'ITBIS y retenciones', 'ITBIS cobrado vs. adelantado, retenciones y saldo a pagar del periodo.', 'percent'],
+                ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box'],
+                ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
+                ['auxiliar_cuentas.php', 'Auxiliar de cuentas', 'Mayor por cuenta financiera con saldo inicial, movimientos y saldo final.', 'briefcase'],
+            ],
+        ],
+        'operacion' => [
+            'titulo' => 'Operación y Ventas',
+            'descripcion' => 'El día a día del piso de venta.',
+            'icono' => 'cart', 'color' => 'amber', 'permiso' => 'reportes.operacion',
+            'reportes' => [
+                ['ventas_detalle.php', 'Libro de ventas', 'Detalle factura por factura con NCF, cliente, vendedor, método de pago y margen.', 'receipt'],
+                ['productos.php', 'Desempeño de productos', 'Más vendidos, sin rotación, quiebres de stock y días de inventario.', 'package'],
+                ['vendedores.php', 'Desempeño del equipo', 'Venta, margen, ticket promedio, descuentos y cumplimiento de meta por vendedor.', 'users'],
+                ['horarios.php', 'Horarios y tráfico', 'A qué hora y qué día se vende, para ajustar turnos e inventario.', 'clock'],
+            ],
+        ],
+    ];
+}
+
+/** Reportes visibles para el usuario actual (respeta permisos). */
+function rep_catalogo_visible(): array
+{
+    $out = [];
+    foreach (rep_catalogo() as $k => $g) {
+        if (!can($g['permiso'])) continue;
+        $out[$k] = $g;
+    }
+    return $out;
+}
+
+/* ============================================================
+ *  Periodo
+ * ============================================================ */
+
+/** Presets del selector de periodo: clave => etiqueta. */
+function rep_presets(): array
+{
+    return [
+        'hoy'         => 'Hoy',
+        'ayer'        => 'Ayer',
+        'semana'      => 'Esta semana',
+        'mes'         => 'Este mes',
+        'mes_pasado'  => 'Mes pasado',
+        'trimestre'   => 'Trimestre',
+        'anio'        => 'Este año',
+        'anio_pasado' => 'Año pasado',
+    ];
+}
+
+/**
+ * Resuelve el periodo del reporte desde la URL.
+ *
+ * @return array{desde:string,hasta:string,ini:string,fin:string,label:string,preset:string,
+ *               dias:int,prev_desde:string,prev_hasta:string,prev_ini:string,prev_fin:string}
+ */
+function rep_periodo(string $porDefecto = 'mes'): array
+{
+    $preset = (string) get('periodo', '');
+    $desde  = trim((string) get('desde'));
+    $hasta  = trim((string) get('hasta'));
+
+    // Fechas explícitas mandan sobre el preset.
+    if ($desde !== '' || $hasta !== '') {
+        $preset = 'personalizado';
+    } elseif ($preset === '' || (!isset(rep_presets()[$preset]) && $preset !== 'personalizado')) {
+        $preset = $porDefecto;
+    }
+
+    switch ($preset) {
+        case 'hoy':         $d = date('Y-m-d');  $h = date('Y-m-d'); break;
+        case 'ayer':        $d = date('Y-m-d', strtotime('-1 day')); $h = $d; break;
+        case 'semana':      $d = date('Y-m-d', strtotime('monday this week')); $h = date('Y-m-d'); break;
+        case 'mes_pasado':  $d = date('Y-m-01', strtotime('first day of last month'));
+                            $h = date('Y-m-t', strtotime('last day of last month')); break;
+        case 'trimestre':   $tri = (int) ceil((int) date('n') / 3);
+                            $d = date('Y-m-01', mktime(0, 0, 0, ($tri - 1) * 3 + 1, 1));
+                            $h = date('Y-m-t', mktime(0, 0, 0, $tri * 3, 1)); break;
+        case 'anio':        $d = date('Y-01-01'); $h = date('Y-12-31'); break;
+        case 'anio_pasado': $d = date('Y-01-01', strtotime('-1 year')); $h = date('Y-12-31', strtotime('-1 year')); break;
+        case 'personalizado':
+            $d = ($desde && strtotime($desde)) ? date('Y-m-d', strtotime($desde)) : date('Y-m-01');
+            $h = ($hasta && strtotime($hasta)) ? date('Y-m-d', strtotime($hasta)) : date('Y-m-t');
+            break;
+        case 'mes':
+        default:            $d = date('Y-m-01'); $h = date('Y-m-t'); $preset = 'mes'; break;
+    }
+    if ($d > $h) [$d, $h] = [$h, $d];
+
+    $dias = (int) floor((strtotime($h) - strtotime($d)) / 86400) + 1;
+
+    // Periodo anterior de la misma longitud, justo antes.
+    if ($preset === 'mes' || $preset === 'mes_pasado') {
+        $pd = date('Y-m-01', strtotime($d . ' -1 month'));
+        $ph = date('Y-m-t', strtotime($d . ' -1 month'));
+    } elseif ($preset === 'anio' || $preset === 'anio_pasado') {
+        $pd = date('Y-m-d', strtotime($d . ' -1 year'));
+        $ph = date('Y-m-d', strtotime($h . ' -1 year'));
+    } else {
+        $ph = date('Y-m-d', strtotime($d . ' -1 day'));
+        $pd = date('Y-m-d', strtotime($ph . ' -' . ($dias - 1) . ' day'));
+    }
+
+    $labels = rep_presets();
+    $label  = $labels[$preset] ?? (fechaCorta($d) . ' al ' . fechaCorta($h));
+    if ($preset !== 'hoy' && $preset !== 'ayer') {
+        $label .= ' · ' . fechaCorta($d) . ' al ' . fechaCorta($h);
+    } else {
+        $label = $labels[$preset] . ' · ' . fechaCorta($d);
+    }
+
+    return [
+        'desde' => $d, 'hasta' => $h, 'ini' => $d . ' 00:00:00', 'fin' => $h . ' 23:59:59',
+        'label' => $label, 'preset' => $preset, 'dias' => $dias,
+        'prev_desde' => $pd, 'prev_hasta' => $ph,
+        'prev_ini' => $pd . ' 00:00:00', 'prev_fin' => $ph . ' 23:59:59',
+    ];
+}
+
+/** Nombre de la sucursal en curso para los encabezados. */
+function rep_alcance_sucursal(): string
+{
+    $f = sucursalFiltroActual();
+    if ($f) {
+        return (string) (qVal("SELECT nombre FROM sucursales WHERE id = ?", [$f]) ?: 'Sucursal');
+    }
+    $sid = current_sucursal_id();
+    if ($sid === null) return 'Todas las sucursales';
+    return (string) (current_user()['sucursal_nombre'] ?? 'Sucursal');
+}
+
+/* ============================================================
+ *  UI compartida
+ * ============================================================ */
+
+/** Variación porcentual entre dos periodos. null cuando no hay base de comparación. */
+function rep_delta(float $actual, float $anterior): ?float
+{
+    if (abs($anterior) < 0.005) return $actual > 0 ? 100.0 : null;
+    return round(($actual - $anterior) / abs($anterior) * 100, 1);
+}
+
+/**
+ * Tarjeta de KPI.
+ * $opts: valor, label, icono, color, delta (float|null), nota, invertir (true si bajar es bueno).
+ */
+function rep_kpi(array $o): string
+{
+    $col = $o['color'] ?? 'blue';
+    $fondos = [
+        'blue' => 'bg-blue-50 text-blue-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
+        'violet' => 'bg-violet-50 text-violet-600', 'amber' => 'bg-amber-50 text-amber-600',
+        'rose' => 'bg-rose-50 text-rose-600', 'indigo' => 'bg-indigo-50 text-indigo-600',
+        'cyan' => 'bg-cyan-50 text-cyan-600', 'slate' => 'bg-slate-100 text-slate-500',
+    ];
+    $h = '<div class="card p-5 print-break">';
+    $h .= '<div class="flex items-start justify-between gap-3">';
+    $h .= '<div class="w-11 h-11 rounded-xl ' . ($fondos[$col] ?? $fondos['blue']) . ' flex items-center justify-center shrink-0">'
+        . icon($o['icono'] ?? 'chart', 'w-5 h-5') . '</div>';
+
+    $delta = $o['delta'] ?? null;
+    if ($delta !== null) {
+        $bueno = !empty($o['invertir']) ? $delta <= 0 : $delta >= 0;
+        $h .= '<span class="badge ' . ($bueno ? 'stat-trend-up' : 'stat-trend-down') . '" title="Contra el periodo anterior">'
+            . icon($delta >= 0 ? 'arrow-up' : 'arrow-down', 'w-3 h-3') . ' ' . number_format(abs($delta), 1) . '%</span>';
+    }
+    $h .= '</div>';
+    $h .= '<p class="text-sm text-slate-500 mt-4">' . e($o['label'] ?? '') . '</p>';
+    $h .= '<p class="text-[26px] leading-tight font-extrabold text-slate-800 mt-0.5 tabular-nums">' . ($o['valor'] ?? '—') . '</p>';
+    if (!empty($o['nota'])) $h .= '<p class="text-xs text-slate-400 mt-1.5">' . $o['nota'] . '</p>';
+    return $h . '</div>';
+}
+
+/** Rejilla de KPIs. */
+function rep_kpis(array $kpis, int $cols = 4): string
+{
+    $c = ['2' => 'sm:grid-cols-2', '3' => 'sm:grid-cols-2 xl:grid-cols-3', '4' => 'sm:grid-cols-2 xl:grid-cols-4', '5' => 'sm:grid-cols-2 xl:grid-cols-5'];
+    $h = '<div class="grid grid-cols-1 ' . ($c[(string) $cols] ?? $c['4']) . ' gap-4 mb-5">';
+    foreach ($kpis as $k) $h .= rep_kpi($k);
+    return $h . '</div>';
+}
+
+/**
+ * Cabecera de una sección/tarjeta de reporte. Se cierra con rep_fin().
+ *
+ * La tarjeta ocupa TODA la altura de su celda del grid (`h-full`): si no, dos
+ * tarjetas de distinta altura en la misma fila dejan un escalón blanco feo.
+ */
+function rep_seccion(string $titulo, string $sub = '', string $icono = '', string $color = 'blue', string $extra = ''): string
+{
+    $fondos = [
+        'blue' => 'bg-blue-50 text-blue-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
+        'violet' => 'bg-violet-50 text-violet-600', 'amber' => 'bg-amber-50 text-amber-600',
+        'rose' => 'bg-rose-50 text-rose-600', 'indigo' => 'bg-indigo-50 text-indigo-600',
+        'cyan' => 'bg-cyan-50 text-cyan-600', 'slate' => 'bg-slate-100 text-slate-500',
+    ];
+    $h  = '<section class="card overflow-hidden mb-5 print-break h-full flex flex-col">';
+    $h .= '<div class="flex items-start justify-between gap-3 p-5 pb-4">';
+    $h .= '<div class="flex items-start gap-3 min-w-0">';
+    if ($icono) {
+        $h .= '<span class="w-10 h-10 rounded-xl ' . ($fondos[$color] ?? $fondos['blue']) . ' flex items-center justify-center shrink-0">'
+            . icon($icono, 'w-5 h-5') . '</span>';
+    }
+    $h .= '<div class="min-w-0"><h3 class="font-bold text-slate-800 leading-tight">' . e($titulo) . '</h3>';
+    if ($sub) $h .= '<p class="text-sm text-slate-400 mt-0.5">' . e($sub) . '</p>';
+    $h .= '</div></div>';
+    if ($extra) $h .= '<div class="shrink-0 flex items-center gap-2 flex-wrap justify-end">' . $extra . '</div>';
+    // El cuerpo crece para empujar el pie hasta abajo y que las tarjetas de una
+    // misma fila terminen alineadas.
+    return $h . '</div><div class="flex-1 flex flex-col">';
+}
+
+function rep_fin(): string
+{
+    return '</div></section>';
+}
+
+/**
+ * Tabla de reporte.
+ * $headers: ['Texto', ['Texto','right'], ...]   $filas: [[celda, ...], ...] (HTML ya escapado)
+ * $opts: total (fila de totales), vacio (mensaje), compacta (bool)
+ */
+function rep_tabla(array $headers, array $filas, array $opts = []): string
+{
+    if (!$filas) {
+        // Centrado y estirado: dentro de una tarjeta alta, un mensaje pegado
+        // arriba deja un hueco blanco enorme debajo.
+        return '<div class="flex-1 flex items-center justify-center px-5 pb-6">' . empty_state(
+            $opts['vacio_titulo'] ?? 'Sin datos en este periodo',
+            $opts['vacio'] ?? 'Prueba con otro rango de fechas o cambia la sucursal.',
+            $opts['vacio_icono'] ?? 'chart'
+        ) . '</div>';
+    }
+    $al = fn($a) => $a === 'right' ? ' class="text-right"' : ($a === 'center' ? ' class="text-center"' : '');
+
+    $h = '<div class="overflow-x-auto"><table class="data-table"><thead><tr>';
+    foreach ($headers as $th) {
+        [$txt, $a] = is_array($th) ? [$th[0], $th[1] ?? ''] : [$th, ''];
+        $h .= '<th' . $al($a) . '>' . e($txt) . '</th>';
+    }
+    $h .= '</tr></thead><tbody>';
+    foreach ($filas as $f) {
+        $h .= '<tr>';
+        foreach ($f as $i => $celda) {
+            $th = $headers[$i] ?? '';
+            $a  = is_array($th) ? ($th[1] ?? '') : '';
+            $h .= '<td' . $al($a) . '>' . $celda . '</td>';
+        }
+        $h .= '</tr>';
+    }
+    $h .= '</tbody>';
+    if (!empty($opts['total'])) {
+        $h .= '<tfoot><tr class="bg-slate-50 font-bold text-slate-800">';
+        foreach ($opts['total'] as $i => $celda) {
+            $th = $headers[$i] ?? '';
+            $a  = is_array($th) ? ($th[1] ?? '') : '';
+            $cls = $a === 'right' ? 'text-right' : ($a === 'center' ? 'text-center' : '');
+            $h .= '<td class="px-4 py-3.5 border-t-2 border-slate-200 ' . $cls . '">' . $celda . '</td>';
+        }
+        $h .= '</tr></tfoot>';
+    }
+    return $h . '</table></div>';
+}
+
+/** Barra horizontal con etiqueta, valor y porcentaje. */
+function rep_barra(string $label, string $valor, float $pct, string $colorHex = '#2563eb', string $sub = ''): string
+{
+    $pct = max(0, min(100, $pct));
+    return '<div class="mb-3.5">'
+        . '<div class="flex items-baseline justify-between gap-3 text-sm mb-1.5">'
+        . '<span class="font-medium text-slate-600 truncate">' . e($label)
+        . ($sub ? ' <span class="text-slate-400 font-normal">· ' . e($sub) . '</span>' : '') . '</span>'
+        . '<span class="text-slate-500 font-semibold whitespace-nowrap tabular-nums">' . $valor
+        . ' <span class="text-slate-400 font-medium">' . number_format($pct, 1) . '%</span></span></div>'
+        . '<div class="h-2.5 rounded-full bg-slate-100 overflow-hidden">'
+        . '<div class="h-full rounded-full transition-all duration-700" style="width:' . max($pct, 0.8) . '%;background:' . e($colorHex) . '"></div>'
+        . '</div></div>';
+}
+
+/** Paleta estable para categorías/series. */
+function rep_color(int $i): string
+{
+    $p = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#06b6d4', '#6366f1', '#ec4899', '#84cc16', '#0ea5e9', '#f97316', '#64748b'];
+    return $p[$i % count($p)];
+}
+
+/** Mapea el color nombrado de una categoría a hexadecimal. */
+function rep_color_nombre(?string $nombre): string
+{
+    $m = ['blue' => '#2563eb', 'emerald' => '#10b981', 'amber' => '#f59e0b', 'rose' => '#f43f5e',
+          'indigo' => '#6366f1', 'cyan' => '#06b6d4', 'sky' => '#0ea5e9', 'pink' => '#ec4899',
+          'slate' => '#64748b', 'violet' => '#8b5cf6'];
+    return $m[$nombre ?? ''] ?? '#64748b';
+}
+
+/**
+ * Barra de filtros estándar de los reportes: periodo + sucursal + acciones.
+ * $opts: sucursal (bool), extra (HTML de campos adicionales), acciones (HTML)
+ */
+function rep_filtros(array $p, array $opts = []): string
+{
+    $base = $_GET;
+    unset($base['periodo'], $base['desde'], $base['hasta'], $base['export'], $base['p']);
+
+    $h  = '<div class="card p-4 mb-5 no-print" x-data="{avanzado:' . ($p['preset'] === 'personalizado' ? 'true' : 'false') . '}">';
+    $h .= '<div class="flex flex-wrap items-center gap-2">';
+
+    // Presets como segmentos.
+    $h .= '<div class="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-xl">';
+    foreach (rep_presets() as $k => $lbl) {
+        $qs = array_merge($base, ['periodo' => $k]);
+        $act = $p['preset'] === $k;
+        $h .= '<a href="?' . e(http_build_query($qs)) . '" class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition '
+            . ($act ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800') . '">' . e($lbl) . '</a>';
+    }
+    $h .= '<button type="button" @click="avanzado=!avanzado" :class="avanzado ? \'bg-white text-blue-700 shadow-sm\' : \'text-slate-500 hover:text-slate-800\'"'
+        . ' class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition inline-flex items-center gap-1.5">'
+        . icon('calendar', 'w-3.5 h-3.5') . ' Personalizado</button>';
+    $h .= '</div>';
+
+    $selSuc = !empty($opts['sucursal']) ? selectSucursalFiltro() : '';
+    if ($selSuc || !empty($opts['extra'])) {
+        $h .= '<form method="get" class="flex flex-wrap items-center gap-2">';
+        $h .= '<input type="hidden" name="periodo" value="' . e($p['preset']) . '">';
+        if ($p['preset'] === 'personalizado') {
+            $h .= '<input type="hidden" name="desde" value="' . e($p['desde']) . '">'
+                . '<input type="hidden" name="hasta" value="' . e($p['hasta']) . '">';
+        }
+        // Conserva los filtros propios del reporte (vista, cuenta_id, estado...)
+        // que no se envían en este formulario; si no, cambiar de sucursal los borra.
+        $enviados = ['sucursal_id' => 1];
+        preg_match_all('/name="([^"]+)"/', $selSuc . ($opts['extra'] ?? ''), $m);
+        foreach ($m[1] as $campo) $enviados[$campo] = 1;
+        foreach ($base as $k => $v) {
+            if (isset($enviados[$k]) || !is_scalar($v)) continue;
+            $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+        }
+        $h .= $selSuc . ($opts['extra'] ?? '');
+        $h .= '<button type="submit" class="btn btn-ghost btn-sm">' . icon('filter', 'w-3.5 h-3.5') . ' Aplicar</button>';
+        $h .= '</form>';
+    }
+
+    $h .= '<div class="ml-auto flex items-center gap-2">' . ($opts['acciones'] ?? rep_acciones()) . '</div>';
+    $h .= '</div>';
+
+    // Rango personalizado (se despliega).
+    $h .= '<form method="get" x-show="avanzado" x-cloak x-transition class="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-slate-100">';
+    foreach ($base as $k => $v) {
+        if (is_scalar($v)) $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+    }
+    $h .= '<div><label class="label">Desde</label><input type="date" name="desde" value="' . e($p['desde']) . '" class="input w-auto"></div>';
+    $h .= '<div><label class="label">Hasta</label><input type="date" name="hasta" value="' . e($p['hasta']) . '" class="input w-auto"></div>';
+    $h .= '<button type="submit" class="btn btn-primary">' . icon('check', 'w-4 h-4') . ' Aplicar rango</button>';
+    $h .= '</form>';
+
+    return $h . '</div>';
+}
+
+/** Botones de exportación/impresión de un reporte. */
+function rep_acciones(bool $excel = true, bool $pdf = true): string
+{
+    $h = '';
+    if ($excel) {
+        $u = '?' . http_build_query(array_merge($_GET, ['export' => 'excel']));
+        $h .= '<a href="' . e($u) . '" class="btn btn-ghost btn-sm no-print" title="Descargar en Excel">' . icon('download', 'w-3.5 h-3.5') . ' Excel</a>';
+    }
+    if ($pdf) {
+        $u = '?' . http_build_query(array_merge($_GET, ['export' => 'pdf']));
+        $h .= '<a href="' . e($u) . '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm no-print" title="Abrir en PDF">' . icon('print', 'w-3.5 h-3.5') . ' PDF</a>';
+    }
+    return $h;
+}
+
+/** Encabezado que solo aparece al imprimir / exportar a PDF desde el navegador. */
+function rep_encabezado_impresion(string $titulo, array $p): string
+{
+    return '<div class="print-only mb-4">'
+        . '<h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0">' . e(setting('nombre', APP_NAME)) . ' — ' . e($titulo) . '</h2>'
+        . '<p style="font-size:12px;color:#475569;margin:2px 0 0">Periodo: ' . fechaCorta($p['desde']) . ' al ' . fechaCorta($p['hasta'])
+        . ' · ' . e(rep_alcance_sucursal()) . ' · Generado ' . fechaHora(date('Y-m-d H:i:s')) . '</p></div>';
+}
+
+/** Acciones de la cabecera de página: volver al hub + imprimir. */
+function rep_barra_titulo(string $extra = ''): string
+{
+    return $extra
+        . '<button type="button" onclick="window.print()" class="btn btn-ghost no-print">' . icon('print', 'w-4 h-4') . ' Imprimir</button>'
+        . '<a href="' . e(url('modules/reportes/index.php')) . '" class="btn btn-ghost no-print">'
+        . icon('grid', 'w-4 h-4') . ' Centro de reportes</a>';
+}
+
+/**
+ * Cabecera estándar de un reporte: título, subtítulo con periodo y alcance,
+ * encabezado de impresión y barra de filtros. Devuelve el HTML posterior al
+ * layout_start() (que hay que llamar antes).
+ */
+function rep_abrir(string $titulo, array $p, array $opts = []): string
+{
+    return rep_encabezado_impresion($titulo, $p) . rep_filtros($p, $opts);
+}
+
+/** Subtítulo uniforme para layout_start(). */
+function rep_subtitulo(array $p): string
+{
+    return $p['label'] . ' · ' . rep_alcance_sucursal();
+}
+
+/**
+ * Alcance de sucursal para los reportes: respeta la sucursal activa Y el filtro
+ * de la URL. Devuelve [fragmentoWhere, params].
+ */
+function rep_scope(string $col = 'v.sucursal_id'): array
+{
+    return sucursalFiltro($col);
+}
+
+/* ============================================================
+ *  Criterio contable compartido
+ * ============================================================
+ *  `transacciones` es el libro de caja: ahí entra TODO lo que mueve dinero,
+ *  incluidas las compras de mercancía y los cobros de cuentas por cobrar. Para
+ *  el estado de resultados hay que sacarlos, o el número miente:
+ *
+ *   · Compra de mercancía  → es inventario, no gasto. El costo entra al P&L
+ *     cuando se vende (ventas.costo_total), no cuando se compra.
+ *   · Devolución           → ya se resta de la línea de ingresos.
+ *   · Cobro de un abono    → es cobrar algo ya facturado, no un ingreso nuevo.
+ *   · Venta                → ya está en la línea de ingresos.
+ */
+
+/** WHERE de gastos OPERATIVOS (nómina, comisiones, alquiler, servicios...). */
+function rep_where_gastos(string $a = 't'): string
+{
+    return "$a.tipo = 'gasto' AND ($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('compra','devolucion'))";
+}
+
+/** WHERE de otros ingresos que NO vienen de facturar. */
+function rep_where_otros_ingresos(string $a = 't'): string
+{
+    return "$a.tipo = 'ingreso' AND ($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('venta','abono'))";
+}
+
+/** Gasto operativo del periodo dentro del alcance actual. */
+function rep_gastos_operativos(string $desde, string $hasta): float
+{
+    [$w, $par] = rep_scope('t.sucursal_id');
+    return (float) qVal(
+        "SELECT COALESCE(SUM(t.monto),0) FROM transacciones t
+          WHERE " . rep_where_gastos() . " AND t.fecha BETWEEN ? AND ? AND $w",
+        array_merge([$desde, $hasta], $par)
+    );
+}
+
+/** Otros ingresos del periodo dentro del alcance actual. */
+function rep_otros_ingresos(string $desde, string $hasta): float
+{
+    [$w, $par] = rep_scope('t.sucursal_id');
+    return (float) qVal(
+        "SELECT COALESCE(SUM(t.monto),0) FROM transacciones t
+          WHERE " . rep_where_otros_ingresos() . " AND t.fecha BETWEEN ? AND ? AND $w",
+        array_merge([$desde, $hasta], $par)
+    );
+}
+
+/** Serie de meses (YYYY-MM) hacia atrás desde hoy. */
+function rep_meses_atras(int $n = 12): array
+{
+    $out = [];
+    for ($i = $n - 1; $i >= 0; $i--) {
+        $t = strtotime("first day of -$i month");
+        $out[] = date('Y-m', $t);
+    }
+    return $out;
+}
+
+/** Etiqueta corta de un 'YYYY-MM' (Ene 26). */
+function rep_mes_label(string $ym): string
+{
+    $t = strtotime($ym . '-01');
+    return mesNombre((int) date('n', $t), true) . ' ' . date('y', $t);
+}

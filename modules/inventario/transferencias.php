@@ -37,7 +37,7 @@ if (isPost()) {
         if ($enviarYa) require_perm('transferencias.enviar');
         try {
             $in = transferenciaValidarEntrada();
-            $tid = tx(function () use ($in, $enviarYa) {
+            $tid = txReintentable(function () use ($in, $enviarYa) {
                 $numero = nextNumero('transferencias', 'numero', 'TRF');
                 $tid = dbInsert('transferencias', ['numero' => $numero, 'sucursal_origen_id' => $in['origen'], 'sucursal_destino_id' => $in['destino'], 'fecha' => $in['fecha'], 'estado' => 'borrador', 'usuario_id' => current_user()['id']]);
                 foreach ($in['det'] as $d) {
@@ -81,7 +81,7 @@ if (isPost()) {
         require_perm('transferencias.crear');
         $id = postInt('id');
         try {
-            tx(function () use ($id) {
+            txReintentable(function () use ($id) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede eliminar un borrador.');
                 if (!can_access_sucursal($t['sucursal_origen_id'])) deny_access();
@@ -110,11 +110,11 @@ if (isPost()) {
         require_perm('transferencias.recibir');
         $id = postInt('id');
         try {
-            tx(function () use ($id) {
+            txReintentable(function () use ($id) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('La transferencia no se puede recibir.');
                 if (!can_access_sucursal($t['sucursal_destino_id'])) throw new RuntimeException('Solo la sucursal de destino puede recibir esta transferencia.');
-                foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=?", [$id]) as $d) {
+                foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]) as $d) {
                     ajustarStock((int) $d['producto_id'], (int) $t['sucursal_destino_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia', $id, 0, 'Transferencia ' . $t['numero'] . ' (entrada)');
                 }
                 dbUpdate('transferencias', ['estado' => 'recibida', 'recibida_por' => current_user()['id'], 'recibida_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
@@ -132,7 +132,7 @@ if (isPost()) {
         $motivo = trim(post('motivo_rechazo'));
         try {
             if ($motivo === '') throw new RuntimeException('Indica el motivo del rechazo.');
-            tx(function () use ($id, $motivo) {
+            txReintentable(function () use ($id, $motivo) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('Solo se puede rechazar una transferencia enviada.');
                 if (!can_access_sucursal($t['sucursal_destino_id'])) throw new RuntimeException('Solo la sucursal de destino puede rechazar esta transferencia.');
@@ -149,7 +149,7 @@ if (isPost()) {
         require_perm('transferencias.anular');
         $id = postInt('id');
         try {
-            tx(function () use ($id) {
+            txReintentable(function () use ($id) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('Solo se pueden anular transferencias enviadas (no recibidas).');
                 if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede anular esta transferencia.');

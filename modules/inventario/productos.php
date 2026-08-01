@@ -118,7 +118,9 @@ $productos = qAll(
 $categorias = qAll("SELECT id, nombre, color FROM categorias WHERE activo=1 ORDER BY nombre");
 $marcas = qAll("SELECT id, nombre FROM marcas WHERE activo=1 ORDER BY nombre");
 $unidades = qAll("SELECT id, nombre, abreviatura FROM unidades ORDER BY nombre");
-$sigCodigo = nextNumero('productos', 'codigo', 'SKU', 5);
+// preview y no next: aquí solo se sugiere el código en el formulario. Consumirlo
+// en cada carga de página quemaría un correlativo por visita.
+$sigCodigo = previewNumero('productos', 'codigo', 'SKU', 5);
 
 $acciones = export_buttons() . (can('productos.crear') ? btn_nuevo('prod:new', 'Nuevo producto') : '');
 layout_start('Productos', 'Catálogo de productos por categoría', $acciones);

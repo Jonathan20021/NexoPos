@@ -90,4 +90,12 @@ DirectoryIndex index.php
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteCond %{REQUEST_FILENAME}.php -f
   RewriteRule ^(.+?)/?$ $1.php [L]
+
+  # 4) Lo que no exista se sirve con la página 404 del sistema (con su marca) en
+  #    vez de la pantalla gris de Apache. Va por RewriteRule y no por
+  #    ErrorDocument porque este último se resuelve contra la raíz del servidor:
+  #    con la app en una subcarpeta apuntaría a una ruta inexistente.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ modules/auth/404.php [L]
 </IfModule>

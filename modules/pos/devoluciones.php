@@ -21,7 +21,7 @@ if (isPost()) {
         $motivo = trim(post('motivo'));
         $ret = $_POST['ret'] ?? [];
         try {
-            $devId = tx(function () use ($ventaId, $motivo, $ret) {
+            $devId = txReintentable(function () use ($ventaId, $motivo, $ret) {
                 $v = qOne("SELECT * FROM ventas WHERE id = ? FOR UPDATE", [$ventaId]);
                 if (!$v || $v['estado'] === 'anulada') throw new RuntimeException('Venta no válida.');
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
@@ -34,7 +34,8 @@ if (isPost()) {
                     "SELECT vd.*, p.tipo AS producto_tipo,
                             COALESCE(NULLIF(vd.descripcion,''), p.nombre, '(producto no disponible)') AS descripcion
                      FROM venta_detalles vd LEFT JOIN productos p ON p.id=vd.producto_id
-                     WHERE vd.venta_id = ?",
+                     WHERE vd.venta_id = ?
+                     ORDER BY vd.producto_id",
                     [$ventaId]
                 );
                 foreach ($detalles as $d) {
@@ -183,19 +184,9 @@ $joinBase = "FROM devoluciones d JOIN ventas v ON v.id=d.venta_id JOIN sucursale
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM devoluciones d JOIN ventas v ON v.id=d.venta_id WHERE $where", $params), 25);
 $devs = qAll("SELECT d.*, v.numero AS venta_numero, su.nombre AS sucursal, u.nombre AS usuario $joinBase ORDER BY d.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
-$acciones = can('devoluciones.crear') ? '<button onclick="document.getElementById(\'buscarDev\').classList.toggle(\'hidden\')" class="btn btn-primary">' . icon('plus', 'w-4 h-4') . ' Nueva devolución</button>' : '';
+$acciones = can('devoluciones.crear') ? btn_nuevo('dev:new', 'Nueva devolución') : '';
 layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones);
 ?>
-
-<?php if (can('devoluciones.crear')): ?>
-<div id="buscarDev" class="card p-5 mb-5 hidden">
-  <form method="post" class="flex items-end gap-3 flex-wrap">
-    <?= csrf_field() ?><input type="hidden" name="accion" value="buscar">
-    <div class="flex-1 min-w-[240px]"><label class="label">Número de factura a devolver</label><input name="numero" required class="input" placeholder="Ej. VTA-000012"></div>
-    <button class="btn btn-primary"><?= icon('search', 'w-4 h-4') ?> Buscar venta</button>
-  </form>
-</div>
-<?php endif; ?>
 
 <div class="card overflow-hidden">
   <?php $selSuc = selectSucursalFiltro(); ?>
@@ -238,5 +229,39 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
     <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
+
+<?php if (can('devoluciones.crear')): ?>
+<!-- Modal: buscar la factura que se va a devolver -->
+<div x-data="{open:false}" @dev:new.window="open=true; $nextTick(() => $refs.numero && $refs.numero.focus())"
+     @keydown.escape.window="open=false">
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
+      <form method="post">
+        <?= csrf_field() ?>
+        <input type="hidden" name="accion" value="buscar">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800">Nueva devolución</h3>
+          <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div class="flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+            <span class="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-400 flex items-center justify-center shrink-0"><?= icon('receipt', 'w-4 h-4') ?></span>
+            <p class="text-[13px] text-slate-600 leading-relaxed">Indica la factura que el cliente quiere devolver. En el siguiente paso eliges qué líneas y cuántas unidades regresan.</p>
+          </div>
+          <div>
+            <label class="label" for="dev_numero">Número de factura *</label>
+            <input id="dev_numero" x-ref="numero" name="numero" required autocomplete="off" class="input" placeholder="Ej. VTA-000012">
+            <p class="text-xs text-slate-400 mt-1.5">Solo se pueden devolver ventas completadas de tu sucursal activa.</p>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><?= icon('search', 'w-4 h-4') ?> Buscar venta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php layout_end(); ?>

@@ -64,6 +64,16 @@ function icon(string $name, string $classes = 'w-5 h-5'): string
         'sun'         => '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
         'history'     => '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
         'barcode'     => '<path d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>',
+        'megaphone'   => '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+        'bank'        => '<path d="m3 10 9-6 9 6"/><path d="M4 10v9M20 10v9M8 10v9M12 10v9M16 10v9"/><path d="M2 21h20"/>',
+        'scale'       => '<path d="M12 3v18M7 21h10"/><path d="m3 8 4-4 4 4"/><path d="M3 8a4 4 0 0 0 8 0"/><path d="m13 8 4-4 4 4"/><path d="M13 8a4 4 0 0 0 8 0"/>',
+        'file'        => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>',
+        'target'      => '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+        'trending-down' => '<path d="m3 7 6.5 6.5 4-4L21 17"/><path d="M15 17h6v-6"/>',
+        'card'        => '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+        'coins'       => '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4M16.71 13.88l.7.71-2.82 2.82"/>',
+        'book'        => '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+        'pulse'       => '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     ];
     $p = $paths[$name] ?? $paths['box'];
     return '<svg xmlns="http://www.w3.org/2000/svg" class="' . $classes . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' . $p . '</svg>';
