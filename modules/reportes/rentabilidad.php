@@ -47,7 +47,9 @@ $filasDatos = qAll(
        JOIN ventas v ON v.id = vd.venta_id
        $join
       WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY $group
+      -- Se agrupa por la clave Y por la etiqueta que se muestra: es la única
+      -- columna no agregada del SELECT y MySQL 8 (ONLY_FULL_GROUP_BY) la exige.
+      GROUP BY $group, $sel
       ORDER BY (COALESCE(SUM(vd.subtotal - vd.descuento),0) - COALESCE(SUM(vd.cantidad * vd.costo_unitario),0)) DESC",
     $pv
 );

@@ -22,7 +22,9 @@ $vendidos = qAll(
        LEFT JOIN productos p  ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
       WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY COALESCE(p.id, vd.descripcion)
+      -- Todas las columnas no agregadas van en el GROUP BY: MySQL 8 (producción)
+      -- tiene ONLY_FULL_GROUP_BY y rechaza lo contrario con el error 1055.
+      GROUP BY COALESCE(p.id, vd.descripcion), p.id, p.nombre, p.codigo, vd.descripcion, c.nombre, c.color
       ORDER BY unidades DESC",
     $pv
 );

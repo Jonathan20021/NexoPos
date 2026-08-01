@@ -133,7 +133,10 @@ $topProductos = qAll(
        LEFT JOIN productos p  ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
       WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY COALESCE(p.id, vd.descripcion)
+      -- Se agrupa por TODAS las columnas no agregadas que se seleccionan.
+      -- MySQL 8 trae ONLY_FULL_GROUP_BY activo y rechaza lo contrario (error 1055);
+      -- MariaDB lo permite, así que en desarrollo no se nota y en producción rompe.
+      GROUP BY COALESCE(p.id, vd.descripcion), COALESCE(p.nombre, vd.descripcion), c.nombre
       ORDER BY utilidad DESC LIMIT 10",
     array_merge([$p['ini'], $p['fin']], $scopeP)
 );

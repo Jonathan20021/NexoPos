@@ -199,6 +199,33 @@ Modal (al final de la página):
 </form>
 ```
 
+## ⚠ Desarrollo en MariaDB, producción en MySQL 8
+
+El XAMPP local corre **MariaDB 10.4** con `sql_mode` permisivo. El servidor del cliente corre
+**MySQL 8.0 con `ONLY_FULL_GROUP_BY`**. Hay consultas que aquí funcionan y allá revientan con
+el error **1055**, y no te enteras hasta que el cliente abre la pantalla.
+
+**La regla:** si agrupas por una **expresión**, todas las columnas no agregadas del SELECT
+tienen que ir también en el GROUP BY.
+
+```sql
+-- ROMPE en producción (MySQL 8): p.nombre no depende de la expresión agrupada
+SELECT COALESCE(p.nombre, vd.descripcion) AS producto, SUM(vd.cantidad)
+  FROM venta_detalles vd LEFT JOIN productos p ON p.id = vd.producto_id
+ GROUP BY COALESCE(p.id, vd.descripcion)
+
+-- CORRECTO: la etiqueta mostrada entra en el GROUP BY
+ GROUP BY COALESCE(p.id, vd.descripcion), COALESCE(p.nombre, vd.descripcion)
+```
+
+Agrupar por una **columna** (`GROUP BY v.sucursal_id` con `JOIN sucursales su ON su.id =
+v.sucursal_id`) sí funciona: MySQL 8 deduce la dependencia a través de la igualdad del JOIN.
+
+**No pongas `ONLY_FULL_GROUP_BY` en el `sql_mode` local para «igualar» los entornos.**
+Se probó: MariaDB 10.4 no hace esa deducción por JOIN y rechaza consultas que MySQL 8 acepta,
+así que genera decenas de falsas alarmas. La forma de verificar es ejecutar las páginas
+contra una copia de la base de producción (o contra la de producción, en solo lectura).
+
 ## Concurrencia (OBLIGATORIO si tu página escribe) — ver `docs/CONCURRENCIA.md`
 Varias sucursales operan a la vez. Estas reglas no son opcionales:
 

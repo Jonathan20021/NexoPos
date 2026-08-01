@@ -53,8 +53,12 @@ foreach (qAll(
 // Comisiones registradas del periodo.
 $comisiones = [];
 foreach (qAll(
-    "SELECT usuario_id, COALESCE(SUM(monto),0) t, estado FROM comisiones
-      WHERE periodo_desde >= ? AND periodo_hasta <= ? GROUP BY usuario_id",
+    // `estado` sobraba en el SELECT (no se usa) y al no estar agregado ni en el
+    // GROUP BY hacía fallar la consulta en MySQL 8 con ONLY_FULL_GROUP_BY.
+    // Se excluyen las anuladas: no son comisión a pagar.
+    "SELECT usuario_id, COALESCE(SUM(monto),0) t FROM comisiones
+      WHERE estado <> 'anulada' AND periodo_desde >= ? AND periodo_hasta <= ?
+      GROUP BY usuario_id",
     [$p['desde'], $p['hasta']]
 ) as $r) $comisiones[(int) $r['usuario_id']] = (float) $r['t'];
 
