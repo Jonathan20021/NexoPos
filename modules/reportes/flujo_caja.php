@@ -109,8 +109,8 @@ $cajas = qOne(
     "SELECT COUNT(*) n, COALESCE(SUM(cs.total_efectivo),0) efectivo,
             COALESCE(SUM(cs.diferencia),0) diferencia
        FROM caja_sesiones cs
-      WHERE cs.estado = 'cerrada' AND DATE(cs.cerrada_at) BETWEEN ? AND ? AND $scopeCS",
-    array_merge([$p['desde'], $p['hasta']], $scopeCSP)
+      WHERE cs.estado = 'cerrada' AND cs.cerrada_at BETWEEN ? AND ? AND $scopeCS",
+    array_merge([$p['ini'], $p['fin']], $scopeCSP)
 ) ?: ['n' => 0, 'efectivo' => 0, 'diferencia' => 0];
 
 /* ---------- Exportación ---------- */

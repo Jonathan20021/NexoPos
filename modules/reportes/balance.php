@@ -74,13 +74,13 @@ $patrimonio = $activoTotal - $pasivoTotal;
 $inicioAnio = date('Y-01-01');
 $ingAnio = (float) qVal(
     "SELECT COALESCE(SUM(v.subtotal - v.descuento),0) FROM ventas v
-      WHERE v.estado='completada' AND DATE(v.fecha) BETWEEN ? AND ? AND $scopeV",
-    array_merge([$inicioAnio, $corte], $scopeVP)
+      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scopeV",
+    array_merge([$inicioAnio . ' 00:00:00', $corte . ' 23:59:59'], $scopeVP)
 );
 $cosAnio = (float) qVal(
     "SELECT COALESCE(SUM(v.costo_total),0) FROM ventas v
-      WHERE v.estado='completada' AND DATE(v.fecha) BETWEEN ? AND ? AND $scopeV",
-    array_merge([$inicioAnio, $corte], $scopeVP)
+      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scopeV",
+    array_merge([$inicioAnio . ' 00:00:00', $corte . ' 23:59:59'], $scopeVP)
 );
 $gasAnio = rep_gastos_operativos($inicioAnio, $corte);
 $resultadoAnio = $ingAnio - $cosAnio - $gasAnio;

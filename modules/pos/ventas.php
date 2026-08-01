@@ -119,8 +119,9 @@ $cond = [$scope];
 $params = $sp;
 if ($q !== '') { $cond[] = "(v.numero LIKE ? OR cl.nombre LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; }
 if (in_array($estado, ['completada', 'anulada', 'devuelta'], true)) { $cond[] = "v.estado = ?"; $params[] = $estado; }
-if ($desde) { $cond[] = "DATE(v.fecha) >= ?"; $params[] = $desde; }
-if ($hasta) { $cond[] = "DATE(v.fecha) <= ?"; $params[] = $hasta; }
+// Rango sobre la columna, no DATE(columna): así se usa idx_v_fecha.
+if ($desde) { $cond[] = "v.fecha >= ?"; $params[] = $desde . ' 00:00:00'; }
+if ($hasta) { $cond[] = "v.fecha <= ?"; $params[] = $hasta . ' 23:59:59'; }
 $where = implode(' AND ', $cond);
 
 if (export_solicitado()) {

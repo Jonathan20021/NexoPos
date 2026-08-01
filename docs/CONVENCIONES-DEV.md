@@ -199,6 +199,34 @@ Modal (al final de la página):
 </form>
 ```
 
+## ⚠ Rendimiento: dos errores que no se ven con datos de demo
+
+Medido con **60.000 ventas, 180.000 líneas y 180.000 movimientos** (unos dos años con
+varias sucursales). Con los 67 registros de la demo ninguno de los dos se nota.
+
+**1. `DATE(columna)` en un WHERE anula el índice.** `ventas.fecha` es DATETIME e indexada;
+envolverla en `DATE()` obliga a recorrer la tabla entera: medimos **59.558 filas escaneadas
+frente a 85** usando un rango. El dashboard lo hacía 19 veces y tardaba 5,5 segundos en abrir.
+
+```php
+// MAL: recorre toda la tabla
+"... AND DATE(v.fecha) >= '$inicioMes'"
+// BIEN: usa idx_v_fecha
+"... AND v.fecha BETWEEN '$inicioMes 00:00:00' AND '$finMes 23:59:59'"
+```
+Cuidado al convertir: el límite superior necesita ` 23:59:59` o se pierde el último día.
+`DATE()` en el SELECT o el GROUP BY sí es correcto — lo que importa es que el WHERE filtre
+por la columna cruda.
+
+**2. Una consulta por iteración.** El dashboard pedía la serie de 14 días con 14 consultas
+en un bucle. Una sola agrupada da lo mismo. Igual la verificación de integridad: una
+subconsulta correlacionada por fila tardaba 4.255 ms; agrupando una vez y cruzando, 200 ms.
+
+**Cuidado con SUM sobre un JOIN que multiplica filas.** Sumar `v.subtotal` cruzando con
+`venta_detalles` cuenta el total de la venta una vez por línea: en el comparativo daba
+**137,3 millones donde el ingreso real era 45,8** — el triple exacto, con 3 líneas por
+factura. Si la consulta entra por el detalle, suma el detalle (`vd.subtotal`).
+
 ## ⚠ Desarrollo en MariaDB, producción en MySQL 8
 
 El XAMPP local corre **MariaDB 10.4** con `sql_mode` permisivo. El servidor del cliente corre

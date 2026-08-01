@@ -243,6 +243,7 @@ CREATE TABLE movimientos_inventario (
   KEY idx_mov_producto (producto_id),
   KEY idx_mov_sucursal (sucursal_id),
   KEY idx_mov_fecha (created_at),
+  KEY idx_mov_prod_suc (producto_id, sucursal_id),
   CONSTRAINT fk_mov_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
   CONSTRAINT fk_mov_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -545,6 +546,7 @@ CREATE TABLE ventas (
   KEY idx_ventas_canal (canal_venta),
   KEY idx_v_sucursal (sucursal_id),
   KEY idx_v_fecha (fecha),
+  KEY idx_v_estado_fecha (estado, fecha),
   KEY idx_v_cliente (cliente_id),
   KEY idx_v_cliente_estado (cliente_id, estado, fecha),
   KEY idx_v_sesion (caja_sesion_id),
@@ -570,6 +572,7 @@ CREATE TABLE venta_detalles (
   PRIMARY KEY (id),
   KEY idx_vd_venta (venta_id),
   KEY idx_vd_producto (producto_id),
+  KEY idx_vd_producto_venta (producto_id, venta_id),
   CONSTRAINT chk_venta_detalle_valores CHECK (cantidad > 0 AND precio_unitario >= 0 AND costo_unitario >= 0 AND descuento >= 0 AND itbis >= 0 AND subtotal >= 0),
   CONSTRAINT fk_vd_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
   CONSTRAINT fk_vd_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE SET NULL
@@ -941,6 +944,7 @@ CREATE TABLE transacciones (
   KEY idx_tr_sucursal (sucursal_id),
   KEY idx_tr_fecha (fecha),
   KEY idx_tr_tipo (tipo),
+  KEY idx_tr_tipo_fecha (tipo, fecha),
   KEY idx_tr_conciliacion (cuenta_id, fecha, conciliada),
   CONSTRAINT chk_transaccion_monto_positivo CHECK (monto > 0),
   CONSTRAINT fk_tr_cuenta FOREIGN KEY (cuenta_id) REFERENCES cuentas_financieras(id) ON DELETE SET NULL,

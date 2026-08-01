@@ -12,14 +12,42 @@ $inicioMes  = date('Y-m-01');
 $mesPrevIni = date('Y-m-01', strtotime('first day of last month'));
 $mesPrevFin = date('Y-m-t', strtotime('last day of last month'));
 
-// KPIs
-$ventasMes   = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) >= '$inicioMes'");
-$ventasPrev  = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) BETWEEN '$mesPrevIni' AND '$mesPrevFin'");
-$ventasHoyTot= (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) = '$hoy'");
-$ventasHoyN  = (int) qVal("SELECT COUNT(*) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) = '$hoy'");
-$gananciaMes = (float) qVal("SELECT COALESCE(SUM(subtotal - costo_total - descuento),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) >= '$inicioMes'");
+/*
+ * Los rangos van sobre la columna `fecha` tal cual, NO con DATE(v.fecha).
+ * `ventas.fecha` es DATETIME y tiene índice: envolverla en DATE() lo anula y
+ * obliga a recorrer la tabla entera. Con 60.000 ventas medimos 59.558 filas
+ * escaneadas por consulta frente a 85 usando el rango. El dashboard hacía eso
+ * 19 veces y tardaba más de 5 segundos en abrir.
+ */
+$mesIni  = $inicioMes . ' 00:00:00';
+$mesFin  = date('Y-m-t') . ' 23:59:59';
+$prevIni = $mesPrevIni . ' 00:00:00';
+$prevFin = $mesPrevFin . ' 23:59:59';
+$hoyIni  = $hoy . ' 00:00:00';
+$hoyFin  = $hoy . ' 23:59:59';
+
+// Los KPIs del mes salen de UNA sola pasada en vez de tres consultas iguales.
+$kpiMes = qOne(
+    "SELECT COALESCE(SUM(total),0) ventas,
+            COALESCE(SUM(subtotal - costo_total - descuento),0) ganancia,
+            COALESCE(AVG(total),0) ticket
+       FROM ventas v
+      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'"
+) ?: [];
+$ventasMes   = (float) ($kpiMes['ventas'] ?? 0);
+$gananciaMes = (float) ($kpiMes['ganancia'] ?? 0);
+$ticketProm  = (float) ($kpiMes['ticket'] ?? 0);
+
+$kpiHoy = qOne(
+    "SELECT COALESCE(SUM(total),0) total, COUNT(*) n
+       FROM ventas v
+      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$hoyIni' AND '$hoyFin'"
+) ?: [];
+$ventasHoyTot = (float) ($kpiHoy['total'] ?? 0);
+$ventasHoyN   = (int) ($kpiHoy['n'] ?? 0);
+
+$ventasPrev  = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$prevIni' AND '$prevFin'");
 $valorInv    = (float) qVal("SELECT COALESCE(SUM(s.cantidad * p.precio_compra),0) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE p.activo=1 AND $scopeS");
-$ticketProm  = (float) qVal("SELECT COALESCE(AVG(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) >= '$inicioMes'");
 
 $nProductos  = (int) qVal("SELECT COUNT(*) FROM productos WHERE activo=1");
 $nStockBajo  = (int) qVal("SELECT COUNT(*) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE p.activo=1 AND s.cantidad<=p.stock_minimo AND $scopeS");
@@ -28,11 +56,23 @@ $nClientes   = (int) qVal("SELECT COUNT(*) FROM clientes WHERE activo=1");
 
 $trendVentas = $ventasPrev > 0 ? round((($ventasMes - $ventasPrev) / $ventasPrev) * 100, 1) : ($ventasMes > 0 ? 100 : 0);
 
-// Serie de ventas últimos 14 días
-$serie = []; $serieLabels = []; $serieVals = [];
+/*
+ * Serie de 14 días: una consulta agrupada, no una por día. El bucle anterior
+ * lanzaba 14 recorridos completos de la tabla de ventas.
+ */
+$desde14 = date('Y-m-d', strtotime('-13 days'));
+$porDia = [];
+foreach (qAll(
+    "SELECT DATE(v.fecha) d, COALESCE(SUM(v.total),0) t
+       FROM ventas v
+      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$desde14 00:00:00' AND '$hoyFin'
+      GROUP BY DATE(v.fecha)"
+) as $r) $porDia[$r['d']] = (float) $r['t'];
+
+$serie = []; $serieVals = [];
 for ($i = 13; $i >= 0; $i--) {
     $f = date('Y-m-d', strtotime("-$i days"));
-    $t = (float) qVal("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha)='$f'");
+    $t = $porDia[$f] ?? 0.0;
     $serie[] = ['label' => date('d/m', strtotime($f)), 'value' => $t];
     $serieVals[] = $t;
 }
@@ -44,7 +84,7 @@ $topProductos = qAll(
      JOIN ventas v ON v.id=vd.venta_id
      JOIN productos p ON p.id=vd.producto_id
      LEFT JOIN categorias c ON c.id=p.categoria_id
-     WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) >= '$inicioMes'
+     WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'
      GROUP BY p.id ORDER BY unidades DESC LIMIT 5"
 );
 
@@ -55,7 +95,7 @@ $porCategoria = qAll(
      JOIN ventas v ON v.id=vd.venta_id
      JOIN productos p ON p.id=vd.producto_id
      LEFT JOIN categorias c ON c.id=p.categoria_id
-     WHERE v.estado='completada' AND $scopeV AND DATE(v.fecha) >= '$inicioMes'
+     WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'
      GROUP BY c.id ORDER BY total DESC LIMIT 6"
 );
 $totalCat = array_sum(array_column($porCategoria, 'total')) ?: 1;

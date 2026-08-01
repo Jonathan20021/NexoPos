@@ -43,13 +43,22 @@ function cmp_total(string $ini, string $fin, string $scope, array $scopeP): arra
 $tot = [];
 foreach ($rangos as $k => $r) $tot[$k] = cmp_total($r[1], $r[2], $scope, $scopeP);
 
-/** Desglose comparado por una dimensión (mismo SQL, tres rangos). */
-function cmp_dimension(string $selectLabel, string $from, string $groupBy, array $rangos, string $scope, array $scopeP): array
+/**
+ * Desglose comparado por una dimensión (mismo SQL, tres rangos).
+ *
+ * `$ingresos` es la expresión a sumar y NO siempre es la misma. Las dimensiones
+ * que agrupan por algo de la venta (sucursal, canal, vendedor) suman el total de
+ * la venta. La de categoría entra por `venta_detalles`, así que sumar el total de
+ * la venta lo repetiría una vez por cada línea: medido con 3 líneas por factura,
+ * daba 137,3 millones donde el ingreso real era 45,8 — el triple. Ahí hay que
+ * sumar la línea, que además es lo único que se puede atribuir a una categoría.
+ */
+function cmp_dimension(string $selectLabel, string $from, string $groupBy, array $rangos, string $scope, array $scopeP, string $ingresos = 'v.subtotal - v.descuento'): array
 {
     $out = [];
     foreach ($rangos as $k => $r) {
         $rows = qAll(
-            "SELECT $selectLabel AS etiqueta, COALESCE(SUM(v.subtotal - v.descuento),0) AS ingresos, COUNT(DISTINCT v.id) AS facturas
+            "SELECT $selectLabel AS etiqueta, COALESCE(SUM($ingresos),0) AS ingresos, COUNT(DISTINCT v.id) AS facturas
                FROM ventas v $from
               WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
               GROUP BY $groupBy",
@@ -73,9 +82,10 @@ $dimensiones = [
     'Sucursal'        => cmp_dimension('su.nombre', 'JOIN sucursales su ON su.id = v.sucursal_id', 'v.sucursal_id', $rangos, $scope, $scopeP),
     'Canal de venta'  => cmp_dimension("COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", '', 'v.canal_venta', $rangos, $scope, $scopeP),
     'Vendedor'        => cmp_dimension("CONCAT(u.nombre,' ',u.apellido)", 'JOIN usuarios u ON u.id = v.usuario_id', 'v.usuario_id', $rangos, $scope, $scopeP),
+    // Suma la LÍNEA, no el total de la venta: ver el comentario de cmp_dimension().
     'Categoría'       => cmp_dimension("COALESCE(c.nombre,'Sin categoría')",
         'JOIN venta_detalles vd ON vd.venta_id = v.id LEFT JOIN productos pr ON pr.id = vd.producto_id LEFT JOIN categorias c ON c.id = pr.categoria_id',
-        'c.id', $rangos, $scope, $scopeP),
+        'c.id', $rangos, $scope, $scopeP, 'vd.subtotal - vd.descuento'),
 ];
 
 /* ---------- Serie diaria comparada ---------- */

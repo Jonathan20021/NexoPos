@@ -58,9 +58,9 @@ $turnos = qAll(
             COALESCE(SUM(cs.total_ventas),0) ventas, COALESCE(SUM(cs.diferencia),0) diferencia,
             COALESCE(AVG(cs.total_ventas),0) promedio
        FROM caja_sesiones cs
-      WHERE cs.estado='cerrada' AND DATE(cs.cerrada_at) BETWEEN ? AND ? AND $scopeCS
+      WHERE cs.estado='cerrada' AND cs.cerrada_at BETWEEN ? AND ? AND $scopeCS
       GROUP BY turno ORDER BY ventas DESC",
-    array_merge([$p['desde'], $p['hasta']], $scopeCSP)
+    array_merge([$p['ini'], $p['fin']], $scopeCSP)
 );
 
 $totalIngresos = array_sum(array_column($porHora, 'ingresos'));

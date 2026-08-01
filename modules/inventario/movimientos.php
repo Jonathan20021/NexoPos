@@ -13,8 +13,9 @@ $cond = [$scope];
 $params = $sp;
 if ($q !== '') { $cond[] = "p.nombre LIKE ?"; $params[] = "%$q%"; }
 if (in_array($tipo, $tipos, true)) { $cond[] = "m.tipo = ?"; $params[] = $tipo; }
-if ($desde) { $cond[] = "DATE(m.created_at) >= ?"; $params[] = $desde; }
-if ($hasta) { $cond[] = "DATE(m.created_at) <= ?"; $params[] = $hasta; }
+// Rango sobre la columna, no DATE(columna): así se usa el índice de fecha.
+if ($desde) { $cond[] = "m.created_at >= ?"; $params[] = $desde . ' 00:00:00'; }
+if ($hasta) { $cond[] = "m.created_at <= ?"; $params[] = $hasta . ' 23:59:59'; }
 $where = implode(' AND ', $cond);
 
 if (export_solicitado()) {

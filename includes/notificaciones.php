@@ -443,7 +443,7 @@ function notif_gen_caja(): void
            JOIN sucursales su ON su.id = cs.sucursal_id
            JOIN usuarios u    ON u.id = cs.usuario_id
            JOIN cajas c       ON c.id = cs.caja_id
-          WHERE cs.estado = 'abierta' AND DATE(cs.abierta_at) < CURDATE()
+          WHERE cs.estado = 'abierta' AND cs.abierta_at < CURDATE()
           ORDER BY cs.abierta_at ASC LIMIT 20"
     );
     $items = [];

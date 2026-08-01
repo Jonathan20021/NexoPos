@@ -134,8 +134,9 @@ $params = [$sid];
 $cond[] = 'cs.estado = ?'; $params[] = $fEstado;
 if ($fUsuario > 0) { $cond[] = 'cs.usuario_id = ?'; $params[] = $fUsuario; }
 if ($fTurno !== '') { $cond[] = 'cs.turno = ?'; $params[] = $fTurno; }
-if ($fDesde)       { $cond[] = 'DATE(cs.abierta_at) >= ?'; $params[] = $fDesde; }
-if ($fHasta)       { $cond[] = 'DATE(cs.abierta_at) <= ?'; $params[] = $fHasta; }
+// Rango sobre la columna, no DATE(columna): así se usa el índice de fecha.
+if ($fDesde)       { $cond[] = 'cs.abierta_at >= ?'; $params[] = $fDesde . ' 00:00:00'; }
+if ($fHasta)       { $cond[] = 'cs.abierta_at <= ?'; $params[] = $fHasta . ' 23:59:59'; }
 $whereCaja = implode(' AND ', $cond);
 
 $historial = qAll(
