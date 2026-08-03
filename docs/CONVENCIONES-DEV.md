@@ -117,6 +117,26 @@ Cada item admite: `clave` (única), `titulo`, `mensaje`, `categoria`, `prioridad
 (`critica|alta|media|baja`), `url`, `icono`, `color`, `sucursal_id`, `usuario_id`, `permiso`.
 El `permiso` decide quién la ve; `usuario_id` la dirige a una sola persona.
 
+## Marketing (`includes/marketing.php` + `modules/marketing/`) — ver `docs/MARKETING.md`
+Campañas por correo (Resend, automáticas) y por WhatsApp (wa.me, asistidas).
+
+- **Un destinatario = una fila** en `campana_envios`. De ahí salen la reanudación tras un
+  corte, el «nadie recibe dos veces» (`UNIQUE campana_id+canal+destino`), el rastreo por
+  persona y la cola de WhatsApp. Nunca envíes recorriendo `clientes` directamente.
+- **wa.me no envía**: abre la conversación con el texto escrito y una persona pulsa enviar.
+  Lo automático es todo lo demás. No prometas envío masivo automático por WhatsApp.
+- `mkt_url_abs()` para cualquier enlace que viaje en un correo: `url()` devuelve ruta
+  relativa y en Gmail eso no resuelve.
+- El redirector de clics (`t.php`) solo acepta destinos que la campaña publicó. Si añades
+  otro enlace rastreado, pásalo por `mkt_destino_permitido()` o abres un phishing.
+- Las automatizaciones **no envían**: encolan en la campaña del periodo. Para añadir una,
+  escribe su caso en `mkt_auto_candidatos()` devolviendo `[cliente_id, …, periodo]` — el
+  `periodo` es la clave que impide repetirle a la misma persona.
+- El motor corre con el mismo enganche que las notificaciones (`mkt_tick_si_toca()`), sin
+  cron. `modules/marketing/cron.php` es opcional, para envíos con nadie conectado.
+- `mkt_segmento_sql()` solo cruza el histórico de ventas cuando alguna regla lo necesita.
+  Si añades una regla que lo use, marca `$tieneHistorico`.
+
 ## Reportes (`includes/reportes.php` + `modules/reportes/`)
 Todos los reportes comparten periodo, alcance por sucursal y estética:
 

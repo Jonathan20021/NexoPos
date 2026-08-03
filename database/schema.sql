@@ -355,6 +355,8 @@ CREATE TABLE clientes (
   telefono VARCHAR(40) NULL,
   email VARCHAR(120) NULL,
   direccion VARCHAR(255) NULL,
+  fecha_nacimiento DATE NULL,                    -- habilita la felicitación automática de cumpleaños
+  acepta_marketing TINYINT(1) NOT NULL DEFAULT 1, -- 0 = pidió no recibir promociones (opt-out)
   tipo ENUM('contado','credito') NOT NULL DEFAULT 'contado',
   limite_credito DECIMAL(12,2) NOT NULL DEFAULT 0,
   balance DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -364,6 +366,7 @@ CREATE TABLE clientes (
   PRIMARY KEY (id),
   UNIQUE KEY uq_cliente_codigo (codigo),
   KEY idx_cli_nombre (nombre),
+  KEY idx_cli_cumple (fecha_nacimiento),
   CONSTRAINT chk_cliente_credito_no_negativo CHECK (limite_credito >= 0 AND balance >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -1007,10 +1010,14 @@ CREATE TABLE comisiones (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Promociones (descuentos automáticos por temporada/categoría/marca/producto).
+-- `descripcion` e `imagen` son material de marketing: se ven en el correo de una
+-- campaña, no intervienen en el cálculo del precio.
 DROP TABLE IF EXISTS promociones;
 CREATE TABLE promociones (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre       VARCHAR(120) NOT NULL,
+  descripcion  VARCHAR(255) NULL,
+  imagen       VARCHAR(255) NULL,
   tipo         ENUM('porcentaje','monto') NOT NULL DEFAULT 'porcentaje',
   valor        DECIMAL(12,2) NOT NULL DEFAULT 0,
   alcance      ENUM('todos','categoria','marca','producto') NOT NULL DEFAULT 'todos',
@@ -1027,23 +1034,171 @@ CREATE TABLE promociones (
   KEY idx_promo_alcance (alcance, objetivo_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Campañas por correo (envío masivo sobre Resend).
+-- ===================== MARKETING (campañas, segmentos, automatización) =======
+-- Ver docs/MARKETING.md. El correo sale solo (Resend); el WhatsApp se prepara
+-- aquí y se despacha desde la consola, porque wa.me exige un clic humano.
+
+-- Segmentos: reglas guardadas, no listas congeladas. Se evalúan al enviar.
+DROP TABLE IF EXISTS marketing_segmentos;
+CREATE TABLE marketing_segmentos (
+  id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre          VARCHAR(120) NOT NULL,
+  descripcion     VARCHAR(255) NULL,
+  requiere_email    TINYINT(1) NOT NULL DEFAULT 1,
+  requiere_telefono TINYINT(1) NOT NULL DEFAULT 0,
+  tipo_cliente    ENUM('cualquiera','contado','credito') NOT NULL DEFAULT 'cualquiera',
+  deuda           ENUM('cualquiera','con','sin') NOT NULL DEFAULT 'cualquiera',
+  sucursal_id     INT UNSIGNED NULL,
+  categoria_id    INT UNSIGNED NULL,
+  dias_sin_comprar_min INT NULL,
+  dias_sin_comprar_max INT NULL,
+  incluir_sin_compras  TINYINT(1) NOT NULL DEFAULT 1,
+  compras_min     INT NULL,
+  gasto_min       DECIMAL(12,2) NULL,
+  gasto_max       DECIMAL(12,2) NULL,
+  cumple_mes      TINYINT NOT NULL DEFAULT 0,   -- 0 no filtra · 1..12 mes · 13 mes en curso
+  activo          TINYINT(1) NOT NULL DEFAULT 1,
+  created_by      INT UNSIGNED NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_seg_activo (activo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Plantillas de mensaje. Al crear una campaña se COPIAN, no se enlazan.
+DROP TABLE IF EXISTS marketing_plantillas;
+CREATE TABLE marketing_plantillas (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre         VARCHAR(120) NOT NULL,
+  categoria      ENUM('promocion','bienvenida','cumpleanos','recompra','inactivo','cobranza','aviso','temporada') NOT NULL DEFAULT 'promocion',
+  asunto         VARCHAR(180) NOT NULL,
+  preheader      VARCHAR(180) NULL,
+  contenido      MEDIUMTEXT NOT NULL,
+  cta_texto      VARCHAR(60) NULL,
+  cta_url        VARCHAR(255) NULL,
+  whatsapp_texto TEXT NULL,
+  es_sistema     TINYINT(1) NOT NULL DEFAULT 0,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_plt_categoria (categoria)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Automatizaciones: reglas que encolan mensajes solas. Nacen APAGADAS.
+DROP TABLE IF EXISTS marketing_automatizaciones;
+CREATE TABLE marketing_automatizaciones (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  clave          VARCHAR(40) NOT NULL,
+  nombre         VARCHAR(140) NOT NULL,
+  disparador     ENUM('bienvenida','cumpleanos','recompra','inactivo','post_venta','saldo_pendiente') NOT NULL,
+  dias           INT NOT NULL DEFAULT 0,
+  canal          ENUM('email','whatsapp','ambos') NOT NULL DEFAULT 'email',
+  asunto         VARCHAR(180) NOT NULL,
+  preheader      VARCHAR(180) NULL,
+  contenido      MEDIUMTEXT NOT NULL,
+  cta_texto      VARCHAR(60) NULL,
+  cta_url        VARCHAR(255) NULL,
+  whatsapp_texto TEXT NULL,
+  promocion_id   INT UNSIGNED NULL,
+  tope_dia       INT NOT NULL DEFAULT 200,
+  activo         TINYINT(1) NOT NULL DEFAULT 0,
+  enviados       INT NOT NULL DEFAULT 0,
+  ultimo_run     DATETIME NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_auto_clave (clave),
+  KEY idx_auto_activo (activo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Bitácora antirrepetición de las automatizaciones.
+DROP TABLE IF EXISTS marketing_automatizacion_log;
+CREATE TABLE marketing_automatizacion_log (
+  id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  automatizacion_id INT UNSIGNED NOT NULL,
+  cliente_id        INT UNSIGNED NOT NULL,
+  periodo           VARCHAR(40) NOT NULL,      -- '2026', '2026-08', 'venta:1234'
+  campana_id        INT UNSIGNED NULL,
+  created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_auto_log (automatizacion_id, cliente_id, periodo),
+  KEY idx_auto_log_fecha (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Bajas (opt-out). Un correo comercial sin salida es spam.
+DROP TABLE IF EXISTS marketing_bajas;
+CREATE TABLE marketing_bajas (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  canal      ENUM('email','whatsapp') NOT NULL DEFAULT 'email',
+  destino    VARCHAR(180) NOT NULL,
+  cliente_id INT UNSIGNED NULL,
+  campana_id INT UNSIGNED NULL,
+  motivo     VARCHAR(180) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_baja_destino (canal, destino)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Campañas por correo y WhatsApp.
 DROP TABLE IF EXISTS campanas;
 CREATE TABLE campanas (
   id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre      VARCHAR(140) NOT NULL,
   asunto      VARCHAR(180) NOT NULL,
+  preheader   VARCHAR(180) NULL,
+  asunto_b    VARCHAR(180) NULL,               -- variante B de la prueba A/B
   contenido   MEDIUMTEXT NOT NULL,
-  segmento    ENUM('con_email','con_deuda') NOT NULL DEFAULT 'con_email',
-  estado      ENUM('borrador','enviada','parcial') NOT NULL DEFAULT 'borrador',
+  canal       ENUM('email','whatsapp','ambos') NOT NULL DEFAULT 'email',
+  segmento    ENUM('con_email','con_deuda') NOT NULL DEFAULT 'con_email',  -- histórico
+  segmento_id INT UNSIGNED NULL,
+  plantilla_id INT UNSIGNED NULL,
+  promocion_id INT UNSIGNED NULL,
+  cta_texto   VARCHAR(60) NULL,
+  cta_url     VARCHAR(255) NULL,
+  imagen      VARCHAR(255) NULL,
+  whatsapp_texto TEXT NULL,
+  programada_at  DATETIME NULL,
+  automatizacion_id INT UNSIGNED NULL,
+  estado      ENUM('borrador','programada','enviando','enviada','parcial','pausada','cancelada') NOT NULL DEFAULT 'borrador',
   total       INT NOT NULL DEFAULT 0,
   enviados    INT NOT NULL DEFAULT 0,
   fallidos    INT NOT NULL DEFAULT 0,
+  aperturas   INT NOT NULL DEFAULT 0,
+  clics       INT NOT NULL DEFAULT 0,
+  bajas       INT NOT NULL DEFAULT 0,
   created_by  INT UNSIGNED NULL,
   created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   enviada_at  DATETIME NULL,
+  updated_at  DATETIME NULL,
   PRIMARY KEY (id),
-  KEY idx_campana_estado (estado)
+  KEY idx_campana_estado (estado),
+  KEY idx_campana_programada (estado, programada_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Una fila por destinatario. Permite reanudar un envío, no repetir a nadie,
+-- medir aperturas y clics, y llevar la cola de WhatsApp.
+DROP TABLE IF EXISTS campana_envios;
+CREATE TABLE campana_envios (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  campana_id   INT UNSIGNED NOT NULL,
+  cliente_id   INT UNSIGNED NULL,
+  canal        ENUM('email','whatsapp') NOT NULL DEFAULT 'email',
+  destino      VARCHAR(180) NOT NULL,
+  nombre       VARCHAR(150) NULL,
+  token        CHAR(32) NOT NULL,
+  variante     CHAR(1) NOT NULL DEFAULT 'A',
+  estado       ENUM('pendiente','enviado','fallido','omitido') NOT NULL DEFAULT 'pendiente',
+  proveedor_id VARCHAR(80) NULL,
+  error        VARCHAR(255) NULL,
+  enviado_at   DATETIME NULL,
+  abierto_at   DATETIME NULL,
+  clic_at      DATETIME NULL,
+  aperturas    INT NOT NULL DEFAULT 0,
+  clics        INT NOT NULL DEFAULT 0,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_envio_token (token),
+  UNIQUE KEY uq_envio_destino (campana_id, canal, destino),
+  KEY idx_envio_campana (campana_id, estado),
+  KEY idx_envio_cliente (cliente_id),
+  KEY idx_envio_clic (clic_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== CRM (embudo, bitácora y agenda) =====================
@@ -1314,5 +1469,64 @@ CREATE TABLE notificacion_lecturas (
   CONSTRAINT fk_nl_notif   FOREIGN KEY (notificacion_id) REFERENCES notificaciones(id) ON DELETE CASCADE,
   CONSTRAINT fk_nl_usuario FOREIGN KEY (usuario_id)      REFERENCES usuarios(id)       ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== Datos de fábrica de Marketing =========================
+-- Segmentos y plantillas listos para usar, y las seis automatizaciones APAGADAS.
+-- Nacen apagadas a propósito: nadie debe descubrir que su sistema empezó a
+-- escribirle a sus clientes sin habérselo pedido.
+
+INSERT INTO marketing_segmentos
+  (nombre, descripcion, requiere_email, requiere_telefono, tipo_cliente, deuda,
+   dias_sin_comprar_min, dias_sin_comprar_max, incluir_sin_compras, compras_min, cumple_mes) VALUES
+  ('Todos los contactables', 'Clientes activos con correo válido y que aceptan promociones', 1, 0, 'cualquiera', 'cualquiera', NULL, NULL, 1, NULL, 0),
+  ('Clientes frecuentes', 'Compraron 3 veces o más en el histórico', 1, 0, 'cualquiera', 'cualquiera', NULL, NULL, 0, 3, 0),
+  ('Dormidos (90 días sin comprar)', 'No compran hace 90 días o más: el segmento que más recupera venta', 1, 0, 'cualquiera', 'cualquiera', 90, NULL, 0, 1, 0),
+  ('Compraron este mes', 'Compra en los últimos 30 días: ideal para venta cruzada', 1, 0, 'cualquiera', 'cualquiera', NULL, 30, 0, NULL, 0),
+  ('Cumpleañeros del mes', 'Cumplen años en el mes en curso', 1, 0, 'cualquiera', 'cualquiera', NULL, NULL, 1, NULL, 13),
+  ('Con saldo pendiente', 'Tienen balance por cobrar (avisos de cobranza)', 0, 1, 'credito', 'con', NULL, NULL, 1, NULL, 0),
+  ('WhatsApp: todos con teléfono', 'Clientes activos con un número válido para wa.me', 0, 1, 'cualquiera', 'cualquiera', NULL, NULL, 1, NULL, 0);
+
+INSERT INTO marketing_plantillas (nombre, categoria, asunto, preheader, contenido, cta_texto, whatsapp_texto, es_sistema) VALUES
+  ('Promoción de temporada', 'promocion', '{{cliente}}, {{descuento}} de descuento por tiempo limitado', 'Aprovecha antes de que termine la promoción',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Preparamos algo para ti: <strong>{{promo}}</strong> con <strong>{{descuento}}</strong>.</p><p>La promoción está vigente {{vigencia}}. Pasa por la tienda o escríbenos y te apartamos lo tuyo.</p>',
+   'Ver la promoción', 'Hola {{cliente}}, te escribo de {{empresa}}. Tenemos {{promo}} con {{descuento}}, vigente {{vigencia}}. ¿Te aparto el tuyo?', 1),
+  ('Bienvenida a un cliente nuevo', 'bienvenida', '¡Bienvenido a {{empresa}}, {{cliente}}!', 'Gracias por tu primera compra',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Gracias por confiar en <strong>{{empresa}}</strong>. Nos alegra tenerte con nosotros.</p><p>Cualquier cosa que necesites, escríbenos por aquí o al {{telefono}}: te atendemos de una vez.</p>',
+   'Ver el catálogo', 'Hola {{cliente}}, ¡bienvenido a {{empresa}}! Cualquier cosa que necesites, escríbeme por aquí.', 1),
+  ('Feliz cumpleaños', 'cumpleanos', '🎉 ¡Feliz cumpleaños, {{cliente}}!', 'Tenemos un regalo para ti',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>De parte de todo el equipo de <strong>{{empresa}}</strong>: ¡feliz cumpleaños!</p><p>Para celebrarlo contigo, este mes tienes <strong>{{descuento}}</strong> en tu compra. Solo menciónalo al pagar.</p>',
+   'Reclamar mi descuento', '¡Feliz cumpleaños, {{cliente}}! 🎉 De parte de {{empresa}}. Este mes tienes {{descuento}} en tu compra.', 1),
+  ('Te extrañamos (cliente dormido)', 'inactivo', '{{cliente}}, hace tiempo no te vemos', 'Vuelve con un descuento de nuestra parte',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Notamos que hace un tiempo no pasas por <strong>{{empresa}}</strong>, y queremos que vuelvas.</p><p>Te dejamos <strong>{{descuento}}</strong> en tu próxima compra, vigente {{vigencia}}.</p>',
+   'Volver a comprar', 'Hola {{cliente}}, te escribo de {{empresa}}. Hace tiempo no te vemos y te dejamos {{descuento}} en tu próxima compra. ¿Te muestro lo que llegó nuevo?', 1),
+  ('Gracias por tu compra', 'recompra', 'Gracias por tu compra, {{cliente}}', '¿Todo bien con lo que te llevaste?',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Gracias por tu compra en <strong>{{empresa}}</strong>. Esperamos que todo esté perfecto.</p><p>Si algo no salió como esperabas, responde este correo o llámanos al {{telefono}}: lo resolvemos.</p>',
+   'Ver novedades', 'Hola {{cliente}}, gracias por tu compra en {{empresa}}. ¿Todo bien con lo que te llevaste?', 1),
+  ('Recordatorio de saldo pendiente', 'cobranza', 'Recordatorio de tu cuenta con {{empresa}}', 'Tu saldo pendiente al día de hoy',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Te escribimos para recordarte que tu cuenta con <strong>{{empresa}}</strong> tiene un saldo pendiente de <strong>{{saldo}}</strong>.</p><p>Si ya realizaste el pago, ignora este mensaje. Cualquier duda, llámanos al {{telefono}}.</p>',
+   NULL, 'Hola {{cliente}}, le escribo de {{empresa}}. Su cuenta tiene un saldo pendiente de {{saldo}}. Si ya realizó el pago, haga caso omiso de este mensaje.', 1),
+  ('Llegó mercancía nueva', 'aviso', 'Llegó lo nuevo a {{empresa}}', 'Mira lo que acaba de entrar',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Acaba de llegar mercancía nueva a <strong>{{empresa}}</strong> y queríamos que fueras de los primeros en verla.</p><p>Pasa por la tienda o escríbenos y te enviamos fotos.</p>',
+   'Ver lo nuevo', 'Hola {{cliente}}, le escribo de {{empresa}}. Acaba de llegar mercancía nueva, ¿le mando fotos?', 1);
+
+INSERT INTO marketing_automatizaciones (clave, nombre, disparador, dias, canal, asunto, preheader, contenido, cta_texto, whatsapp_texto, activo) VALUES
+  ('bienvenida', 'Bienvenida al cliente nuevo', 'bienvenida', 0, 'email', '¡Bienvenido a {{empresa}}, {{cliente}}!', 'Gracias por tu primera compra',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Gracias por confiar en <strong>{{empresa}}</strong>. Nos alegra tenerte con nosotros.</p><p>Cualquier cosa que necesites, escríbenos o llámanos al {{telefono}}.</p>',
+   'Ver el catálogo', 'Hola {{cliente}}, ¡bienvenido a {{empresa}}! Cualquier cosa que necesites, escríbeme por aquí.', 0),
+  ('cumpleanos', 'Felicitación de cumpleaños', 'cumpleanos', 0, 'email', '🎉 ¡Feliz cumpleaños, {{cliente}}!', 'Tenemos un regalo para ti',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>De parte de todo el equipo de <strong>{{empresa}}</strong>: ¡feliz cumpleaños!</p><p>Para celebrarlo, este mes tienes un descuento especial en tu compra. Solo menciónalo al pagar.</p>',
+   'Reclamar mi descuento', '¡Feliz cumpleaños, {{cliente}}! 🎉 De parte de {{empresa}}.', 0),
+  ('post_venta', 'Gracias por tu compra', 'post_venta', 2, 'email', 'Gracias por tu compra, {{cliente}}', '¿Todo bien con lo que te llevaste?',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Gracias por tu compra en <strong>{{empresa}}</strong>. Esperamos que todo esté perfecto.</p><p>Si algo no salió como esperabas, responde este correo o llámanos al {{telefono}}.</p>',
+   NULL, 'Hola {{cliente}}, gracias por tu compra en {{empresa}}. ¿Todo bien con lo que te llevaste?', 0),
+  ('recompra', 'Recordatorio de recompra', 'recompra', 45, 'email', '{{cliente}}, ¿te hace falta reponer?', 'Pasaron unas semanas de tu última compra',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Ya pasaron unas semanas desde tu última compra en <strong>{{empresa}}</strong>. Si te hace falta reponer, escríbenos y te lo dejamos listo.</p>',
+   'Volver a comprar', 'Hola {{cliente}}, le escribo de {{empresa}}. ¿Le hace falta reponer? Se lo dejo listo.', 0),
+  ('inactivo', 'Recuperar cliente dormido', 'inactivo', 90, 'email', '{{cliente}}, hace tiempo no te vemos', 'Vuelve con un descuento de nuestra parte',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Notamos que hace un tiempo no pasas por <strong>{{empresa}}</strong>, y queremos que vuelvas.</p><p>Escríbenos y te contamos lo que llegó nuevo.</p>',
+   'Volver a comprar', 'Hola {{cliente}}, le escribo de {{empresa}}. Hace tiempo no le vemos, ¿le muestro lo que llegó nuevo?', 0),
+  ('saldo_pendiente', 'Aviso de saldo pendiente', 'saldo_pendiente', 30, 'email', 'Recordatorio de tu cuenta con {{empresa}}', 'Tu saldo pendiente al día de hoy',
+   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Te recordamos que tu cuenta con <strong>{{empresa}}</strong> tiene un saldo pendiente de <strong>{{saldo}}</strong>.</p><p>Si ya realizaste el pago, ignora este mensaje.</p>',
+   NULL, 'Hola {{cliente}}, le escribo de {{empresa}}. Su cuenta tiene un saldo pendiente de {{saldo}}. Si ya realizó el pago, haga caso omiso.', 0);
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -56,8 +56,25 @@ Las migraciones posteriores se aplican aparte, en orden:
 | `migracion_activos_p6.sql` | Activos fijos y depreciación mensual |
 | `migracion_rendimiento_p7.sql` | Índices de kardex, ventas y transacciones |
 | `migracion_rendimiento_p8.sql` | Índice de cobertura de las líneas de venta (reportes y dashboard) |
+| `migracion_marketing_p9.sql` | Marketing: segmentos, plantillas, automatizaciones, rastreo, bajas y envíos por WhatsApp |
 
 Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
+
+> **`migracion_marketing_p9.sql` empieza con `SET NAMES utf8mb4;` y hay que respetarlo.**
+> Sus textos de fábrica llevan tildes, ñ y emojis. Si se importa forzando otra codificación,
+> «¿Te aparto el tuyo?» queda guardado como «┬┐Te aparto el tuyo?». Por phpMyAdmin, elige
+> **utf-8** en el desplegable de juego de caracteres al importar.
+>
+> Tras aplicarla, si vas a usar el cron de marketing, define el dominio público en
+> `config/config.local.php` — bajo cron no hay petición HTTP de la que deducirlo y los
+> enlaces de los correos saldrían rotos:
+>
+> ```php
+> define('APP_URL',      'https://nexo.kyrosrd.com');
+> define('MKT_CRON_KEY', 'una-cadena-larga-y-aleatoria');   // solo para el cron por URL
+> ```
+>
+> Detalles en [`docs/MARKETING.md`](docs/MARKETING.md).
 
 Las de rendimiento (p7 y p8) solo añaden índices: no tocan ni un dato, se pueden correr
 con el sistema en uso y da igual si se aplican antes o después de subir el código.

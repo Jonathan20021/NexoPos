@@ -66,6 +66,12 @@ if (isPost()) {
                 'limite_credito' => $limite,
                 'activo'         => $activo,
             ];
+            // Datos de marketing: existen solo con la migración P9 aplicada.
+            if (mkt_disponible()) {
+                $nac = trim(post('fecha_nacimiento'));
+                $datos['fecha_nacimiento'] = preg_match('/^\d{4}-\d{2}-\d{2}$/', $nac) ? $nac : null;
+                $datos['acepta_marketing'] = postInt('acepta_marketing');
+            }
             if ($id > 0) {
                 require_perm('clientes.editar');
                 dbUpdate('clientes', $datos, 'id = ?', [$id]);
@@ -185,7 +191,7 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
                     <a href="<?= e(url('modules/crm/cliente.php?id=' . (int) $c['id'])) ?>" class="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" title="Ficha 360° (CRM)"><?= icon('id', 'w-4 h-4') ?></a>
                   <?php endif; ?>
                   <?php if (can('clientes.editar')): ?>
-                    <button onclick="<?= jsEvent('cli:edit', ['id' => $c['id'], 'nombre' => $c['nombre'], 'rnc_cedula' => $c['rnc_cedula'], 'telefono' => $c['telefono'], 'email' => $c['email'], 'direccion' => $c['direccion'], 'tipo' => $c['tipo'], 'limite_credito' => $c['limite_credito'], 'activo' => $c['activo']]) ?>"
+                    <button onclick="<?= jsEvent('cli:edit', ['id' => $c['id'], 'nombre' => $c['nombre'], 'rnc_cedula' => $c['rnc_cedula'], 'telefono' => $c['telefono'], 'email' => $c['email'], 'direccion' => $c['direccion'], 'tipo' => $c['tipo'], 'limite_credito' => $c['limite_credito'], 'activo' => $c['activo'], 'fecha_nacimiento' => (string) ($c['fecha_nacimiento'] ?? ''), 'acepta_marketing' => (int) ($c['acepta_marketing'] ?? 1)]) ?>"
                             class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('clientes.eliminar') && (int) $c['id'] !== 1): ?>
@@ -206,8 +212,8 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
 </div>
 
 <!-- Modal crear/editar -->
-<div x-data="{open:false, form:{id:0,nombre:'',rnc_cedula:'',telefono:'',email:'',direccion:'',tipo:'contado',limite_credito:0,activo:1}}"
-     @cli:new.window="form={id:0,nombre:'',rnc_cedula:'',telefono:'',email:'',direccion:'',tipo:'contado',limite_credito:0,activo:1}; open=true"
+<div x-data="{open:false, form:{id:0,nombre:'',rnc_cedula:'',telefono:'',email:'',direccion:'',tipo:'contado',limite_credito:0,activo:1,fecha_nacimiento:'',acepta_marketing:1}}"
+     @cli:new.window="form={id:0,nombre:'',rnc_cedula:'',telefono:'',email:'',direccion:'',tipo:'contado',limite_credito:0,activo:1,fecha_nacimiento:'',acepta_marketing:1}; open=true"
      @cli:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
@@ -256,6 +262,19 @@ layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $ac
             <label class="label">Límite de crédito (RD$)</label>
             <input type="number" step="0.01" min="0" name="limite_credito" x-model="form.limite_credito" class="input" placeholder="0.00">
           </div>
+          <?php if (mkt_disponible()): ?>
+            <div>
+              <label class="label">Fecha de nacimiento</label>
+              <input type="date" name="fecha_nacimiento" x-model="form.fecha_nacimiento" class="input">
+              <p class="text-xs text-slate-400 mt-1">Habilita la felicitación automática de cumpleaños.</p>
+            </div>
+            <label class="flex items-start gap-2 text-sm text-slate-600 pt-7">
+              <input type="hidden" name="acepta_marketing" value="0">
+              <input type="checkbox" name="acepta_marketing" value="1" :checked="form.acepta_marketing==1"
+                     class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 mt-0.5">
+              <span>Acepta recibir promociones<br><span class="text-xs text-slate-400">Los correos de sus pedidos llegan igual</span></span>
+            </label>
+          <?php endif; ?>
           <label class="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2">
             <input type="hidden" name="activo" value="0">
             <input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"> Cliente activo

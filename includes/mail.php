@@ -64,6 +64,85 @@ function mail_enviar(string $para, string $asunto, string $html, array $opts = [
     return ['ok' => false, 'id' => null, 'error' => "Resend respondió $code: $msg"];
 }
 
+/**
+ * Envía varios correos en una sola petición (endpoint `/emails/batch` de Resend,
+ * hasta 100 por llamada). Mil correos uno por uno tardan minutos; en lotes, segundos.
+ *
+ * Si el lote entero falla (red caída, key inválida), se reintenta uno por uno:
+ * más lento, pero así un fallo de la API por lotes no deja la campaña parada.
+ *
+ * @param array $mensajes lista de ['para','asunto','html']
+ * @return array Resultados EN EL MISMO ORDEN: [['ok','id','error'], ...]
+ */
+function mail_enviar_lote(array $mensajes): array
+{
+    $n = count($mensajes);
+    if ($n === 0) return [];
+    if ($n === 1) {
+        return [mail_enviar($mensajes[0]['para'], $mensajes[0]['asunto'], $mensajes[0]['html'])];
+    }
+    if (!mail_configurado()) {
+        return array_fill(0, $n, ['ok' => false, 'id' => null, 'error' => 'Correo no configurado (falta RESEND_API_KEY).']);
+    }
+
+    // Los destinatarios inválidos no viajan al proveedor: rompen el lote entero.
+    $cuerpo = [];
+    $indices = [];
+    $out = array_fill(0, $n, null);
+    foreach ($mensajes as $i => $m) {
+        if (!filter_var($m['para'], FILTER_VALIDATE_EMAIL)) {
+            $out[$i] = ['ok' => false, 'id' => null, 'error' => 'Destinatario inválido: ' . $m['para']];
+            continue;
+        }
+        $item = [
+            'from'    => MAIL_FROM,
+            'to'      => [$m['para']],
+            'subject' => $m['asunto'],
+            'html'    => $m['html'],
+        ];
+        if (MAIL_REPLY_TO !== '') $item['reply_to'] = MAIL_REPLY_TO;
+        $indices[] = $i;
+        $cuerpo[]  = $item;
+    }
+    if (!$cuerpo) return $out;
+
+    $ch = curl_init('https://api.resend.com/emails/batch');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($cuerpo, JSON_UNESCAPED_UNICODE),
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . RESEND_API_KEY,
+            'Content-Type: application/json',
+        ],
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_CONNECTTIMEOUT => 8,
+    ]);
+    $resp = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $data = $resp === false ? [] : (json_decode($resp, true) ?: []);
+    $ids  = $data['data'] ?? null;
+
+    if ($code >= 200 && $code < 300 && is_array($ids)) {
+        foreach ($indices as $k => $i) {
+            $id = $ids[$k]['id'] ?? null;
+            $out[$i] = $id
+                ? ['ok' => true, 'id' => $id, 'error' => null]
+                : ['ok' => false, 'id' => null, 'error' => 'Resend no devolvió id para este correo.'];
+        }
+        return $out;
+    }
+
+    // Respaldo: el lote no pasó, se intenta uno por uno.
+    foreach ($indices as $i) {
+        $m = $mensajes[$i];
+        $out[$i] = mail_enviar($m['para'], $m['asunto'], $m['html']);
+    }
+    return $out;
+}
+
 /** Deja constancia del intento. Nunca interrumpe. */
 function mail_registrar(?int $pedidoId, string $evento, string $destinatario, string $asunto, array $r): void
 {

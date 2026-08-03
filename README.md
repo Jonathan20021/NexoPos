@@ -45,6 +45,11 @@ fiscales **NCF (B01/B02)** y **nómina dominicana** (TSS: AFP/SFS + ISR por esca
 - **Finanzas** — ingresos y gastos (se registran solos desde ventas/compras/nómina), cuentas,
   **comisiones de vendedores** (cálculo por % y pago) y **reportes gerenciales** (estado de
   resultados, ventas por categoría/sucursal/vendedor, etc.) exportables a **PDF profesional**.
+- **Marketing** — promociones automáticas (POS y tienda), **segmentos de clientes** por recencia,
+  frecuencia y monto, **campañas por correo** que salen solas (Resend, en lotes, con aperturas,
+  clics, bajas y ventas atribuidas), **consola de envío por WhatsApp** (wa.me, un clic por cliente)
+  y **automatizaciones**: bienvenida, cumpleaños, post-venta, recompra, cliente dormido y aviso de
+  saldo. Ver [`docs/MARKETING.md`](docs/MARKETING.md).
 - **Administración** — sucursales, usuarios (con asignación de sucursal y **% de comisión**),
   **roles y permisos por acción**, configuración de empresa/NCF/métodos de pago, **subida de logo**,
   **auditoría** (logs) y **respaldo de la base de datos** descargable (.sql).

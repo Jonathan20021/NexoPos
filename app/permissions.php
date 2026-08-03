@@ -72,7 +72,20 @@ function permission_catalog(): array
         ],
         'Marketing' => [
             'promociones' => ['label' => 'Promociones', 'acciones' => $crud],
-            'campanas'    => ['label' => 'Campañas por correo', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'editar' => 'Editar', 'eliminar' => 'Eliminar', 'enviar' => 'Enviar']],
+            'campanas'    => ['label' => 'Campañas (correo y WhatsApp)', 'acciones' => [
+                'ver'      => 'Ver',
+                'crear'    => 'Crear',
+                'editar'   => 'Editar',
+                'eliminar' => 'Eliminar',
+                'enviar'   => 'Enviar correos',
+                'whatsapp' => 'Consola de envío por WhatsApp',
+            ]],
+            'marketing'   => ['label' => 'Marketing (panel, segmentos y automatización)', 'acciones' => [
+                'ver'        => 'Ver el panel',
+                'segmentos'  => 'Crear y editar segmentos',
+                'plantillas' => 'Crear y editar plantillas',
+                'automatizar' => 'Encender y configurar automatizaciones',
+            ]],
         ],
         'CRM' => [
             'crm' => ['label' => 'CRM (ficha 360°, embudo y seguimientos)', 'acciones' => [

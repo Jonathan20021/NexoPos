@@ -2,6 +2,12 @@
 
 NexoPOS envía correos transaccionales con [Resend](https://resend.com).
 
+> Los correos **comerciales** (campañas, promociones, automatizaciones) usan esta
+> misma infraestructura pero tienen sus propias reglas —segmentos, rastreo,
+> bajas, envío por lotes— y se documentan aparte en
+> [`docs/MARKETING.md`](docs/MARKETING.md). Este archivo cubre solo los
+> transaccionales de la tienda.
+
 ## Regla de oro
 
 **Un correo que falla nunca rompe la operación que lo disparó.** Si Resend está

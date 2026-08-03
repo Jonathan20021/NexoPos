@@ -7,6 +7,9 @@
  * una vez cada NOTIF_SCAN_MINUTOS entre todos los usuarios).
  */
 notif_scan_si_toca();
+// Mismo enganche para el motor de marketing: despacha campañas programadas y
+// automatizaciones sin necesidad de cron. Solo entra si hay trabajo pendiente.
+mkt_tick_si_toca();
 
 $notifs     = notif_listar(['limit' => 12]);
 $noLeidas   = notif_no_leidas();

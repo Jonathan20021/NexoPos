@@ -45,8 +45,13 @@ function nav_groups(): array
             ['Tareas y Seguimientos', 'check', url('modules/crm/tareas.php'), 'crm.ver'],
         ]],
         ['Marketing', [
+            ['Panel de Marketing', 'megaphone', url('modules/marketing/index.php'), 'marketing.ver'],
+            ['Campañas', 'mail', url('modules/marketing/campanas.php'), 'campanas.ver'],
+            ['Envíos por WhatsApp', 'phone', url('modules/marketing/whatsapp.php'), 'campanas.whatsapp'],
+            ['Automatizaciones', 'pulse', url('modules/marketing/automatizaciones.php'), 'marketing.automatizar'],
+            ['Segmentos de clientes', 'users', url('modules/marketing/segmentos.php'), 'marketing.segmentos'],
+            ['Plantillas', 'file', url('modules/marketing/plantillas.php'), 'marketing.plantillas'],
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
-            ['Campañas por correo', 'mail', url('modules/marketing/campanas.php'), 'campanas.ver'],
         ]],
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],

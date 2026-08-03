@@ -51,6 +51,15 @@ if (isPost()) {
                 'canal' => $canal, 'fecha_inicio' => $ini, 'fecha_fin' => $fin,
                 'prioridad' => $prio, 'activo' => $activo,
             ];
+
+            // Material para el correo: existe solo con la migración de marketing
+            // aplicada, así que se añade condicionalmente.
+            if (mkt_disponible()) {
+                $actual = $id > 0 ? qVal("SELECT imagen FROM promociones WHERE id = ?", [$id]) : null;
+                $datos['descripcion'] = mb_substr(trim(post('descripcion')), 0, 255) ?: null;
+                $datos['imagen']      = guardar_imagen('imagen', 'promociones', $actual);
+            }
+
             if ($id > 0) {
                 require_perm('promociones.editar');
                 if (!qVal("SELECT 1 FROM promociones WHERE id=?", [$id])) throw new RuntimeException('Promoción no encontrada.');
@@ -140,7 +149,12 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
                 : money((float) $p['valor']);
           ?>
             <tr>
-              <td class="font-semibold text-slate-700"><?= e($p['nombre']) ?></td>
+              <td>
+                <p class="font-semibold text-slate-700"><?= e($p['nombre']) ?></p>
+                <?php if (!empty($p['descripcion'])): ?>
+                  <p class="text-xs text-slate-400 max-w-[240px] truncate"><?= e($p['descripcion']) ?></p>
+                <?php endif; ?>
+              </td>
               <td><span class="badge badge-rose"><?= e($desc) ?></span></td>
               <td class="text-slate-600 text-sm"><?= e(promo_objetivo_label($p, $catMap, $marMap, $proMap)) ?></td>
               <td class="text-slate-500 text-sm"><?= e($canales[$p['canal']] ?? $p['canal']) ?></td>
@@ -148,9 +162,15 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
               <td class="text-center"><?= badge($et, $col) ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
+                  <?php if (mkt_disponible() && can('campanas.crear') && $p['activo'] && $p['fecha_fin'] >= $hoy): ?>
+                    <a href="<?= e(url('modules/marketing/campanas.php?nueva=1&promocion=' . (int) $p['id'])) ?>"
+                       class="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
+                       title="Anunciarla en una campaña"><?= icon('megaphone', 'w-4 h-4') ?></a>
+                  <?php endif; ?>
                   <?php if (can('promociones.editar')): ?>
                     <button onclick="<?= jsEvent('promo:edit', [
                         'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'tipo' => $p['tipo'],
+                        'descripcion' => (string) ($p['descripcion'] ?? ''),
                         'valor' => (float) $p['valor'], 'alcance' => $p['alcance'],
                         'objetivo_id' => $p['objetivo_id'] !== null ? (int) $p['objetivo_id'] : '',
                         'canal' => $p['canal'], 'fecha_inicio' => $p['fecha_inicio'], 'fecha_fin' => $p['fecha_fin'],
@@ -174,13 +194,16 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
 </div>
 
 <!-- Modal crear/editar -->
-<div x-data="{open:false, f:{id:0,nombre:'',tipo:'porcentaje',valor:0,alcance:'todos',objetivo_id:'',canal:'ambos',fecha_inicio:'<?= $hoy ?>',fecha_fin:'<?= $hoy ?>',prioridad:0,activo:1}}"
-     @promo:new.window="f={id:0,nombre:'',tipo:'porcentaje',valor:0,alcance:'todos',objetivo_id:'',canal:'ambos',fecha_inicio:'<?= $hoy ?>',fecha_fin:'<?= $hoy ?>',prioridad:0,activo:1}; open=true"
+<?php $promoVacia = ['id' => 0, 'nombre' => '', 'descripcion' => '', 'tipo' => 'porcentaje', 'valor' => 0,
+                    'alcance' => 'todos', 'objetivo_id' => '', 'canal' => 'ambos',
+                    'fecha_inicio' => $hoy, 'fecha_fin' => $hoy, 'prioridad' => 0, 'activo' => 1]; ?>
+<div x-data="{open:false, f:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>, vacio:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>}"
+     @promo:new.window="f=JSON.parse(JSON.stringify(vacio)); open=true"
      @promo:edit.window="f=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
-      <form method="post">
+      <form method="post" enctype="multipart/form-data">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="guardar">
         <input type="hidden" name="id" :value="f.id">
@@ -193,6 +216,18 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
             <label class="label">Nombre *</label>
             <input type="text" name="nombre" x-model="f.nombre" required class="input" placeholder="Ej. Navidad 20%">
           </div>
+          <?php if (mkt_disponible()): ?>
+            <div>
+              <label class="label">Descripción para el cliente</label>
+              <input type="text" name="descripcion" x-model="f.descripcion" maxlength="255" class="input"
+                     placeholder="Ej. En toda la línea de electrodomésticos, solo esta semana">
+              <p class="text-xs text-slate-400 mt-1">Es el texto que se ve en el correo de la campaña. En el POS no aparece.</p>
+            </div>
+            <div>
+              <label class="label">Imagen (para campañas)</label>
+              <input type="file" name="imagen" accept="image/*" class="input py-2">
+            </div>
+          <?php endif; ?>
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="label">Tipo de descuento *</label>
