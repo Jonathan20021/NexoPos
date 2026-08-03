@@ -1487,7 +1487,7 @@ INSERT INTO marketing_segmentos
   ('WhatsApp: todos con teléfono', 'Clientes activos con un número válido para wa.me', 0, 1, 'cualquiera', 'cualquiera', NULL, NULL, 1, NULL, 0);
 
 INSERT INTO marketing_plantillas (nombre, categoria, asunto, preheader, contenido, cta_texto, whatsapp_texto, es_sistema) VALUES
-  ('Promoción de temporada', 'promocion', '{{cliente}}, {{descuento}} de descuento por tiempo limitado', 'Aprovecha antes de que termine la promoción',
+  ('Promoción de temporada', 'promocion', '{{cliente}}, aprovecha {{descuento}} por tiempo limitado', 'Aprovecha antes de que termine la promoción',
    '<p>Hola <strong>{{cliente}}</strong>,</p><p>Preparamos algo para ti: <strong>{{promo}}</strong> con <strong>{{descuento}}</strong>.</p><p>La promoción está vigente {{vigencia}}. Pasa por la tienda o escríbenos y te apartamos lo tuyo.</p>',
    'Ver la promoción', 'Hola {{cliente}}, te escribo de {{empresa}}. Tenemos {{promo}} con {{descuento}}, vigente {{vigencia}}. ¿Te aparto el tuyo?', 1),
   ('Bienvenida a un cliente nuevo', 'bienvenida', '¡Bienvenido a {{empresa}}, {{cliente}}!', 'Gracias por tu primera compra',

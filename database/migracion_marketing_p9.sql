@@ -308,7 +308,7 @@ WHERE NOT EXISTS (SELECT 1 FROM marketing_segmentos WHERE nombre = 'WhatsApp: to
 INSERT INTO marketing_plantillas (nombre, categoria, asunto, preheader, contenido, cta_texto, whatsapp_texto, es_sistema)
 SELECT * FROM (SELECT
   'Promoción de temporada' n, 'promocion' c,
-  '{{cliente}}, {{descuento}} de descuento por tiempo limitado' a,
+  '{{cliente}}, aprovecha {{descuento}} por tiempo limitado' a,
   'Aprovecha antes de que termine la promoción' p,
   '<p>Hola <strong>{{cliente}}</strong>,</p><p>Preparamos algo para ti: <strong>{{promo}}</strong> con <strong>{{descuento}}</strong>.</p><p>La promoción está vigente {{vigencia}}. Pasa por la tienda o escríbenos y te apartamos lo tuyo.</p>' t,
   'Ver la promoción' b,

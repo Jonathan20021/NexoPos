@@ -1099,6 +1099,7 @@ function mkt_auto_correr(array $a): array
     $encolados = 0;
 
     foreach ($candidatos as $cand) {
+        $alcanzado = false;
         foreach ($canales as $canal) {
             $destino = $canal === 'email'
                 ? strtolower(trim((string) $cand['email']))
@@ -1114,14 +1115,22 @@ function mkt_auto_correr(array $a): array
                  VALUES (?, ?, ?, ?, ?, ?, 'pendiente')",
                 [$campanaId, (int) $cand['cliente_id'], $canal, $destino, $cand['nombre'], mkt_token()]
             );
-            if ($st->rowCount() > 0) $encolados++;
+            if ($st->rowCount() > 0) { $encolados++; $alcanzado = true; }
         }
 
-        // La bitácora se escribe aunque no haya destino: así no se reintenta
-        // eternamente a un cliente sin correo ni teléfono.
-        q("INSERT IGNORE INTO marketing_automatizacion_log (automatizacion_id, cliente_id, periodo, campana_id)
-           VALUES (?, ?, ?, ?)",
-          [(int) $a['id'], (int) $cand['cliente_id'], (string) $cand['periodo'], $campanaId]);
+        // La bitácora solo se escribe si el mensaje llegó a encolarse.
+        //
+        // Anotarlo igual parecía razonable («no reintentar a quien no tiene
+        // correo»), pero quemaba la oportunidad: en «Bienvenida» el periodo es
+        // único de por vida, así que un cliente registrado hoy sin correo no
+        // recibiría jamás la bienvenida aunque mañana nos diera su dirección.
+        // No anotarlo no genera reintentos infinitos: cada disparador busca en
+        // una ventana de tiempo acotada y el cliente sale de ella solo.
+        if ($alcanzado) {
+            q("INSERT IGNORE INTO marketing_automatizacion_log (automatizacion_id, cliente_id, periodo, campana_id)
+               VALUES (?, ?, ?, ?)",
+              [(int) $a['id'], (int) $cand['cliente_id'], (string) $cand['periodo'], $campanaId]);
+        }
     }
 
     dbUpdate('marketing_automatizaciones', [
