@@ -177,6 +177,7 @@ CREATE TABLE proveedores (
   telefono VARCHAR(40) NULL,
   email VARCHAR(120) NULL,
   direccion VARCHAR(255) NULL,
+  balance DECIMAL(12,2) NOT NULL DEFAULT 0,   -- lo que se le debe (cuentas por pagar)
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -265,6 +266,10 @@ CREATE TABLE compras (
   ncf_modificado VARCHAR(19) NULL,      -- col.5  NCF afectado por nota de crédito/débito
   sucursal_id INT UNSIGNED NOT NULL,
   proveedor_id INT UNSIGNED NULL,
+  moneda_id    INT UNSIGNED NULL,              -- moneda de la factura del proveedor
+  tasa_cambio  DECIMAL(14,6) NOT NULL DEFAULT 1,
+  saldo        DECIMAL(12,2) NOT NULL DEFAULT 0,   -- pendiente de pago, en pesos
+  saldo_moneda DECIMAL(14,2) NOT NULL DEFAULT 0,   -- el mismo pendiente en su moneda
   tipo_bien_servicio TINYINT UNSIGNED NULL, -- col.3  catálogo 1..11
   fecha DATE NOT NULL,
   fecha_comprobante DATE NULL,          -- col.6
@@ -286,6 +291,7 @@ CREATE TABLE compras (
   forma_pago TINYINT UNSIGNED NULL,                       -- col.23 catálogo 1..7
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
   total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total_moneda DECIMAL(14,2) NULL,             -- total pactado en la moneda de la factura
   estado ENUM('pendiente','recibida','anulada') NOT NULL DEFAULT 'recibida',
   notas VARCHAR(255) NULL,
   usuario_id INT UNSIGNED NULL,
@@ -1039,6 +1045,104 @@ CREATE TABLE promociones (
   PRIMARY KEY (id),
   KEY idx_promo_vigencia (activo, fecha_inicio, fecha_fin),
   KEY idx_promo_alcance (alcance, objetivo_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== MONEDAS · CxP · COTIZACIONES ==========================
+-- La contabilidad vive en pesos: todos los importes de `transacciones`,
+-- reportes y DGII son RD$. Lo que se guarda aparte es lo pactado en otra
+-- moneda y su tasa, para calcular la diferencia cambiaria al pagar.
+
+DROP TABLE IF EXISTS monedas;
+CREATE TABLE monedas (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo     VARCHAR(3)   NOT NULL,
+  nombre     VARCHAR(60)  NOT NULL,
+  simbolo    VARCHAR(6)   NOT NULL,
+  tasa       DECIMAL(14,6) NOT NULL DEFAULT 1,   -- pesos por 1 unidad
+  es_base    TINYINT(1)   NOT NULL DEFAULT 0,
+  activo     TINYINT(1)   NOT NULL DEFAULT 1,
+  updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_moneda_codigo (codigo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO monedas (codigo, nombre, simbolo, tasa, es_base, activo) VALUES
+  ('DOP', 'Peso dominicano', 'RD$', 1.000000, 1, 1),
+  ('USD', 'Dólar estadounidense', 'US$', 60.000000, 0, 1),
+  ('EUR', 'Euro', '€', 65.000000, 0, 0);
+
+-- Pagos a proveedores. `monto` es SIEMPRE lo que salió del banco, en pesos.
+DROP TABLE IF EXISTS pagos_proveedores;
+CREATE TABLE pagos_proveedores (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  proveedor_id   INT UNSIGNED NOT NULL,
+  compra_id      INT UNSIGNED NULL,
+  sucursal_id    INT UNSIGNED NULL,
+  monto          DECIMAL(12,2) NOT NULL,
+  moneda_id      INT UNSIGNED NULL,
+  monto_moneda   DECIMAL(14,2) NULL,
+  tasa_cambio    DECIMAL(14,6) NOT NULL DEFAULT 1,
+  diferencia_cambiaria DECIMAL(12,2) NOT NULL DEFAULT 0,
+  metodo_pago_id INT UNSIGNED NULL,
+  referencia     VARCHAR(60) NULL,
+  notas          VARCHAR(255) NULL,
+  usuario_id     INT UNSIGNED NULL,
+  fecha          DATETIME NOT NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_pp_proveedor (proveedor_id),
+  KEY idx_pp_compra (compra_id),
+  KEY idx_pp_fecha (fecha),
+  CONSTRAINT fk_pp_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Cotizaciones: los importes van en la moneda del documento; `total_base` en pesos.
+DROP TABLE IF EXISTS cotizaciones;
+CREATE TABLE cotizaciones (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero       VARCHAR(30) NOT NULL,
+  cliente_id   INT UNSIGNED NOT NULL,
+  sucursal_id  INT UNSIGNED NOT NULL,
+  fecha        DATE NOT NULL,
+  validez_dias INT NOT NULL DEFAULT 15,
+  vence        DATE NOT NULL,
+  moneda_id    INT UNSIGNED NULL,
+  tasa_cambio  DECIMAL(14,6) NOT NULL DEFAULT 1,
+  subtotal     DECIMAL(14,2) NOT NULL DEFAULT 0,
+  descuento    DECIMAL(14,2) NOT NULL DEFAULT 0,
+  itbis        DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total        DECIMAL(14,2) NOT NULL DEFAULT 0,
+  total_base   DECIMAL(14,2) NOT NULL DEFAULT 0,
+  estado       ENUM('borrador','enviada','aceptada','rechazada','vencida','facturada') NOT NULL DEFAULT 'borrador',
+  condiciones  TEXT NULL,
+  notas        VARCHAR(500) NULL,
+  venta_id     INT UNSIGNED NULL,
+  usuario_id   INT UNSIGNED NULL,
+  enviada_at   DATETIME NULL,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cot_numero (numero),
+  KEY idx_cot_cliente (cliente_id),
+  KEY idx_cot_estado (estado, vence),
+  KEY idx_cot_sucursal (sucursal_id),
+  CONSTRAINT fk_cot_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS cotizacion_detalles;
+CREATE TABLE cotizacion_detalles (
+  id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cotizacion_id   INT UNSIGNED NOT NULL,
+  producto_id     INT UNSIGNED NULL,
+  descripcion     VARCHAR(255) NOT NULL,
+  cantidad        DECIMAL(12,3) NOT NULL DEFAULT 1,
+  precio_unitario DECIMAL(14,2) NOT NULL DEFAULT 0,
+  itbis           DECIMAL(14,2) NOT NULL DEFAULT 0,
+  subtotal        DECIMAL(14,2) NOT NULL DEFAULT 0,
+  orden           INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_cotd_cot (cotizacion_id),
+  CONSTRAINT fk_cotd_cot FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== MARKETING (campañas, segmentos, automatización) =======

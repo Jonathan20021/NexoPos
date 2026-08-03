@@ -36,6 +36,12 @@ function mail_enviar(string $para, string $asunto, string $html, array $opts = [
     $replyTo = $opts['reply_to'] ?? MAIL_REPLY_TO;
     if ($replyTo !== '') $cuerpo['reply_to'] = $replyTo;
 
+    // Adjuntos: [['filename' => 'cotizacion.pdf', 'content' => base64], ...]
+    if (!empty($opts['attachments']) && is_array($opts['attachments'])) {
+        $cuerpo['attachments'] = array_values(array_filter($opts['attachments'],
+            fn($a) => !empty($a['filename']) && !empty($a['content'])));
+    }
+
     $ch = curl_init('https://api.resend.com/emails');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,

@@ -14,12 +14,21 @@ $p = rep_periodo('anio');
 $corte = date('Y-m-d');
 
 /* ---------- Pendientes de pago ---------- */
+// Con cuentas por pagar aplicada, lo pendiente es el SALDO de cada factura: una
+// compra abonada a medias sigue debiendo, y antes desaparecía del reporte en
+// cuanto se le ponía fecha de pago. Sin la migración se mantiene el criterio
+// viejo (pagada / no pagada) para no romper una instalación sin actualizar.
+$columnaSaldo = cxp_disponible() ? 'c.saldo' : 'c.total';
+$filtroDeuda  = cxp_disponible()
+    ? "c.saldo > 0.01"
+    : "c.forma_pago = 4 AND c.fecha_pago IS NULL";
+
 $pendientes = qAll(
-    "SELECT c.id, c.numero, c.ncf, c.fecha, c.fecha_comprobante, c.total, c.subtotal, c.itbis,
+    "SELECT c.id, c.numero, c.ncf, c.fecha, c.fecha_comprobante, $columnaSaldo AS total, c.subtotal, c.itbis,
             c.proveedor_id, COALESCE(pr.nombre,'Sin proveedor') AS proveedor, pr.rnc, pr.telefono, pr.email
        FROM compras c
        LEFT JOIN proveedores pr ON pr.id = c.proveedor_id
-      WHERE c.estado <> 'anulada' AND c.forma_pago = 4 AND c.fecha_pago IS NULL AND $scope
+      WHERE c.estado <> 'anulada' AND $filtroDeuda AND $scope
       ORDER BY COALESCE(c.fecha_comprobante, c.fecha) ASC",
     $scopeP
 );
@@ -64,11 +73,18 @@ $comprasPeriodo = qAll(
 );
 $totalCompras = array_sum(array_column($comprasPeriodo, 'total'));
 
-$pagadoPeriodo = (float) qVal(
-    "SELECT COALESCE(SUM(c.total),0) FROM compras c
-      WHERE c.estado <> 'anulada' AND c.fecha_pago BETWEEN ? AND ? AND $scope",
-    array_merge([$p['desde'], $p['hasta']], $scopeP)
-);
+// Lo pagado en el periodo sale de los pagos reales, no de la fecha de la
+// factura: así un abono parcial cuenta por lo que se pagó y no por el total.
+[$scopePagos, $scopePagosP] = rep_scope('pp.sucursal_id');
+$pagadoPeriodo = cxp_disponible()
+    ? (float) qVal(
+        "SELECT COALESCE(SUM(pp.monto),0) FROM pagos_proveedores pp
+          WHERE pp.fecha BETWEEN ? AND ? AND $scopePagos",
+        array_merge([$p['desde'] . ' 00:00:00', $p['hasta'] . ' 23:59:59'], $scopePagosP))
+    : (float) qVal(
+        "SELECT COALESCE(SUM(c.total),0) FROM compras c
+          WHERE c.estado <> 'anulada' AND c.fecha_pago BETWEEN ? AND ? AND $scope",
+        array_merge([$p['desde'], $p['hasta']], $scopeP));
 
 $etiquetas = [
     'corriente' => ['Al día (0-30)', 'emerald'], 'b30' => ['31 a 60 días', 'amber'],

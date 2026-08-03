@@ -86,18 +86,50 @@ if (isPost()) {
                 usort($det, fn($a, $b) => $a['pid'] <=> $b['pid']);
                 $total = $subtotal + $itbisTotal;
                 $numero = nextNumero('compras', 'numero', 'COM');
+
+                // ---- Moneda del documento ----
+                // Los importes de arriba YA están en pesos: el formulario pide el
+                // costo en la moneda elegida y lo convierte antes de llegar aquí.
+                // Aquí solo se guarda con qué se pactó y a qué tasa, para poder
+                // calcular la diferencia cambiaria el día que se pague.
+                $monedaId  = cxp_disponible() ? (postInt('moneda_id') ?: (int) monedaBase()['id']) : null;
+                $tasaDoc   = cxp_disponible() ? max(0.000001, (float) (postNum('tasa_cambio') ?: mon_tasa($monedaId))) : 1.0;
+                $esCredito = (int) ($dgii['forma_pago'] ?? 0) === 4 && !$dgii['fecha_pago'];
+
+                $extra = [];
+                if (cxp_disponible()) {
+                    $extra = [
+                        'moneda_id'    => $monedaId,
+                        'tasa_cambio'  => $tasaDoc,
+                        'total_moneda' => mon_desdeBase($total, $tasaDoc),
+                        'saldo'        => $esCredito ? $total : 0,
+                        'saldo_moneda' => $esCredito ? mon_desdeBase($total, $tasaDoc) : 0,
+                    ];
+                }
+
                 $compraId = dbInsert('compras', array_merge([
                     'numero' => $numero, 'sucursal_id' => $sucursalId, 'proveedor_id' => $proveedorId, 'fecha' => $fecha,
                     'subtotal' => $subtotal, 'monto_bienes' => $montoBienes, 'monto_servicios' => $montoServicios,
                     'itbis' => $itbisTotal, 'descuento' => 0, 'total' => $total,
                     'estado' => 'recibida', 'usuario_id' => current_user()['id'],
-                ], $dgii, ['ncf' => $dgii['ncf'] ?: null]));
+                ], $dgii, ['ncf' => $dgii['ncf'] ?: null], $extra));
                 foreach ($det as $d) {
                     dbInsert('compra_detalles', ['compra_id' => $compraId, 'producto_id' => $d['pid'], 'cantidad' => $d['cant'], 'costo_unitario' => $d['costo'], 'itbis' => $d['itbis'], 'subtotal' => $d['base']]);
                     ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero);
                     q("UPDATE productos SET precio_compra = ? WHERE id = ?", [$d['costo'], $d['pid']]);
                 }
-                registrarTransaccion('gasto', $total, ['sucursal_id' => $sucursalId, 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $sucursalId), 'categoria_id' => categoriaFinancieraId('gasto', 'Compra de Mercancía'), 'descripcion' => 'Compra ' . $numero, 'referencia_tipo' => 'compra', 'referencia_id' => $compraId, 'fecha' => $fecha]);
+
+                // UNA COMPRA A CRÉDITO NO SACA DINERO HOY.
+                //
+                // Antes toda compra registraba un gasto de efectivo aunque fuera a
+                // 90 días: el flujo de caja mostraba salidas que no habían
+                // ocurrido. Ahora, si es a crédito, se registra la deuda y el
+                // movimiento de dinero se hace al pagar (includes/cxp.php).
+                if ($esCredito && cxp_disponible() && $proveedorId) {
+                    q("UPDATE proveedores SET balance = balance + ? WHERE id = ?", [$total, $proveedorId]);
+                } else {
+                    registrarTransaccion('gasto', $total, ['sucursal_id' => $sucursalId, 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $sucursalId), 'categoria_id' => categoriaFinancieraId('gasto', 'Compra de Mercancía'), 'descripcion' => 'Compra ' . $numero, 'referencia_tipo' => 'compra', 'referencia_id' => $compraId, 'fecha' => $fecha]);
+                }
                 return $compraId;
             });
             audit('compras', 'crear', 'Compra registrada', ['tabla' => 'compras', 'registro_id' => $compraId]);
@@ -129,6 +161,16 @@ if (isPost()) {
                     if ($tr['cuenta_id']) q("UPDATE cuentas_financieras SET balance = balance + ? WHERE id = ?", [$tr['monto'], $tr['cuenta_id']]);
                     q("DELETE FROM transacciones WHERE id = ?", [$tr['id']]);
                 }
+
+                // Si quedaba saldo por pagar, la deuda con el proveedor se cae con
+                // la compra. Lo ya pagado NO se devuelve solo: eso es una nota de
+                // crédito o una devolución, y se registra aparte.
+                if (cxp_disponible() && (float) $c['saldo'] > 0 && $c['proveedor_id']) {
+                    q("UPDATE proveedores SET balance = GREATEST(0, balance - ?) WHERE id = ?",
+                      [(float) $c['saldo'], (int) $c['proveedor_id']]);
+                    dbUpdate('compras', ['saldo' => 0, 'saldo_moneda' => 0], 'id = ?', [$id]);
+                }
+
                 dbUpdate('compras', ['estado' => 'anulada'], 'id = ?', [$id]);
             });
             audit('compras', 'anular', "Compra anulada #$id", ['tabla' => 'compras', 'registro_id' => $id]);
@@ -269,6 +311,37 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
           <div><label class="label">Sucursal *</label><select name="sucursal_id" required class="select"><?php foreach ($sucursales as $s): ?><option value="<?= (int) $s['id'] ?>"><?= e($s['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Fecha</label><input type="date" name="fecha" value="<?= date('Y-m-d') ?>" class="input"></div>
         </div>
+
+        <?php if (cxp_disponible() && mon_hayExtranjeras()): ?>
+          <!-- Moneda: los costos de las líneas se escriben en ESTA moneda y se
+               convierten a pesos al guardar. La contabilidad sigue en pesos. -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4" x-data="{
+                 moneda: <?= (int) monedaBase()['id'] ?>, tasa: 1, base: <?= (int) monedaBase()['id'] ?>,
+                 cambiar(ev) { const o = ev.target.selectedOptions[0]; this.tasa = Number(o.dataset.tasa) || 1; }
+               }">
+            <div>
+              <label class="label">Moneda de la factura</label>
+              <select name="moneda_id" x-model.number="moneda" @change="cambiar($event)" class="select">
+                <?php foreach (monedas() as $m): ?>
+                  <option value="<?= (int) $m['id'] ?>" data-tasa="<?= e((string) $m['tasa']) ?>"><?= e($m['codigo']) ?> — <?= e($m['nombre']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+            <div x-show="moneda !== base">
+              <label class="label">Tasa de cambio</label>
+              <input type="number" step="0.0001" min="0.0001" name="tasa_cambio" x-model.number="tasa" class="input">
+            </div>
+            <div x-show="moneda !== base" class="sm:col-span-1 flex items-end">
+              <p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+                Escribe los costos de las líneas <strong>en pesos ya convertidos</strong>. La moneda y la tasa
+                se guardan para calcular la diferencia cambiaria al pagar.
+              </p>
+            </div>
+          </div>
+        <?php elseif (cxp_disponible()): ?>
+          <input type="hidden" name="moneda_id" value="<?= (int) monedaBase()['id'] ?>">
+          <input type="hidden" name="tasa_cambio" value="1">
+        <?php endif; ?>
 
         <!-- Datos fiscales: alimentan el Formato 606 de la DGII -->
         <div x-data="{ fiscal: false }" class="rounded-xl border border-slate-200 bg-slate-50/60">

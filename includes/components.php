@@ -17,6 +17,7 @@ function nav_groups(): array
             ['Pedidos en línea', 'store', url('modules/pos/pedidos.php'), 'pedidos.ver'],
             ['Devoluciones', 'undo', url('modules/pos/devoluciones.php'), 'devoluciones.ver'],
             ['Clientes', 'users', url('modules/pos/clientes.php'), 'clientes.ver'],
+            ['Cotizaciones', 'file', url('modules/pos/cotizaciones.php'), 'cotizaciones.ver'],
             ['Cuentas por Cobrar', 'wallet', url('modules/pos/cuentas_cobrar.php'), 'clientes.ver'],
             ['Terminales offline', 'cash', url('modules/pos/terminales.php'), 'pos.terminales'],
         ]],
@@ -29,6 +30,7 @@ function nav_groups(): array
             ['Movimientos', 'history', url('modules/inventario/movimientos.php'), 'inventario.ver'],
             ['Compras', 'truck', url('modules/inventario/compras.php'), 'compras.ver'],
             ['Proveedores', 'briefcase', url('modules/inventario/proveedores.php'), 'proveedores.ver'],
+            ['Cuentas por Pagar', 'wallet', url('modules/inventario/cuentas_pagar.php'), 'cxp.ver'],
             ['Transferencias', 'transfer', url('modules/inventario/transferencias.php'), 'transferencias.ver'],
         ]],
         ['Recursos Humanos', [
@@ -78,6 +80,7 @@ function nav_groups(): array
             ['Usuarios', 'user', url('modules/admin/usuarios.php'), 'usuarios.ver'],
             ['Roles y Permisos', 'shield', url('modules/admin/roles.php'), 'roles.ver'],
             ['Configuración', 'settings', url('modules/admin/configuracion.php'), 'configuracion.ver'],
+            ['Monedas y tasa', 'coins', url('modules/admin/monedas.php'), 'monedas.gestionar'],
             ['Auditoría / Logs', 'list', url('modules/admin/auditoria.php'), 'auditoria.ver'],
             ['Integridad de datos', 'shield', url('modules/admin/integridad.php'), 'configuracion.ver'],
             ['Respaldo', 'download', url('modules/admin/respaldo.php'), 'configuracion.ver'],

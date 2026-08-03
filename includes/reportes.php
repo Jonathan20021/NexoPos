@@ -481,7 +481,12 @@ function rep_scope(string $col = 'v.sucursal_id'): array
 /** WHERE de gastos OPERATIVOS (nómina, comisiones, alquiler, servicios...). */
 function rep_where_gastos(string $a = 't'): string
 {
-    return "$a.tipo = 'gasto' AND ($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('compra','devolucion'))";
+    // 'pago_proveedor' queda fuera por la misma razón que 'compra': es mercancía,
+    // que es inventario y ya pesa en el costo de ventas. Contarlo aquí sería
+    // cargar dos veces la misma compra al resultado.
+    //
+    // La diferencia cambiaria SÍ entra: es un gasto financiero real del periodo.
+    return "$a.tipo = 'gasto' AND ($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('compra','devolucion','pago_proveedor'))";
 }
 
 /** WHERE de otros ingresos que NO vienen de facturar. */
@@ -499,7 +504,10 @@ function rep_where_otros_ingresos(string $a = 't'): string
  */
 function rep_where_flujo(string $a = 't'): string
 {
-    return "($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('depreciacion'))";
+    // 'diferencia_cambiaria' se suma aquí: el dinero que salió por el cambio del
+    // dólar YA está dentro del pago al proveedor. Contarla aparte sacaría de la
+    // caja un dinero que solo salió una vez.
+    return "($a.referencia_tipo IS NULL OR $a.referencia_tipo NOT IN ('depreciacion','diferencia_cambiaria'))";
 }
 
 /** Gasto operativo del periodo dentro del alcance actual. */

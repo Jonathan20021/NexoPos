@@ -74,6 +74,49 @@ function pdf_brand_header(string $titulo, string $subtituloDoc = ''): string
 }
 
 /** Renderiza y envía un PDF. $modo: 'inline' (ver) o 'download'. */
+/**
+ * Genera el PDF y devuelve sus bytes en vez de enviarlo al navegador.
+ *
+ * Existe para adjuntarlo a un correo (una cotización que se le manda al
+ * cliente). `pdf_render()` termina con `exit`, así que no servía: se separó el
+ * armado del envío para que ambos usen el MISMO documento y no haya dos PDF
+ * distintos del mismo papel.
+ */
+function pdf_bytes(string $bodyHtml, string $orientation = 'portrait'): string
+{
+    $dompdf = pdf_documento($bodyHtml, $orientation);
+    return (string) $dompdf->output();
+}
+
+/** Arma el Dompdf ya renderizado. Uso interno de pdf_render() y pdf_bytes(). */
+function pdf_documento(string $bodyHtml, string $orientation = 'portrait'): Dompdf
+{
+    $options = new Options();
+    $options->set('isRemoteEnabled', true);
+    $options->set('isPhpEnabled', true); // numeración de páginas
+    $options->set('defaultFont', 'DejaVu Sans');
+    $options->set('defaultPaperSize', 'A4');
+
+    $dompdf = new Dompdf($options);
+    $html = '<!DOCTYPE html><html><head><meta charset="utf-8">' . pdf_css() . '</head><body>'
+        . $bodyHtml
+        . '<script type="text/php">
+            if (isset($pdf)) {
+                $w = $pdf->get_width(); $h = $pdf->get_height();
+                $txt = "Página {PAGE_NUM} de {PAGE_COUNT}";
+                $font = $fontMetrics->getFont("DejaVu Sans", "normal");
+                $pdf->page_text($w - 120, $h - 28, $txt, $font, 8, array(0.6,0.6,0.6));
+                $pdf->page_text(40, $h - 28, "' . addslashes(APP_NAME) . '", $font, 8, array(0.7,0.7,0.7));
+            }
+          </script>'
+        . '</body></html>';
+
+    $dompdf->loadHtml($html, 'UTF-8');
+    $dompdf->setPaper('A4', $orientation);
+    $dompdf->render();
+    return $dompdf;
+}
+
 function pdf_render(string $bodyHtml, string $filename, string $orientation = 'portrait', string $modo = 'inline'): void
 {
     while (ob_get_level() > 0) ob_end_clean();

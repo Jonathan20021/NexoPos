@@ -24,6 +24,8 @@ function registrarVentaPOS(array $in, array $ctx): array
     $uid          = (int) $ctx['uid'];
     $sesion       = $ctx['sesion'];
     $puedeMuestra = !empty($ctx['puede_muestra']);
+    // Solo lo activa código del servidor (facturar una cotización). Ver más abajo.
+    $preciosPactados = !empty($ctx['precios_pactados']);
 
     $cart        = is_array($in['cart'] ?? null) ? $in['cart'] : [];
     $descuento   = max(0.0, (float) ($in['descuento'] ?? 0));
@@ -51,7 +53,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     // abortar una transacción por interbloqueo o espera de bloqueo. Eso no es un
     // problema del negocio y no debe llegarle al cajero como «error»: se reintenta
     // y la venta entra. Los errores reales (stock, crédito, NCF) suben igual.
-    return txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId) {
+    return txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -80,6 +82,19 @@ function registrarVentaPOS(array $in, array $ctx): array
             // ignora la promoción: su precio es 0 de todos modos.
             $precioReal = aplicarPromocion((float) $p['precio_venta'], $p, 'pos')['precio'];
             $precio = $esMuestra ? 0.0 : $precioReal;
+
+            // Precio pactado en una cotización aceptada.
+            //
+            // El navegador NUNCA decide un precio: por eso arriba se recalcula
+            // todo contra el catálogo. Pero una cotización firmada es un
+            // compromiso, y si el precio de lista subió entre la cotización y la
+            // factura, el cliente tiene que pagar lo que se le prometió. Solo se
+            // acepta cuando quien llama lo marca explícitamente, y ese marcado
+            // únicamente lo pone código del servidor que leyó el precio de la
+            // propia cotización guardada en la base.
+            if (!$esMuestra && $preciosPactados && isset($item['precio']) && (float) $item['precio'] >= 0) {
+                $precio = round((float) $item['precio'], 2);
+            }
             $base   = round($precio * $cant, 2);
             $itbis  = ($esMuestra || !$p['itbis_aplica']) ? 0.0 : round($base * $tasaItbis / 100, 2);
             $subtotal   += $base;
@@ -132,7 +147,10 @@ function registrarVentaPOS(array $in, array $ctx): array
         // 3) Cabecera.
         $numero = nextNumero('ventas', 'numero', 'VTA');
         $ventaId = dbInsert('ventas', [
-            'numero' => $numero, 'sucursal_id' => $sid, 'caja_sesion_id' => (int) $sesion['id'],
+            // Sin caja abierta la venta se registra igual, sin sesión. El POS
+            // exige caja antes de vender, pero facturar una cotización desde la
+            // oficina es normal y no tiene por qué haber un cajón abierto.
+            'numero' => $numero, 'sucursal_id' => $sid, 'caja_sesion_id' => $sesion ? (int) $sesion['id'] : null,
             'cliente_id' => $clienteId, 'usuario_id' => $uid, 'fecha' => $fecha,
             'subtotal' => $subtotal, 'descuento' => $descuento, 'itbis' => $itbisTotal, 'total' => $total,
             'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf, 'estado' => 'completada',

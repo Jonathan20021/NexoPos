@@ -16,6 +16,7 @@ function permission_catalog(): array
             'roles'         => ['label' => 'Roles y Permisos', 'acciones' => $crud],
             'configuracion' => ['label' => 'Configuración', 'acciones' => ['ver' => 'Ver', 'editar' => 'Editar']],
             'auditoria'     => ['label' => 'Auditoría / Logs', 'acciones' => ['ver' => 'Ver']],
+            'monedas'       => ['label' => 'Monedas y tasa de cambio', 'acciones' => ['gestionar' => 'Ver y actualizar la tasa']],
         ],
         'Inventario' => [
             'categorias'     => ['label' => 'Categorías', 'acciones' => $crud],
@@ -30,6 +31,7 @@ function permission_catalog(): array
             ]],
             'proveedores'    => ['label' => 'Proveedores', 'acciones' => $crud],
             'compras'        => ['label' => 'Compras', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'anular' => 'Anular']],
+            'cxp'            => ['label' => 'Cuentas por Pagar', 'acciones' => ['ver' => 'Ver', 'pagar' => 'Registrar pagos']],
             'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],
         ],
         'Ventas' => [
@@ -39,6 +41,12 @@ function permission_catalog(): array
             'pedidos'      => ['label' => 'Pedidos en línea', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Cambiar estado']],
             'devoluciones' => ['label' => 'Devoluciones', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear']],
             'clientes'     => ['label' => 'Clientes', 'acciones' => $crud],
+            'cotizaciones' => ['label' => 'Cotizaciones', 'acciones' => [
+                'ver'      => 'Ver',
+                'crear'    => 'Crear y editar',
+                'eliminar' => 'Eliminar',
+                'facturar' => 'Convertir en factura',
+            ]],
         ],
         'Recursos Humanos' => [
             'rrhh_empleados'     => ['label' => 'Empleados', 'acciones' => $crud],

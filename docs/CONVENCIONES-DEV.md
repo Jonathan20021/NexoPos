@@ -117,6 +117,19 @@ Cada item admite: `clave` (única), `titulo`, `mensaje`, `categoria`, `prioridad
 (`critica|alta|media|baja`), `url`, `icono`, `color`, `sucursal_id`, `usuario_id`, `permiso`.
 El `permiso` decide quién la ve; `usuario_id` la dirige a una sola persona.
 
+## Cuentas por pagar, monedas y cotizaciones — ver `docs/CXP-MONEDAS-COTIZACIONES.md`
+- **La contabilidad vive en pesos.** Los documentos guardan además lo pactado en otra moneda
+  y su tasa. Nunca conviertas al vuelo en un reporte: el pasado cambiaría con el dólar.
+- **Antes de registrar un movimiento nuevo en `transacciones`, decide dos cosas:** ¿es gasto
+  operativo (`rep_where_gastos`)? ¿mueve efectivo (`rep_where_flujo`)? Un pago a proveedor es
+  efectivo pero NO gasto (es inventario); una diferencia cambiaria es gasto pero NO efectivo.
+- **Una compra a crédito no saca dinero el día de la compra.** El movimiento va al pagar.
+- **Una deuda en dólares no es una deuda en pesos congelada:** pagar los mismos dólares con
+  otra tasa salda la deuda igual y genera diferencia cambiaria. No es «pagar de más».
+- `registrarVentaPOS()` acepta `$ctx['precios_pactados']` para respetar el precio de una
+  cotización. Solo lo activa código del servidor que leyó ese precio de la base — jamás el
+  navegador.
+
 ## Marketing (`includes/marketing.php` + `modules/marketing/`) — ver `docs/MARKETING.md`
 Campañas por correo (Resend, automáticas) y por WhatsApp (wa.me, asistidas).
 
