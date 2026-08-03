@@ -50,13 +50,45 @@ if (isPost() && post('accion') === 'api_lote') {
 }
 
 /* ============================================================
- *  Vista previa: el correo tal cual lo recibe el cliente
+ *  Vista previa en vivo (JSON) — la alimenta el panel del editor
+ *
+ *  Renderiza con mkt_html_correo(), la MISMA función que envía el correo de
+ *  verdad. Por eso la vista previa no puede mentir: si algo se ve aquí, así
+ *  llega. Nada de esto se guarda.
  * ============================================================ */
+if (isPost() && post('accion') === 'api_preview') {
+    verify_csrf();
+    header('Content-Type: application/json; charset=utf-8');
+
+    $previa = mkt_campana_previa([
+        'asunto'         => post('asunto'),
+        'asunto_b'       => post('asunto_b'),
+        'preheader'      => post('preheader'),
+        'contenido'      => post('contenido'),
+        'cta_texto'      => post('cta_texto'),
+        'cta_url'        => post('cta_url'),
+        'promocion_id'   => postInt('promocion_id'),
+        'whatsapp_texto' => post('whatsapp_texto'),
+        'imagen'         => $c['imagen'],          // la guardada: el formulario no sube archivos aquí
+    ]);
+
+    $muestra = mkt_cliente_muestra();
+    $vars    = mkt_variables($muestra, mkt_promo($previa['promocion_id']));
+
+    echo json_encode([
+        'ok'        => true,
+        'html'      => mkt_html_correo($previa, $muestra),
+        'whatsapp'  => mkt_texto_whatsapp($previa, $muestra),
+        'asunto'    => mkt_render($previa['asunto'], $vars),
+        'preheader' => mkt_render($previa['preheader'], $vars),
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/* ---------- Vista previa a pantalla completa (pestaña aparte) ---------- */
 if (get('preview') === '1') {
-    $muestra = qOne("SELECT id, nombre, balance FROM clientes WHERE activo = 1 AND email <> '' ORDER BY id LIMIT 1")
-        ?: ['nombre' => 'María Rodríguez', 'balance' => 1500];
     header('Content-Type: text/html; charset=utf-8');
-    echo mkt_html_correo($c, $muestra);
+    echo mkt_html_correo($c, mkt_cliente_muestra());
     exit;
 }
 
@@ -288,12 +320,14 @@ $acciones = '<a href="' . e(url('modules/marketing/campanas.php')) . '" class="b
 layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($canales[$c['canal']] ?? $c['canal']), $acciones);
 ?>
 
-<div class="grid lg:grid-cols-3 gap-5 items-start">
+<!-- ============================================================
+     Fila 1: editar a la izquierda, ver el resultado a la derecha.
+     Es la disposición de cualquier editor de correo: escribes y a un palmo
+     tienes lo que va a llegarle a tu cliente.
+     ============================================================ -->
+<div class="grid xl:grid-cols-2 gap-5 items-start">
 
-  <!-- ============================================================
-       Columna izquierda: contenido
-       ============================================================ -->
-  <div class="lg:col-span-2 space-y-5">
+  <div class="space-y-5">
 
     <?php if (!$editable): ?>
       <div class="card p-4 flex items-start gap-3 bg-slate-50">
@@ -306,7 +340,7 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
       </div>
     <?php endif; ?>
 
-    <form method="post" enctype="multipart/form-data" class="card">
+    <form method="post" enctype="multipart/form-data" class="card" data-preview>
       <?= csrf_field() ?>
       <input type="hidden" name="accion" value="guardar">
 
@@ -371,14 +405,7 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
 
         <div>
           <label class="label">Cuerpo del mensaje *</label>
-          <textarea name="contenido" rows="10" required class="input font-mono text-xs"><?= e($c['contenido']) ?></textarea>
-          <div class="flex flex-wrap gap-1.5 mt-2">
-            <?php foreach (mkt_variables_catalogo() as $v => $desc): ?>
-              <button type="button" title="<?= e($desc) ?>" data-var="<?= e($v) ?>"
-                      class="js-var text-[11px] font-mono px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700"><?= e($v) ?></button>
-            <?php endforeach; ?>
-          </div>
-          <p class="text-xs text-slate-400 mt-2">HTML sencillo: <code>&lt;p&gt;</code>, <code>&lt;strong&gt;</code>, <code>&lt;a href&gt;</code>. Nada de scripts.</p>
+          <?= editor_visual('contenido', $c['contenido'], ['alto' => '280px', 'placeholder' => 'Escribe aquí tu mensaje, como en Word…']) ?>
         </div>
 
         <div class="grid sm:grid-cols-2 gap-4">
@@ -448,8 +475,25 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
         <input type="hidden" name="plantilla_id" id="pltId">
       </form>
     <?php endif; ?>
+  </div>
 
-    <!-- ---------- Resultados por destinatario ---------- -->
+  <!-- Vista previa en vivo (pegada arriba al hacer scroll) -->
+  <div class="xl:sticky xl:top-4">
+    <?= preview_correo_panel(url('modules/marketing/campana.php?id=' . $id)) ?>
+  </div>
+</div>
+
+<!-- ============================================================
+     Debajo del editor: primero la operación (envío, audiencia, resultados) y
+     después el detalle persona a persona.
+
+     El orden visual lo pone `order-*`, no el orden del archivo: así el bloque
+     de destinatarios —que es largo— no se interpone entre el editor y los
+     botones de envío.
+     ============================================================ -->
+<div class="flex flex-col gap-5 mt-5">
+
+  <div class="order-2">
     <?php if ((int) ($audiencia['total'] ?? 0) > 0): ?>
       <div class="card overflow-hidden">
         <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
@@ -512,10 +556,7 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
     <?php endif; ?>
   </div>
 
-  <!-- ============================================================
-       Columna derecha: audiencia, envío y resultados
-       ============================================================ -->
-  <div class="space-y-5">
+  <div class="order-1 grid lg:grid-cols-3 gap-5 items-start">
 
     <!-- Estado y envío -->
     <div class="card p-5" x-data="envio()">
@@ -757,17 +798,9 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
   </div>
 </div>
 
-<script>
-  // Insertar variables en el cuerpo, en la posición del cursor.
-  document.querySelectorAll('.js-var').forEach(b => b.addEventListener('click', () => {
-    const ta = document.querySelector('textarea[name="contenido"]');
-    if (!ta) return;
-    const v = b.dataset.var, i = ta.selectionStart ?? ta.value.length;
-    ta.value = ta.value.slice(0, i) + v + ta.value.slice(ta.selectionEnd ?? i);
-    ta.focus();
-    ta.selectionStart = ta.selectionEnd = i + v.length;
-  }));
+<?= editor_visual_assets() ?>
 
+<script>
   // Aplicar plantilla desde el selector de la cabecera.
   const pltSel = document.getElementById('pltSel');
   if (pltSel) pltSel.addEventListener('change', () => {

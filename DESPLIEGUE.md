@@ -57,6 +57,7 @@ Las migraciones posteriores se aplican aparte, en orden:
 | `migracion_rendimiento_p7.sql` | Índices de kardex, ventas y transacciones |
 | `migracion_rendimiento_p8.sql` | Índice de cobertura de las líneas de venta (reportes y dashboard) |
 | `migracion_marketing_p9.sql` | Marketing: segmentos, plantillas, automatizaciones, rastreo, bajas y envíos por WhatsApp |
+| `migracion_marketing_p10.sql` | Diseño del correo personalizable (colores, logo y pie) |
 
 Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
 

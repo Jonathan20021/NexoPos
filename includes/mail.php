@@ -165,38 +165,112 @@ function mail_registrar(?int $pedidoId, string $evento, string $destinatario, st
 //  Plantilla HTML
 // ---------------------------------------------------------------------------
 
+/** Valores de fábrica del diseño del correo. */
+function mail_diseno_defaults(): array
+{
+    return [
+        'color'        => '#15803D',   // barra superior
+        'color_boton'  => '#15803D',   // botones de acción
+        'fondo'        => '#F1F5F9',   // fondo de la página (neutro: sirve con cualquier marca)
+        'mostrar_logo' => 1,
+        'pie'          => '',          // texto libre bajo los datos de la empresa
+    ];
+}
+
 /**
- * Envoltorio del correo. Tablas e estilos en línea: es lo único que renderizan
+ * Diseño visual del correo. Se personaliza en Marketing → Diseño del correo y
+ * se guarda en la tabla `empresa` (las columnas pueden no existir todavía si la
+ * migración P10 no está aplicada: por eso todo pasa por el valor de fábrica).
+ *
+ * Pasar $forzar sirve para la vista previa: permite dibujar el correo con unos
+ * colores que aún no se han guardado.
+ */
+function mail_diseno(?array $forzar = null): array
+{
+    static $override = null;
+    if ($forzar !== null) $override = $forzar;
+
+    $def = mail_diseno_defaults();
+    if ($override !== null) return array_merge($def, array_filter($override, fn($v) => $v !== null && $v !== ''));
+
+    $e = $GLOBALS['empresa'] ?? [];
+    return [
+        'color'        => $e['mkt_color']        ?? $def['color'],
+        'color_boton'  => $e['mkt_color_boton']  ?? $def['color_boton'],
+        'fondo'        => $e['mkt_fondo']        ?? $def['fondo'],
+        'mostrar_logo' => (int) ($e['mkt_mostrar_logo'] ?? $def['mostrar_logo']),
+        'pie'          => (string) ($e['mkt_pie'] ?? $def['pie']),
+    ];
+}
+
+/**
+ * Mezcla un color con blanco (0 = igual, 1 = blanco). Sirve para sacar el fondo
+ * suave del cupón a partir del color de marca, sea cual sea: así el bloque de
+ * promoción combina con una marca azul, roja o morada sin tocar nada más.
+ */
+function mail_color_claro(string $hex, float $mezcla = 0.88): string
+{
+    $hex = mail_color($hex, '#15803D');
+    [$r, $g, $b] = [hexdec(substr($hex, 1, 2)), hexdec(substr($hex, 3, 2)), hexdec(substr($hex, 5, 2))];
+    $m = max(0.0, min(1.0, $mezcla));
+    return sprintf('#%02X%02X%02X',
+        (int) round($r + (255 - $r) * $m),
+        (int) round($g + (255 - $g) * $m),
+        (int) round($b + (255 - $b) * $m));
+}
+
+/** Un color de usuario nunca entra crudo en el HTML del correo. */
+function mail_color(?string $c, string $porDefecto): string
+{
+    $c = trim((string) $c);
+    return preg_match('/^#[0-9a-f]{6}$/i', $c) ? $c : $porDefecto;
+}
+
+/**
+ * Envoltorio del correo. Tablas y estilos en línea: es lo único que renderizan
  * bien Gmail, Outlook y los clientes móviles.
+ *
+ * La paleta que rodea al contenido es NEUTRA a propósito. Antes todo estaba
+ * teñido de verde; en cuanto alguien pusiera su marca en azul, el correo se veía
+ * roto. Ahora el color de marca manda solo en la barra y el botón, y el resto
+ * funciona con cualquier color.
  */
 function mail_plantilla(string $titulo, string $contenido, array $empresa, string $preheader = ''): string
 {
-    $marca = '#15803D';
+    $d      = mail_diseno();
+    $marca  = mail_color($d['color'], '#15803D');
+    $fondo  = mail_color($d['fondo'], '#F1F5F9');
     $nombre = e($empresa['nombre'] ?? APP_NAME);
-    $pie = $empresa['telefono'] ?? '';
+    $tel    = $empresa['telefono'] ?? '';
+    $pie    = trim((string) $d['pie']);
+
+    // Cabecera: el logo si lo hay y está activado; si no, el nombre.
+    $logo = trim((string) ($empresa['logo'] ?? ''));
+    $cabecera = ($d['mostrar_logo'] && $logo !== '' && function_exists('mkt_url_abs'))
+        ? '<img src="' . e(mkt_url_abs($logo)) . '" alt="' . $nombre . '" height="34"
+                style="height:34px;max-height:34px;width:auto;display:block;border:0;">'
+        : '<p style="margin:0;font:600 18px/1.3 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#ffffff;">' . $nombre . '</p>';
 
     return '<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>' . e($titulo) . '</title></head>
-<body style="margin:0;padding:0;background:#F0FDF4;">
-<span style="display:none;font-size:1px;color:#F0FDF4;max-height:0;overflow:hidden;">' . e($preheader) . '</span>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F0FDF4;padding:24px 12px;">
+<body style="margin:0;padding:0;background:' . $fondo . ';">
+<span style="display:none;font-size:1px;color:' . $fondo . ';max-height:0;overflow:hidden;">' . e($preheader) . '</span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' . $fondo . ';padding:24px 12px;">
   <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #D1FAE5;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #E2E8F0;">
       <tr>
-        <td style="background:' . $marca . ';padding:20px 24px;">
-          <p style="margin:0;font:600 18px/1.3 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#ffffff;">' . $nombre . '</p>
-        </td>
+        <td style="background:' . $marca . ';padding:20px 24px;">' . $cabecera . '</td>
       </tr>
       <tr>
-        <td style="padding:28px 24px;font:400 15px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#14532D;">
+        <td style="padding:28px 24px;font:400 15px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#334155;">
           ' . $contenido . '
         </td>
       </tr>
       <tr>
-        <td style="padding:18px 24px;border-top:1px solid #D1FAE5;font:400 12px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#4B7A5A;">
-          ' . $nombre . ($pie ? ' &middot; Tel. ' . e($pie) : '') . '<br>
-          Este correo se envió automáticamente. No hace falta responderlo.
+        <td style="padding:18px 24px;border-top:1px solid #E2E8F0;font:400 12px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#64748B;">
+          ' . $nombre . ($tel ? ' &middot; Tel. ' . e($tel) : '') . '<br>'
+          . ($pie !== '' ? e($pie) : 'Este correo se envió automáticamente. No hace falta responderlo.') . '
         </td>
       </tr>
     </table>
@@ -229,8 +303,11 @@ function mail_tabla_pedido(array $pedido, array $detalles): string
 }
 
 /** Botón de acción. Se dibuja con tabla porque Outlook ignora padding en <a>. */
-function mail_boton(string $texto, string $url, string $color = '#0369A1'): string
+function mail_boton(string $texto, string $url, string $color = ''): string
 {
+    // Sin color explícito manda el de la marca configurada.
+    $color = mail_color($color !== '' ? $color : mail_diseno()['color_boton'], '#0369A1');
+
     return '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0;">
       <tr><td style="background:' . $color . ';border-radius:10px;">
         <a href="' . e($url) . '" style="display:inline-block;padding:12px 22px;font:600 15px/1 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#ffffff;text-decoration:none;">' . e($texto) . '</a>

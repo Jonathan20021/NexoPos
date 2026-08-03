@@ -207,14 +207,8 @@ layout_start('Automatizaciones', 'Mensajes que salen solos cuando el cliente cum
       </p>
 
       <div class="flex items-center gap-2 mt-4">
-        <button onclick="<?= jsEvent('auto:edit', [
-            'id' => (int) $a['id'], 'nombre' => $a['nombre'], 'disparador' => $a['disparador'],
-            'dias_label' => $d['dias'], 'dias' => (int) $a['dias'], 'canal' => $a['canal'],
-            'asunto' => $a['asunto'], 'preheader' => (string) $a['preheader'], 'contenido' => $a['contenido'],
-            'cta_texto' => (string) $a['cta_texto'], 'cta_url' => (string) $a['cta_url'],
-            'whatsapp_texto' => (string) $a['whatsapp_texto'],
-            'promocion_id' => (string) $a['promocion_id'], 'tope_dia' => (int) $a['tope_dia'],
-        ]) ?>" class="btn btn-soft btn-sm flex-1"><?= icon('edit', 'w-3.5 h-3.5') ?> Configurar</button>
+        <a href="<?= e(url('modules/marketing/automatizacion.php?id=' . (int) $a['id'])) ?>"
+           class="btn btn-soft btn-sm flex-1"><?= icon('edit', 'w-3.5 h-3.5') ?> Configurar</a>
 
         <?php if ($activo): ?>
           <form method="post" onsubmit="return confirm('¿Correr «<?= e($a['nombre']) ?>» ahora? Encolará mensajes reales a los clientes que cumplan la condición.')">
@@ -236,112 +230,6 @@ layout_start('Automatizaciones', 'Mensajes que salen solos cuando el cliente cum
   </p>
   <pre class="mt-3 bg-slate-900 text-slate-100 rounded-xl p-4 text-xs overflow-x-auto">/usr/local/bin/php <?= e(dirname(__DIR__, 2)) ?>/modules/marketing/cron.php</pre>
   <p class="text-xs text-slate-400 mt-2">También funciona por URL con una clave: ver <code>modules/marketing/cron.php</code>.</p>
-</div>
-
-<!-- Modal de configuración -->
-<div x-data="{open:false, f:{}}"
-     @auto:edit.window="f=$event.detail; open=true"
-     @keydown.escape.window="open=false">
-  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
-    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
-      <form method="post">
-        <?= csrf_field() ?>
-        <input type="hidden" name="accion" value="guardar">
-        <input type="hidden" name="id" :value="f.id">
-
-        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800" x-text="f.nombre"></h3>
-          <button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
-        </div>
-
-        <div class="p-6 space-y-4 max-h-[72vh] overflow-y-auto">
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label class="label">Nombre</label>
-              <input type="text" name="nombre" x-model="f.nombre" class="input">
-            </div>
-            <div>
-              <label class="label" x-text="f.dias_label"></label>
-              <input type="number" min="0" name="dias" x-model.number="f.dias" class="input">
-            </div>
-          </div>
-
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label class="label">Canal</label>
-              <select name="canal" x-model="f.canal" class="select">
-                <?php foreach ($canales as $v => $l): ?><option value="<?= e($v) ?>"><?= e($l) ?></option><?php endforeach; ?>
-              </select>
-            </div>
-            <div>
-              <label class="label">Tope por corrida</label>
-              <input type="number" min="1" max="1000" name="tope_dia" x-model.number="f.tope_dia" class="input">
-              <p class="text-xs text-slate-400 mt-1">Freno de seguridad: nunca encolará más de esto de una vez.</p>
-            </div>
-          </div>
-
-          <div>
-            <label class="label">Asunto *</label>
-            <input type="text" name="asunto" x-model="f.asunto" required maxlength="180" class="input">
-          </div>
-
-          <div>
-            <label class="label">Texto de anticipo (preheader)</label>
-            <input type="text" name="preheader" x-model="f.preheader" maxlength="180" class="input">
-          </div>
-
-          <div>
-            <label class="label">Contenido *</label>
-            <textarea name="contenido" x-model="f.contenido" rows="7" required class="input font-mono text-xs"></textarea>
-            <div class="flex flex-wrap gap-1.5 mt-2">
-              <?php foreach (mkt_variables_catalogo() as $v => $desc): ?>
-                <button type="button" title="<?= e($desc) ?>" @click="f.contenido = (f.contenido || '') + '<?= e($v) ?>'"
-                        class="text-[11px] font-mono px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700"><?= e($v) ?></button>
-              <?php endforeach; ?>
-            </div>
-          </div>
-
-          <div>
-            <label class="label">Promoción destacada</label>
-            <select name="promocion_id" x-model="f.promocion_id" class="select">
-              <option value="">Ninguna</option>
-              <?php foreach ($promos as $p):
-                $et = $p['tipo'] === 'porcentaje'
-                    ? rtrim(rtrim(number_format((float) $p['valor'], 2), '0'), '.') . '%'
-                    : money((float) $p['valor']); ?>
-                <option value="<?= (int) $p['id'] ?>"><?= e($p['nombre']) ?> — <?= e($et) ?> (hasta <?= e(fechaCorta($p['fecha_fin'])) ?>)</option>
-              <?php endforeach; ?>
-            </select>
-            <p class="text-xs text-slate-400 mt-1">Ojo: cuando la promoción venza, cambia esta regla o quítala.</p>
-          </div>
-
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label class="label">Texto del botón</label>
-              <input type="text" name="cta_texto" x-model="f.cta_texto" maxlength="60" class="input">
-            </div>
-            <div>
-              <label class="label">Enlace del botón</label>
-              <input type="text" name="cta_url" x-model="f.cta_url" maxlength="255" class="input" placeholder="{{tienda}}">
-            </div>
-          </div>
-
-          <div>
-            <label class="label flex items-center gap-2"><?= icon('phone', 'w-4 h-4 text-emerald-500') ?> Mensaje de WhatsApp</label>
-            <textarea name="whatsapp_texto" x-model="f.whatsapp_texto" rows="3" class="input"></textarea>
-            <p class="text-xs text-slate-400 mt-1">
-              Los mensajes de WhatsApp se encolan en la consola de envío: alguien tiene que despacharlos.
-            </p>
-          </div>
-        </div>
-
-        <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
-          <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
-          <button type="submit" class="btn btn-primary"><?= icon('save', 'w-4 h-4') ?> Guardar</button>
-        </div>
-      </form>
-    </div>
-  </div>
 </div>
 
 <?php layout_end(); ?>

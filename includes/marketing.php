@@ -413,14 +413,25 @@ function mkt_bloque_promo(array $promo): string
         ? rtrim(rtrim(number_format((float) $promo['valor'], 2), '0'), '.') . '%'
         : money((float) $promo['valor']);
 
+    // El cupón se tiñe con el color de marca elegido, no con un verde fijo.
+    $marca = mail_color(mail_diseno()['color'], '#15803D');
+    $suave = mail_color_claro($marca, 0.90);
+
+    $img = '';
+    if (!empty($promo['imagen'])) {
+        $img = '<img src="' . e(mkt_url_abs($promo['imagen'])) . '" alt=""
+                     style="width:100%;max-width:420px;border-radius:10px;display:block;margin:0 auto 12px;">';
+    }
+
     return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-                   style="margin:20px 0;border:2px dashed #15803D;border-radius:14px;background:#F0FDF4;">
+                   style="margin:20px 0;border:2px dashed ' . $marca . ';border-radius:14px;background:' . $suave . ';">
       <tr><td style="padding:18px 20px;text-align:center;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
-        <p style="margin:0 0 4px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#15803D;font-weight:700;">Promoción</p>
-        <p style="margin:0;font-size:30px;line-height:1.1;font-weight:800;color:#14532D;">' . e($valor) . ' de descuento</p>
-        <p style="margin:6px 0 0;font-size:16px;font-weight:600;color:#166534;">' . e($promo['nombre']) . '</p>'
-        . (!empty($promo['descripcion']) ? '<p style="margin:6px 0 0;font-size:14px;color:#4B7A5A;">' . e($promo['descripcion']) . '</p>' : '')
-        . '<p style="margin:10px 0 0;font-size:13px;color:#4B7A5A;">Vigente hasta el ' . e(fechaCorta($promo['fecha_fin'])) . '</p>
+        ' . $img . '
+        <p style="margin:0 0 4px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' . $marca . ';font-weight:700;">Promoción</p>
+        <p style="margin:0;font-size:30px;line-height:1.1;font-weight:800;color:#1E293B;">' . e($valor) . ' de descuento</p>
+        <p style="margin:6px 0 0;font-size:16px;font-weight:600;color:#334155;">' . e($promo['nombre']) . '</p>'
+        . (!empty($promo['descripcion']) ? '<p style="margin:6px 0 0;font-size:14px;color:#64748B;">' . e($promo['descripcion']) . '</p>' : '')
+        . '<p style="margin:10px 0 0;font-size:13px;color:#64748B;">Vigente hasta el ' . e(fechaCorta($promo['fecha_fin'])) . '</p>
       </td></tr>
     </table>';
 }
@@ -448,7 +459,7 @@ function mkt_html_correo(array $c, array $cliente, array $envio = []): string
     if (!empty($c['cta_texto']) && !empty($c['cta_url'])) {
         $destino = mkt_render((string) $c['cta_url'], $vars);
         $href = $token !== '' ? mkt_url_rastreo($token, 'c', $destino) : $destino;
-        $cuerpo .= mail_boton($c['cta_texto'], $href, '#15803D');
+        $cuerpo .= mail_boton($c['cta_texto'], $href);   // usa el color de marca configurado
     }
 
     // Baja: obligatoria en correo comercial. Sin ella, el dominio termina en spam.
@@ -466,6 +477,40 @@ function mkt_html_correo(array $c, array $cliente, array $envio = []): string
     if ($preheader === '') $preheader = mb_substr(trim(strip_tags($cuerpo)), 0, 120);
 
     return mail_plantilla($asunto, $cuerpo, $GLOBALS['empresa'] ?? [], $preheader);
+}
+
+/**
+ * Arma una campaña «en borrador vivo» con lo que hay ahora mismo en el
+ * formulario, sin guardar nada. Es lo que alimenta la vista previa: se renderiza
+ * con `mkt_html_correo()`, exactamente la misma función que envía el correo de
+ * verdad, así que lo que se ve en pantalla es lo que recibe el cliente. Duplicar
+ * la plantilla en JavaScript habría sido más rápido y habría empezado a mentir
+ * en cuanto alguien tocara una de las dos copias.
+ */
+function mkt_campana_previa(array $datos): array
+{
+    return [
+        'id'             => 0,
+        'asunto'         => (string) ($datos['asunto'] ?? ''),
+        'asunto_b'       => (string) ($datos['asunto_b'] ?? ''),
+        'preheader'      => (string) ($datos['preheader'] ?? ''),
+        'contenido'      => (string) ($datos['contenido'] ?? ''),
+        'cta_texto'      => (string) ($datos['cta_texto'] ?? ''),
+        'cta_url'        => (string) ($datos['cta_url'] ?? ''),
+        'imagen'         => $datos['imagen'] ?? null,
+        'promocion_id'   => (int) ($datos['promocion_id'] ?? 0) ?: null,
+        'whatsapp_texto' => (string) ($datos['whatsapp_texto'] ?? ''),
+    ];
+}
+
+/**
+ * Cliente de muestra para la vista previa: uno real de la base, para que el
+ * dueño vea su propio dato y no un «Juan Pérez» inventado.
+ */
+function mkt_cliente_muestra(): array
+{
+    $c = qOne("SELECT id, nombre, balance, telefono FROM clientes WHERE activo = 1 AND nombre <> '' ORDER BY id LIMIT 1");
+    return $c ?: ['id' => 0, 'nombre' => 'María Rodríguez', 'balance' => 1500, 'telefono' => '8095551234'];
 }
 
 /** Asunto según la variante de la prueba A/B. */

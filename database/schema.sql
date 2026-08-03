@@ -18,6 +18,13 @@ CREATE TABLE empresa (
   moneda VARCHAR(10) NOT NULL DEFAULT 'RD$',
   itbis_tasa DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   logo VARCHAR(255) NULL,
+  -- Diseño de los correos (Marketing → Diseño del correo). Afecta a TODOS los
+  -- envíos, incluidos los de pedidos de la tienda.
+  mkt_color        VARCHAR(7)   NOT NULL DEFAULT '#15803D',  -- barra superior
+  mkt_color_boton  VARCHAR(7)   NOT NULL DEFAULT '#15803D',  -- botones de acción
+  mkt_fondo        VARCHAR(7)   NOT NULL DEFAULT '#F1F5F9',  -- fondo (neutro: sirve con cualquier marca)
+  mkt_mostrar_logo TINYINT(1)   NOT NULL DEFAULT 1,
+  mkt_pie          VARCHAR(255) NULL,
   mensaje_ticket VARCHAR(255) NULL DEFAULT '¡Gracias por su compra!',
   link_pago VARCHAR(255) NULL,                  -- se envía al cliente por WhatsApp
   tienda_activa TINYINT(1) NOT NULL DEFAULT 1,  -- interruptor general de la tienda pública

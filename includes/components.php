@@ -51,6 +51,7 @@ function nav_groups(): array
             ['Automatizaciones', 'pulse', url('modules/marketing/automatizaciones.php'), 'marketing.automatizar'],
             ['Segmentos de clientes', 'users', url('modules/marketing/segmentos.php'), 'marketing.segmentos'],
             ['Plantillas', 'file', url('modules/marketing/plantillas.php'), 'marketing.plantillas'],
+            ['Diseño del correo', 'sun', url('modules/marketing/diseno.php'), 'marketing.diseno'],
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
         ]],
         ['Finanzas', [

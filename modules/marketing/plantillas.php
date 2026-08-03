@@ -60,37 +60,25 @@ if (isPost()) {
     verify_csrf();
     $accion = post('accion');
 
-    if ($accion === 'guardar') {
-        $id = postInt('id');
+    // Crear pide lo mínimo y lleva al editor visual, que es donde se trabaja.
+    if ($accion === 'crear') {
         $nombre = trim(post('nombre'));
-        $asunto = trim(post('asunto'));
-        $contenido = trim(post('contenido'));
         try {
-            if ($nombre === '') throw new RuntimeException('El nombre de la plantilla es obligatorio.');
-            if ($asunto === '') throw new RuntimeException('El asunto es obligatorio.');
-            if (mb_strlen(trim(strip_tags($contenido))) < 10) throw new RuntimeException('Escribe el cuerpo del mensaje.');
+            if ($nombre === '') throw new RuntimeException('Ponle un nombre a la plantilla.');
+            $cat = array_key_exists(post('categoria'), $categorias) ? post('categoria') : 'promocion';
 
-            $datos = [
+            $nid = dbInsert('marketing_plantillas', [
                 'nombre'    => mb_substr($nombre, 0, 120),
-                'categoria' => array_key_exists(post('categoria'), $categorias) ? post('categoria') : 'promocion',
-                'asunto'    => mb_substr($asunto, 0, 180),
-                'preheader' => mb_substr(trim(post('preheader')), 0, 180) ?: null,
-                'contenido' => mkt_html_seguro($contenido),
-                'cta_texto' => mb_substr(trim(post('cta_texto')), 0, 60) ?: null,
-                'cta_url'   => mb_substr(trim(post('cta_url')), 0, 255) ?: null,
-                'whatsapp_texto' => trim(post('whatsapp_texto')) ?: null,
-            ];
-
-            if ($id > 0) {
-                if (!qVal("SELECT 1 FROM marketing_plantillas WHERE id = ?", [$id])) throw new RuntimeException('Plantilla no encontrada.');
-                dbUpdate('marketing_plantillas', $datos, 'id = ?', [$id]);
-                audit('marketing', 'editar', "Plantilla actualizada: $nombre", ['tabla' => 'marketing_plantillas', 'registro_id' => $id]);
-                flash('success', 'Plantilla actualizada.');
-            } else {
-                $nid = dbInsert('marketing_plantillas', $datos);
-                audit('marketing', 'crear', "Plantilla creada: $nombre", ['tabla' => 'marketing_plantillas', 'registro_id' => $nid]);
-                flash('success', 'Plantilla creada.');
-            }
+                'categoria' => $cat,
+                'asunto'    => 'Hola {{cliente}}',
+                'contenido' => '<p>Hola <strong>{{cliente}}</strong>,</p><p>Escribe aquí tu mensaje.</p>',
+                'cta_texto' => 'Ver más',
+                'cta_url'   => '{{tienda}}',
+                'whatsapp_texto' => 'Hola {{cliente}}, te escribo de {{empresa}}.',
+            ]);
+            audit('marketing', 'crear', "Plantilla creada: $nombre", ['tabla' => 'marketing_plantillas', 'registro_id' => $nid]);
+            flash('success', 'Plantilla creada. Ahora redáctala y mírala al lado.');
+            redirect('modules/marketing/plantilla.php?id=' . $nid);
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -106,6 +94,7 @@ if (isPost()) {
             $nid = dbInsert('marketing_plantillas', $p);
             audit('marketing', 'crear', "Plantilla duplicada: {$p['nombre']}", ['tabla' => 'marketing_plantillas', 'registro_id' => $nid]);
             flash('success', 'Plantilla duplicada. Edítala a tu gusto.');
+            redirect('modules/marketing/plantilla.php?id=' . $nid);
         }
         redirect('modules/marketing/plantillas.php');
     }
@@ -187,12 +176,8 @@ layout_start('Plantillas de mensaje', 'Textos listos para reutilizar en campaña
           <div class="flex items-center gap-1">
             <a href="<?= e(url('modules/marketing/plantillas.php?preview=' . (int) $p['id'])) ?>" target="_blank"
                class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Vista previa"><?= icon('eye', 'w-4 h-4') ?></a>
-            <button onclick="<?= jsEvent('plt:edit', [
-                'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'categoria' => $p['categoria'],
-                'asunto' => $p['asunto'], 'preheader' => (string) $p['preheader'], 'contenido' => $p['contenido'],
-                'cta_texto' => (string) $p['cta_texto'], 'cta_url' => (string) $p['cta_url'],
-                'whatsapp_texto' => (string) $p['whatsapp_texto'],
-            ]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
+            <a href="<?= e(url('modules/marketing/plantilla.php?id=' . (int) $p['id'])) ?>"
+               class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></a>
             <form method="post" class="inline">
               <?= csrf_field() ?><input type="hidden" name="accion" value="duplicar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
               <button class="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" title="Duplicar"><?= icon('layers', 'w-4 h-4') ?></button>
@@ -210,86 +195,39 @@ layout_start('Plantillas de mensaje', 'Textos listos para reutilizar en campaña
   </div>
 <?php endif; ?>
 
-<!-- Modal crear/editar -->
-<?php $vacio = ['id' => 0, 'nombre' => '', 'categoria' => 'promocion', 'asunto' => '', 'preheader' => '',
-                'contenido' => '', 'cta_texto' => '', 'cta_url' => '', 'whatsapp_texto' => '']; ?>
-<div x-data="{open:false, f:<?= htmlspecialchars(json_encode($vacio), ENT_QUOTES) ?>, vacio:<?= htmlspecialchars(json_encode($vacio), ENT_QUOTES) ?>}"
-     @plt:new.window="f=JSON.parse(JSON.stringify(vacio)); open=true"
-     @plt:edit.window="f=$event.detail; open=true"
-     @keydown.escape.window="open=false">
+<!-- Modal: crear (solo el nombre; el contenido se trabaja en el editor visual) -->
+<div x-data="{open:false}" @plt:new.window="open=true" @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
-    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
       <form method="post">
         <?= csrf_field() ?>
-        <input type="hidden" name="accion" value="guardar">
-        <input type="hidden" name="id" :value="f.id">
+        <input type="hidden" name="accion" value="crear">
 
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 class="font-bold text-slate-800" x-text="f.id ? 'Editar plantilla' : 'Nueva plantilla'"></h3>
+          <h3 class="font-bold text-slate-800">Nueva plantilla</h3>
           <button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
 
-        <div class="p-6 space-y-4 max-h-[72vh] overflow-y-auto">
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label class="label">Nombre *</label>
-              <input type="text" name="nombre" x-model="f.nombre" required class="input" placeholder="Ej. Promo fin de mes">
-            </div>
-            <div>
-              <label class="label">Categoría</label>
-              <select name="categoria" x-model="f.categoria" class="select">
-                <?php foreach ($categorias as $v => $l): ?><option value="<?= e($v) ?>"><?= e($l) ?></option><?php endforeach; ?>
-              </select>
-            </div>
-          </div>
-
+        <div class="p-6 space-y-4">
           <div>
-            <label class="label">Asunto del correo *</label>
-            <input type="text" name="asunto" x-model="f.asunto" required class="input" maxlength="180"
-                   placeholder="{{cliente}}, 20% de descuento esta semana">
+            <label class="label">Nombre *</label>
+            <input type="text" name="nombre" required class="input" placeholder="Ej. Promo fin de mes" autofocus>
+            <p class="text-xs text-slate-400 mt-1">Es el nombre interno: tus clientes no lo ven.</p>
           </div>
-
           <div>
-            <label class="label">Texto de anticipo (preheader)</label>
-            <input type="text" name="preheader" x-model="f.preheader" class="input" maxlength="180"
-                   placeholder="La línea gris que se ve junto al asunto en la bandeja">
+            <label class="label">¿Para qué la vas a usar?</label>
+            <select name="categoria" class="select">
+              <?php foreach ($categorias as $v => $l): ?><option value="<?= e($v) ?>"><?= e($l) ?></option><?php endforeach; ?>
+            </select>
           </div>
-
-          <div>
-            <label class="label">Cuerpo del mensaje *</label>
-            <textarea name="contenido" x-model="f.contenido" rows="8" required class="input font-mono text-xs"
-                      placeholder="&lt;p&gt;Hola &lt;strong&gt;{{cliente}}&lt;/strong&gt;,&lt;/p&gt;"></textarea>
-            <div class="flex flex-wrap gap-1.5 mt-2">
-              <?php foreach (mkt_variables_catalogo() as $v => $desc): ?>
-                <button type="button" title="<?= e($desc) ?>"
-                        @click="f.contenido = (f.contenido || '') + '<?= e($v) ?>'"
-                        class="text-[11px] font-mono px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700"><?= e($v) ?></button>
-              <?php endforeach; ?>
-            </div>
-          </div>
-
-          <div class="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label class="label">Texto del botón</label>
-              <input type="text" name="cta_texto" x-model="f.cta_texto" class="input" maxlength="60" placeholder="Ver la promoción">
-            </div>
-            <div>
-              <label class="label">Enlace del botón</label>
-              <input type="text" name="cta_url" x-model="f.cta_url" class="input" maxlength="255" placeholder="{{tienda}}">
-            </div>
-          </div>
-
-          <div>
-            <label class="label">Versión para WhatsApp</label>
-            <textarea name="whatsapp_texto" x-model="f.whatsapp_texto" rows="4" class="input"
-                      placeholder="Texto plano, sin HTML. Si lo dejas vacío se usa el cuerpo del correo sin etiquetas."></textarea>
-            <p class="text-xs text-slate-400 mt-1">WhatsApp no admite HTML: escribe el mensaje corto y directo, como lo escribirías tú.</p>
-          </div>
+          <p class="text-sm text-slate-500 bg-slate-50 rounded-xl px-3 py-2.5">
+            Al continuar se abre el editor visual: escribes como en Word y ves el correo terminado al lado.
+          </p>
         </div>
 
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
           <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
-          <button type="submit" class="btn btn-primary"><?= icon('save', 'w-4 h-4') ?> Guardar plantilla</button>
+          <button type="submit" class="btn btn-primary"><?= icon('arrow-right', 'w-4 h-4') ?> Crear y redactar</button>
         </div>
       </form>
     </div>

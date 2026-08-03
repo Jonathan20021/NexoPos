@@ -33,7 +33,7 @@ eso la interfaz lo dice en voz alta donde corresponde.
 
 ---
 
-## Las siete piezas
+## Las piezas
 
 ### 1. Segmentos — `segmentos.php`
 Un segmento guarda **reglas**, no una lista de personas. Se evalúa en el momento
@@ -53,7 +53,61 @@ pendiente* y *WhatsApp: todos con teléfono*.
 > (ingresos = subtotal − descuento, sin ITBIS) y es a propósito: para segmentar
 > importa el bolsillo del cliente, no la utilidad de la empresa.
 
-### 2. Plantillas — `plantillas.php`
+### 2. Nadie escribe HTML — `includes/editor.php`
+
+La primera versión pedía escribir `<p>` y `<strong>` en un textarea. Inservible:
+quien redacta las promociones es el dueño del negocio, no un programador.
+
+Ahora hay un **editor visual** (negrita, cursiva, títulos, listas, alineación,
+enlaces, color) y las variables se ven como **etiquetas de colores**
+(«Nombre del cliente»), no como `{{cliente}}`. La conversión va en los dos
+sentidos: `{{cliente}}` ↔ etiqueta al abrir y al guardar, así la base de datos
+sigue guardando exactamente lo mismo que antes.
+
+Está escrito a mano (~200 líneas, sin dependencias) porque el proyecto no tiene
+paso de build y la CSP solo admite dos CDN. Meter un editor de 300 KB para
+negrita y cursiva no compensaba.
+
+Detalles que importan en un correo:
+
+- **Pegar siempre como texto plano.** Copiar de Word o Google Docs arrastra
+  basura que Outlook luego renderiza torcido.
+- **Enter crea párrafo**, no `<div>` ni `<br>` sueltos.
+- Al guardar se limpian atributos que no deben viajar en un correo, y
+  `mkt_html_seguro()` sigue teniendo la última palabra en el servidor.
+
+### 3. Vista previa en vivo
+
+Al lado del editor está el correo terminado, con el nombre de un cliente real de
+tu base y actualizándose mientras escribes. Hay una pestaña para ver la versión
+de WhatsApp.
+
+**No dibuja el correo en JavaScript.** Se lo pide al servidor
+(`accion=api_preview`), que lo genera con `mkt_html_correo()` — la misma función
+que envía el correo de verdad. Cuesta 350 ms de retraso y a cambio la vista
+previa **no puede mentir**: duplicar la plantilla en JS habría empezado a
+divergir en cuanto alguien tocara una de las dos copias.
+
+Está en el editor de campañas, en el de plantillas, en el de automatizaciones y
+en el diseño del correo.
+
+### 4. Diseño del correo — `diseno.php`
+
+Los colores estaban fijos en el código (verde). Ahora se eligen desde la
+interfaz: barra superior, botones, fondo, logo sí/no y texto del pie. Ocho
+paletas listas para quien no quiera pensarlo.
+
+La paleta que rodea al contenido es **neutra** a propósito. Antes todo estaba
+teñido de verde; en cuanto alguien pusiera su marca en azul, el correo se veía
+roto. Ahora el color de marca manda solo en la barra, el botón y el cupón de la
+promoción — que se tiñe solo mezclando ese color con blanco
+(`mail_color_claro()`).
+
+Afecta a **todos** los correos del sistema, incluidos los de pedidos de la
+tienda. Se guarda en `empresa` (migración P10) porque es donde ya vive el resto
+de la identidad y porque `setting()` lee de ahí.
+
+### 5. Plantillas — `plantillas.php` y `plantilla.php`
 Textos reutilizables con asunto, cuerpo, botón y versión de WhatsApp. Al crear
 una campaña **se copian, no se enlazan**: editar la plantilla mañana no cambia lo
 que ya se envió ayer.
@@ -61,7 +115,7 @@ que ya se envió ayer.
 Variables: `{{cliente}}` `{{nombre}}` `{{empresa}}` `{{telefono}}` `{{promo}}`
 `{{descuento}}` `{{vigencia}}` `{{saldo}}` `{{tienda}}`.
 
-### 3. Campañas — `campanas.php` y `campana.php`
+### 6. Campañas — `campanas.php` y `campana.php`
 El editor tiene todo: asunto (con **prueba A/B** opcional), preheader, cuerpo,
 imagen de cabecera, promoción destacada (se dibuja como cupón), botón con enlace
 rastreado y mensaje de WhatsApp.
@@ -70,7 +124,7 @@ Estados: `borrador → programada → enviando → enviada | parcial`, más `pau
 `cancelada`. Una campaña que ya salió **no se puede editar**: cambiar el texto
 dejaría un historial que no coincide con lo que recibieron los clientes.
 
-### 4. Envío por lotes
+### 7. Envío por lotes
 No hay un único POST que tarde cinco minutos. El navegador va pidiendo lotes por
 AJAX (`accion=api_lote`) y una barra de progreso avanza; cada lote es **una sola
 llamada** a Resend (`/emails/batch`, hasta 100 correos) gracias a
@@ -83,7 +137,7 @@ Cada destinatario es una fila en `campana_envios`. De ahí sale todo lo demás:
 - los fallidos se reintentan con un botón;
 - recalcular la audiencia tras editar el segmento **solo añade** a quien falte.
 
-### 5. Rastreo — `t.php`
+### 8. Rastreo — `t.php`
 - **Apertura:** píxel de 1×1 (`?t=TOKEN&a=o`).
 - **Clic:** redirección con registro (`?t=TOKEN&a=c&u=DESTINO`).
 
@@ -92,7 +146,7 @@ campaña publicó (su botón, un enlace de su contenido) o una URL del mismo
 sistema. Un redirector que acepte cualquier cosa convierte tu dominio en
 herramienta de phishing.
 
-### 6. Bajas — `baja.php`
+### 9. Bajas — `baja.php`
 Todo correo lleva enlace de baja en el pie. La baja **se confirma con un POST**,
 nunca con el simple clic del enlace: los antivirus y escáneres de correo abren
 todos los enlaces de un mensaje y darían de baja a gente que nunca lo pidió.
@@ -102,7 +156,7 @@ Al darse de baja: se registra en `marketing_bajas`, se pone
 envíos pendientes pasan a `omitido`. Los correos de sus **pedidos** siguen
 llegando: son servicio, no publicidad.
 
-### 7. Automatizaciones — `automatizaciones.php`
+### 10. Automatizaciones — `automatizaciones.php` y `automatizacion.php`
 
 | Regla | Se dispara | No se repite |
 |---|---|---|
@@ -205,6 +259,7 @@ la consola de WhatsApp, pero ningún correo sale y la interfaz lo avisa.
 | `marketing.segmentos` | Crear y editar segmentos |
 | `marketing.plantillas` | Crear y editar plantillas |
 | `marketing.automatizar` | Encender y configurar automatizaciones |
+| `marketing.diseno` | Colores, logo y pie del correo |
 | `campanas.ver/crear/editar/eliminar` | CRUD de campañas |
 | `campanas.enviar` | Enviar y programar correos |
 | `campanas.whatsapp` | Consola de envío por WhatsApp |

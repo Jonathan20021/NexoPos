@@ -34,6 +34,7 @@ require_once dirname(__DIR__) . '/includes/dgii_reportes.php';
 require_once dirname(__DIR__) . '/includes/mail.php';
 require_once dirname(__DIR__) . '/includes/correos_pedido.php';
 require_once dirname(__DIR__) . '/includes/marketing.php';
+require_once dirname(__DIR__) . '/includes/editor.php';
 require_once dirname(__DIR__) . '/includes/campanas.php';   // puente al motor nuevo (obsoleto)
 require_once dirname(__DIR__) . '/includes/metas.php';
 require_once dirname(__DIR__) . '/includes/conciliacion.php';

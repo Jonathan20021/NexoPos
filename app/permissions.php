@@ -85,6 +85,7 @@ function permission_catalog(): array
                 'segmentos'  => 'Crear y editar segmentos',
                 'plantillas' => 'Crear y editar plantillas',
                 'automatizar' => 'Encender y configurar automatizaciones',
+                'diseno'     => 'Diseño del correo (colores y logo)',
             ]],
         ],
         'CRM' => [
