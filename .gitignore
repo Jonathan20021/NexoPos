@@ -3,7 +3,9 @@
 # ============================================================
 
 # --- Credenciales / configuración local (¡crítico!) ---
-/config/config.local.php
+# Cualquier *.local.php de config/: el de XAMPP y el de acceso remoto a producción.
+# El .htaccess de la raíz además bloquea su lectura por HTTP.
+/config/*.local.php
 .env
 .env.*
 
