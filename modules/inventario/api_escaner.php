@@ -88,7 +88,9 @@ function api_ficha(array $p, ?int $sid): array
         'nombre'        => $p['nombre'],
         'marca'         => $ref['marca'] ?? null,
         'categoria'     => $ref['categoria'] ?? null,
-        'unidad'        => $ref['unidad'] ?: 'u',
+        // Con ?? además de ?: — si el producto se borrara entre las dos consultas,
+        // $ref queda vacío y un acceso pelado avisaría de clave indefinida.
+        'unidad'        => ($ref['unidad'] ?? '') ?: 'u',
         'tipo'          => $p['tipo'],
         'activo'        => (int) $p['activo'],
         'precio_venta'  => (float) $p['precio_venta'],
