@@ -20,7 +20,7 @@ function permission_catalog(): array
         ],
         'Inventario' => [
             'categorias'     => ['label' => 'Categorías', 'acciones' => $crud],
-            'productos'      => ['label' => 'Productos', 'acciones' => $crud],
+            'productos'      => ['label' => 'Productos', 'acciones' => $crud + ['etiquetas' => 'Imprimir etiquetas con código de barras']],
             'inventario'     => ['label' => 'Stock y Ajustes', 'acciones' => ['ver' => 'Ver', 'ajustar' => 'Ajustar']],
             'conteos'        => ['label' => 'Conteo físico de inventario', 'acciones' => [
                 'ver'      => 'Ver',

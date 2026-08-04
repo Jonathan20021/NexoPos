@@ -313,6 +313,23 @@ Se probó: MariaDB 10.4 no hace esa deducción por JOIN y rechaza consultas que 
 así que genera decenas de falsas alarmas. La forma de verificar es ejecutar las páginas
 contra una copia de la base de producción (o contra la de producción, en solo lectura).
 
+## Códigos de barras y escaneo (`includes/barcode.php`) — ver `docs/CODIGOS-BARRAS.md`
+- `productos.codigo_barras` es **UNIQUE**. Guarda `NULL` cuando no hay código, nunca `''`:
+  los NULL no chocan entre sí en un índice único, la cadena vacía sí.
+- `barcode_validar($v)` es la única puerta de entrada. Solo rechaza un **EAN-13** con el
+  verificador malo (ningún lector emite uno inválido, así que está tecleado a mano). Los
+  numéricos de 8/12/14 se aceptan: son códigos internos heredados de Excel y se imprimen
+  en Code 128.
+- `barcode_svg($v, $opts)` dibuja en SVG. Nunca uses una imagen: a 38 mm un PNG sale
+  difuminado y el lector falla.
+- `barcode_generar_interno()` da un EAN-13 con prefijo **200** (rango GS1 de circulación
+  restringida: jamás choca con un fabricante). Usa el contador atómico, no `MAX()+1`.
+- En el navegador: `escaner_script()` en la página y `NexoEscaner.abrir({onLeer})`.
+  Para pistolas USB, `NexoEscaner.teclado({onCodigo})`. **`data-escaner` en un campo
+  significa «este campo atiende él mismo el disparo»** y el oyente global se calla; sin
+  esa separación un disparo se registra dos veces.
+- La cámara exige **HTTPS** y `Permissions-Policy: camera=(self)` en el `.htaccess`.
+
 ## Concurrencia (OBLIGATORIO si tu página escribe) — ver `docs/CONCURRENCIA.md`
 Varias sucursales operan a la vez. Estas reglas no son opcionales:
 

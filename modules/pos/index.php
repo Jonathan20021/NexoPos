@@ -25,7 +25,7 @@ if (!$sesion) {
 }
 
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
+    "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
      FROM productos p LEFT JOIN inventario_stock s ON s.producto_id=p.id AND s.sucursal_id=?
      LEFT JOIN categorias c ON c.id=p.categoria_id
      WHERE p.activo=1 AND p.tipo='producto' ORDER BY p.nombre", [$sid]
@@ -35,6 +35,9 @@ $prodJs = array_map(function ($p) {
     $pr = aplicarPromocion((float) $p['precio_venta'], $p, 'pos');
     return [
         'id' => (int) $p['id'], 'codigo' => $p['codigo'], 'nombre' => $p['nombre'],
+        // El código de barras viaja al navegador: sin él, escanear en la caja no
+        // encuentra nada (el buscador solo miraba nombre y SKU).
+        'barras' => (string) ($p['codigo_barras'] ?? ''),
         'precio' => $pr['precio'], 'precio_lista' => $pr['original'],
         'promo' => $pr['promo'] ? $pr['etiqueta'] : '',
         'itbis_aplica' => (int) $p['itbis_aplica'],
@@ -102,9 +105,23 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
     <div class="flex items-center gap-2 mb-3">
       <div class="relative flex-1">
         <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"><?= icon('search', 'w-4 h-4') ?></span>
-        <input type="text" x-model="search" placeholder="Buscar producto o escanear código..." class="input pl-10" autofocus>
+        <!-- Enter agrega directo al carrito: es lo que hace una pistola lectora,
+             que escribe el código y cierra con Enter. -->
+        <input type="text" x-model="search" x-ref="buscar" data-escaner
+               @keydown.enter.prevent="porCodigo(search)"
+               placeholder="Buscar producto o escanear código..." class="input pl-10" autofocus>
       </div>
-      <span class="text-sm text-slate-400 hidden sm:block" x-text="filtered.length + ' productos'"></span>
+      <button type="button" @click="escanear()" x-show="camaraOk" x-cloak
+              class="btn btn-soft px-3 shrink-0" title="Escanear con la cámara del dispositivo">
+        <?= icon('barcode', 'w-4 h-4') ?><span class="hidden sm:inline ml-1">Escanear</span>
+      </button>
+      <span class="text-sm text-slate-400 hidden lg:block" x-text="filtered.length + ' productos'"></span>
+    </div>
+
+    <div x-show="scanAviso" x-transition x-cloak
+         class="mb-3 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold"
+         :class="scanOk ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'">
+      <?= icon('barcode', 'w-4 h-4 shrink-0') ?><span x-text="scanAviso"></span>
     </div>
 
     <!-- Chips de categoría -->
@@ -332,6 +349,7 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
   </div>
 </div>
 
+<?= escaner_script() ?>
 <script src="<?= e(asset('js/pos-offline.js')) ?>"></script>
 <script>
 function pos() {
@@ -349,10 +367,18 @@ function pos() {
     procesando: false, payError: '',
     provisional: false, prov: null,
     verErrores: false, listaErrores: [],
+    // Escaneo
+    camaraOk: false, scanAviso: '', scanOk: true, _tAviso: null,
     init() {
       var self = this;
       window.addEventListener('online',  function () { self.online = true; });
       window.addEventListener('offline', function () { self.online = false; });
+
+      this.camaraOk = window.NexoEscaner ? NexoEscaner.soportado() : false;
+      // Pistola USB/Bluetooth: si el foco se fue del buscador, se sigue leyendo.
+      if (window.NexoEscaner) {
+        NexoEscaner.teclado({ onCodigo: function (codigo) { self.porCodigo(codigo); } });
+      }
       PosOffline.init({
         syncUrl: '<?= e(url('modules/pos/sync_venta.php')) ?>',
         termUrl: '<?= e(url('modules/pos/terminal_sync.php')) ?>',
@@ -424,10 +450,105 @@ function pos() {
     },
     imprimirProvisional() { window.print(); },
     get filtered() {
-      const s = this.search.toLowerCase();
+      const s = this.search.toLowerCase().trim();
       return this.productos.filter(p =>
         (this.cat === 0 || p.categoria_id === this.cat) &&
-        (s === '' || p.nombre.toLowerCase().includes(s) || (p.codigo || '').toLowerCase().includes(s)));
+        (s === '' || p.nombre.toLowerCase().includes(s)
+                  || (p.codigo || '').toLowerCase().includes(s)
+                  || (p.barras || '').toLowerCase().includes(s)));
+    },
+
+    /* ---------------- Escaneo ---------------- */
+
+    /**
+     * Busca un código exacto y lo mete al carrito. Es lo que dispara tanto la
+     * pistola (teclea + Enter) como la cámara.
+     *
+     * Solo coincidencia EXACTA: en una caja, "parecido" no sirve. Si el código
+     * no está, se avisa y no se toca el carrito — cobrar el artículo equivocado
+     * por una coincidencia parcial es peor que no cobrar.
+     */
+    porCodigo(codigo) {
+      const c = String(codigo || '').trim();
+      if (!c) return;
+
+      // Con el cobro abierto no se añade nada: el total ya está a la vista del
+      // cliente y meterle una línea más a espaldas de ambos es cobrar de más.
+      if (this.pay) {
+        this.avisarScan('Termina o cancela el cobro antes de escanear otro producto.', false);
+        this.pitido(false);
+        return;
+      }
+
+      // Se exige que el producto TENGA código antes de compararlo: si no, un
+      // código vacío casaría con el primer producto sin código de barras.
+      let p = this.productos.find(x => x.barras && x.barras === c)
+           || this.productos.find(x => x.codigo && x.codigo.toLowerCase() === c.toLowerCase());
+
+      // Un lector puede devolver un UPC-A de 12 dígitos donde el sistema guardó
+      // el EAN-13 con el 0 delante (o al revés). Es el mismo artículo.
+      if (!p && /^\d{12}$/.test(c))  p = this.productos.find(x => x.barras === '0' + c);
+      if (!p && /^0\d{12}$/.test(c)) p = this.productos.find(x => x.barras === c.slice(1));
+
+      // Si no hubo código exacto pero lo escrito deja UNA sola coincidencia en la
+      // rejilla, es lo que la cajera quiso: escribir media palabra y pulsar Enter.
+      // Con varias no se adivina — se dice cuántas hay y se deja elegir.
+      if (!p && c === this.search.trim()) {
+        const vis = this.filtered;
+        if (vis.length === 1) {
+          p = vis[0];
+        } else if (vis.length > 1) {
+          this.avisarScan('Hay ' + vis.length + ' productos que coinciden con «' + c + '». Toca el que quieras.', false);
+          this.pitido(false);
+          return;
+        }
+      }
+
+      if (!p) {
+        this.avisarScan('Ningún producto tiene el código ' + c + '.', false);
+        this.pitido(false);
+        return;
+      }
+      if (p.stock <= 0) {
+        this.avisarScan(p.nombre + ' está agotado en esta sucursal.', false);
+        this.pitido(false);
+        return;
+      }
+
+      const antes = this.cart.find(i => i.id === p.id);
+      if (antes && antes.cant >= p.stock) {
+        this.avisarScan('Solo quedan ' + p.stock + ' de ' + p.nombre + '.', false);
+        this.pitido(false);
+        return;
+      }
+
+      this.add(p);
+      const it = this.cart.find(i => i.id === p.id);
+      this.avisarScan(p.nombre + ' · ' + (it ? it.cant : 1) + ' en el carrito', true);
+      this.search = '';
+      // El foco vuelve al buscador para poder disparar el siguiente sin tocar nada.
+      if (this.$refs.buscar) this.$refs.buscar.focus();
+    },
+
+    escanear() {
+      if (!window.NexoEscaner) return;
+      NexoEscaner.abrir({
+        titulo: 'Escanear producto',
+        ayuda: 'Apunta al código. Cada lectura suma una unidad al carrito.',
+        continuo: true,
+        onLeer: (codigo) => this.porCodigo(codigo),
+      });
+    },
+
+    // El POS tiene que vender aunque el escáner no haya cargado (primera visita
+    // sin conexión): el pitido es un lujo, cobrar no.
+    pitido(ok) { if (window.NexoEscaner) NexoEscaner.pitar(ok); },
+
+    avisarScan(msg, ok) {
+      this.scanAviso = msg;
+      this.scanOk = ok;
+      clearTimeout(this._tAviso);
+      this._tAviso = setTimeout(() => { this.scanAviso = ''; }, ok ? 2200 : 4500);
     },
     add(p) {
       if (p.stock <= 0) return;

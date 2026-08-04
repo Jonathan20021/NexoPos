@@ -313,6 +313,12 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
   </div>
 
   <div class="ml-auto flex items-center gap-2">
+    <?php if ($abierto && can('conteos.contar')): ?>
+      <a href="<?= e(url('modules/inventario/escaner.php?modo=conteo&conteo_id=' . $id)) ?>" class="btn btn-soft btn-sm"
+         title="Abre el terminal de almacén: cada lectura suma a lo contado y se guarda al momento">
+        <?= icon('barcode', 'w-3.5 h-3.5') ?> Contar escaneando
+      </a>
+    <?php endif; ?>
     <?php if ($abierto && can('conteos.cancelar')): ?>
       <form method="post" onsubmit="return confirm('¿Cancelar el conteo <?= e($c['numero']) ?>? No se tocará el inventario y no se podrá retomar.')">
         <?= csrf_field() ?><input type="hidden" name="accion" value="cancelar"><input type="hidden" name="id" value="<?= $id ?>">
@@ -368,6 +374,8 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
                     <input type="text" inputmode="decimal" name="cont[<?= (int) $l['id'] ?>]"
                            value="<?= $contado === null ? '' : qty($contado) ?>"
                            data-teorico="<?= (float) $l['stock_teorico'] ?>"
+                           data-barras="<?= e((string) $l['codigo_barras']) ?>"
+                           data-codigo="<?= e((string) $l['codigo']) ?>"
                            aria-label="Cantidad contada de <?= e($l['nombre']) ?>"
                            class="input py-1.5 px-2 text-center w-28 tabular-nums" placeholder="—">
                   <?php else: ?>
@@ -404,7 +412,9 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
         <p class="text-sm text-slate-500 flex-1 min-w-[220px]">
           Escribe lo que contaste. Deja el campo vacío para marcar el producto como <strong>sin contar</strong>.
           Guarda antes de cambiar de página o de filtro.
+          <span class="block mt-0.5">Con una pistola lectora puedes disparar sobre esta pantalla: cada lectura suma 1 a su producto.</span>
         </p>
+        <span id="avisoEscaneo" class="text-sm font-semibold px-3 py-1.5 rounded-lg hidden"></span>
         <button type="submit" class="btn btn-primary"><?= icon('save', 'w-4 h-4') ?> Guardar cantidades</button>
       </div>
     </div>
@@ -452,6 +462,7 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
 </div>
 <?php endif; ?>
 
+<?= escaner_script() ?>
 <script>
 /**
  * Marca la fila en vivo mientras se teclea, para que el faltante o el sobrante
@@ -484,6 +495,58 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
       if (i > -1 && campos[i + 1]) { campos[i + 1].focus(); campos[i + 1].select(); }
     });
   });
+
+  /* ---------------------------------------------------------------------
+   * Pistola lectora sobre esta pantalla: cada disparo suma 1 al producto.
+   * Solo se toca lo que está VISIBLE en la página; el conteo se pagina de 50
+   * en 50, así que si el artículo no está aquí se dice en vez de sumárselo al
+   * que no era. Para contar el almacén entero de corrido está el terminal del
+   * teléfono, que guarda al momento.
+   * ------------------------------------------------------------------- */
+  var aviso = document.getElementById('avisoEscaneo');
+  function decir(msg, ok) {
+    if (!aviso) return;
+    aviso.textContent = msg;
+    aviso.className = 'text-sm font-semibold px-3 py-1.5 rounded-lg ' + (ok ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700');
+    clearTimeout(aviso._t);
+    aviso._t = setTimeout(function () { aviso.className = 'text-sm font-semibold px-3 py-1.5 rounded-lg hidden'; }, ok ? 2500 : 5000);
+  }
+
+  function buscarCampo(codigo) {
+    var campos = Array.prototype.slice.call(form.querySelectorAll('input[name^="cont["]'));
+    var alt = /^\d{12}$/.test(codigo) ? '0' + codigo : (/^0\d{12}$/.test(codigo) ? codigo.slice(1) : null);
+    for (var i = 0; i < campos.length; i++) {
+      var b = campos[i].dataset.barras || '';
+      if (b && (b === codigo || (alt && b === alt))) return campos[i];
+    }
+    for (var j = 0; j < campos.length; j++) {
+      if ((campos[j].dataset.codigo || '').toLowerCase() === codigo.toLowerCase()) return campos[j];
+    }
+    return null;
+  }
+
+  // Solo se escucha la pistola si esta pantalla admite captura. En un conteo ya
+  // aplicado o cancelado no hay campos que rellenar, y un disparo solo produciría
+  // un error desconcertante.
+  if (window.NexoEscaner && form.querySelector('input[name^="cont["]')) {
+    NexoEscaner.teclado({
+      onCodigo: function (codigo) {
+        var campo = buscarCampo(codigo);
+        if (!campo) {
+          NexoEscaner.pitar(false);
+          decir('El código ' + codigo + ' no está en esta página del conteo. Búscalo arriba o usa «Contar escaneando».', false);
+          return;
+        }
+        var actual = parseFloat(String(campo.value).replace(/,/g, '')) || 0;
+        campo.value = String(actual + 1);
+        campo.dispatchEvent(new Event('input', { bubbles: true }));   // repinta la fila
+        campo.focus();
+        campo.select();
+        campo.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        decir((campo.getAttribute('aria-label') || '').replace('Cantidad contada de ', '') + ' → ' + campo.value, true);
+      },
+    });
+  }
 })();
 </script>
 

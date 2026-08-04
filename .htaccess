@@ -10,7 +10,11 @@ Options -Indexes
   Header always set X-Content-Type-Options "nosniff"
   Header always set X-Frame-Options "SAMEORIGIN"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
-  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  # camera=(self): el escáner de códigos de barras usa la cámara del teléfono
+  # (modules/inventario/escaner.php y el botón de escanear del POS). Con
+  # `camera=()` el navegador la niega en seco, sin preguntar y sin explicar por
+  # qué. El micrófono y la ubicación siguen bloqueados: nada los usa.
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
   Header always set X-XSS-Protection "1; mode=block"
   # Descomenta cuando tengas HTTPS con certificado válido:
   # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"

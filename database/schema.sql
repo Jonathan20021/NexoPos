@@ -206,7 +206,10 @@ CREATE TABLE productos (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_producto_codigo (codigo),
-  KEY idx_p_barras (codigo_barras),
+  -- Único, no un índice normal: dos productos con el mismo código de barras
+  -- harían que el escáner cobre el artículo equivocado. Los NULL no chocan
+  -- entre sí, así que la mercancía sin código convive sin problema.
+  UNIQUE KEY uq_producto_barras (codigo_barras),
   KEY idx_p_categoria (categoria_id),
   KEY idx_p_nombre (nombre),
   KEY idx_p_activo_nombre (activo, nombre),

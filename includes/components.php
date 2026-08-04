@@ -23,6 +23,8 @@ function nav_groups(): array
         ]],
         ['Inventario', [
             ['Productos', 'box', url('modules/inventario/productos.php'), 'productos.ver'],
+            ['Escáner de almacén', 'barcode', url('modules/inventario/escaner.php'), 'inventario.ver'],
+            ['Etiquetas de barras', 'tag', url('modules/inventario/etiquetas.php'), 'productos.etiquetas'],
             ['Categorías', 'tag', url('modules/inventario/categorias.php'), 'categorias.ver'],
             ['Marcas y Unidades', 'layers', url('modules/inventario/catalogos.php'), 'productos.ver'],
             ['Stock', 'layers', url('modules/inventario/stock.php'), 'inventario.ver'],

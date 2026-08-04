@@ -46,6 +46,7 @@ require_once dirname(__DIR__) . '/includes/cxp.php';
 require_once dirname(__DIR__) . '/includes/cotizaciones.php';
 require_once dirname(__DIR__) . '/includes/activos.php';
 require_once dirname(__DIR__) . '/includes/notificaciones.php';
+require_once dirname(__DIR__) . '/includes/barcode.php';
 require_once dirname(__DIR__) . '/includes/busqueda.php';
 require_once dirname(__DIR__) . '/includes/reportes.php';
 require_once dirname(__DIR__) . '/includes/charts.php';
@@ -85,6 +86,8 @@ if (!headers_sent()) {
         . "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
         . "font-src 'self' data: https://fonts.gstatic.com; "
         . "img-src 'self' data: blob:; "
+        // media-src con blob: para el visor del escáner de códigos de barras.
+        . "media-src 'self' blob:; "
         . "connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
 }
 
