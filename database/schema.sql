@@ -25,6 +25,10 @@ CREATE TABLE empresa (
   mkt_fondo        VARCHAR(7)   NOT NULL DEFAULT '#F1F5F9',  -- fondo (neutro: sirve con cualquier marca)
   mkt_mostrar_logo TINYINT(1)   NOT NULL DEFAULT 1,
   mkt_pie          VARCHAR(255) NULL,
+  -- Verificación en dos pasos al iniciar sesión (ver docs/OTP-LOGIN.md).
+  otp_modo         VARCHAR(20)      NOT NULL DEFAULT 'siempre',  -- siempre | dispositivo_nuevo | nunca
+  otp_vigencia_min TINYINT UNSIGNED NOT NULL DEFAULT 10,         -- minutos que vive el código
+  otp_recordar_dias SMALLINT UNSIGNED NOT NULL DEFAULT 30,       -- días de un equipo de confianza; 0 = no permitir
   mensaje_ticket VARCHAR(255) NULL DEFAULT '¡Gracias por su compra!',
   link_pago VARCHAR(255) NULL,                  -- se envía al cliente por WhatsApp
   tienda_activa TINYINT(1) NOT NULL DEFAULT 1,  -- interruptor general de la tienda pública
@@ -100,6 +104,7 @@ CREATE TABLE usuarios (
   telefono VARCHAR(40) NULL,
   avatar VARCHAR(255) NULL,
   comision_pct DECIMAL(5,2) NOT NULL DEFAULT 0,   -- % de comisión sobre sus ventas
+  otp_activo TINYINT(1) NOT NULL DEFAULT 1,       -- pide código de verificación al entrar
   activo TINYINT(1) NOT NULL DEFAULT 1,
   ultimo_acceso DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1605,6 +1610,75 @@ CREATE TABLE contadores (
   valor      BIGINT UNSIGNED NOT NULL DEFAULT 0,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== SEGURIDAD DE ACCESO (2FA) =====================
+-- Verificación en dos pasos por correo. Ver docs/OTP-LOGIN.md.
+-- El código NUNCA se guarda en claro: solo su bcrypt. Un volcado de la base no
+-- entrega códigos utilizables.
+DROP TABLE IF EXISTS login_otp;
+CREATE TABLE login_otp (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id INT UNSIGNED NOT NULL,
+  proposito VARCHAR(20) NOT NULL DEFAULT 'login',
+  codigo_hash VARCHAR(255) NOT NULL,
+  destino VARCHAR(120) NOT NULL,
+  intentos TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  max_intentos TINYINT UNSIGNED NOT NULL DEFAULT 5,
+  enviado TINYINT(1) NOT NULL DEFAULT 0,
+  error_envio VARCHAR(255) NULL,
+  proveedor_id VARCHAR(80) NULL,
+  ip VARCHAR(45) NULL,
+  user_agent VARCHAR(255) NULL,
+  ua_hash CHAR(64) NULL,                    -- ata el código al navegador que lo pidió
+  expira_en DATETIME NOT NULL,
+  usado_en DATETIME NULL,
+  anulado_en DATETIME NULL,
+  motivo_anulacion VARCHAR(60) NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_otp_usuario (usuario_id, created_at),
+  KEY idx_otp_vivo (usuario_id, proposito, usado_en, anulado_en),
+  KEY idx_otp_purga (created_at),
+  CONSTRAINT fk_otp_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Contador para los bloqueos por fuerza bruta. `clave` es el sujeto del límite:
+-- 'login:admin' (cuenta) o 'ip:186.x.x.x'. Sin FK a usuarios: también se cuentan
+-- los intentos contra cuentas inexistentes, que son la señal de un diccionario.
+DROP TABLE IF EXISTS login_intentos;
+CREATE TABLE login_intentos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tipo VARCHAR(20) NOT NULL,                -- password | otp | envio
+  clave VARCHAR(190) NOT NULL,
+  exito TINYINT(1) NOT NULL DEFAULT 0,
+  usuario_id INT UNSIGNED NULL,
+  ip VARCHAR(45) NULL,
+  detalle VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_li_ventana (tipo, clave, exito, created_at),
+  KEY idx_li_purga (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Equipos de confianza («no me pidas el código en esta caja»). La cookie lleva un
+-- token aleatorio; aquí solo vive su SHA-256.
+DROP TABLE IF EXISTS login_dispositivos;
+CREATE TABLE login_dispositivos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id INT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  nombre VARCHAR(80) NOT NULL,
+  ip VARCHAR(45) NULL,
+  user_agent VARCHAR(255) NULL,
+  ultimo_uso DATETIME NULL,
+  expira_en DATETIME NOT NULL,
+  revocado_en DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_disp_token (token_hash),
+  KEY idx_disp_usuario (usuario_id, revocado_en, expira_en),
+  CONSTRAINT fk_disp_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== SISTEMA / NOTIFICACIONES =====================

@@ -299,6 +299,51 @@ function notif_generar(): void
     notif_gen_rrhh();
     notif_gen_margenes();
     notif_gen_sanidad();
+    notif_gen_seguridad();
+}
+
+/**
+ * Seguridad de acceso.
+ *
+ * La alerta que importa es la primera: la politica de verificacion en dos pasos
+ * encendida mientras el correo saliente no esta configurado. El sistema deja
+ * entrar solo con contrasena para no dejar al negocio fuera de su propio ERP,
+ * pero eso significa que la proteccion NO se esta aplicando, y sin este aviso
+ * nadie se entera.
+ */
+function notif_gen_seguridad(): void
+{
+    if (!otp_disponible()) return;
+
+    $items = [];
+    $cfg = otp_config();
+
+    if ($cfg['modo'] !== 'nunca' && !otp_operativo()) {
+        $items[] = [
+            'clave' => 'seg_otp_sin_correo', 'categoria' => 'sistema', 'prioridad' => 'critica',
+            'titulo' => 'La verificacion en dos pasos no se esta aplicando',
+            'mensaje' => 'La politica esta encendida pero no hay correo saliente configurado, '
+                       . 'asi que no hay forma de entregar los codigos. Configura Resend en config.local.php.',
+            'url' => 'modules/admin/seguridad.php', 'icono' => 'shield', 'color' => 'rose',
+            'permiso' => 'configuracion.ver',
+        ];
+    }
+
+    if ($cfg['modo'] !== 'nunca') {
+        $exentos = (int) qVal("SELECT COUNT(*) FROM usuarios WHERE activo = 1 AND COALESCE(otp_activo,1) = 0");
+        if ($exentos > 0) {
+            $items[] = [
+                'clave' => 'seg_otp_exentos', 'categoria' => 'sistema', 'prioridad' => 'media',
+                'titulo' => $exentos . ' cuenta' . ($exentos === 1 ? '' : 's') . ' sin verificacion en dos pasos',
+                'mensaje' => 'Esas cuentas entran solo con contrasena. Revisalas y activa la verificacion '
+                           . 'en las que no tengan un motivo real para estar exentas.',
+                'url' => 'modules/admin/seguridad.php', 'icono' => 'user', 'color' => 'amber',
+                'permiso' => 'configuracion.ver',
+            ];
+        }
+    }
+
+    notif_sync('seguridad_acceso', $items);
 }
 
 /**

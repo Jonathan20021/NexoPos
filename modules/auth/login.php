@@ -1,18 +1,32 @@
 <?php
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 
+// Sin caché: con el botón «atrás» tras cerrar sesión, una copia guardada
+// mostraría el formulario con un token CSRF ya muerto.
+if (!headers_sent()) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, private');
+    header('Pragma: no-cache');
+}
+
 if (is_logged_in()) {
     redirect('modules/dashboard/index.php');
+}
+
+// Si hay una verificación a medias, la pantalla que toca es la del código.
+if (login_pendiente()) {
+    redirect('modules/auth/verificar.php');
 }
 
 $error = '';
 if (isPost()) {
     verify_csrf();
-    [$ok, $msg] = login_user(trim(post('usuario')), post('password'));
-    if ($ok) {
-        redirect('modules/dashboard/index.php');
-    }
-    $error = $msg;
+    $r = login_intentar(trim((string) post('usuario')), (string) post('password'));
+
+    // Patrón PRG: nada de reenviar la contraseña al recargar.
+    if ($r['estado'] === 'ok')  redirect('modules/dashboard/index.php');
+    if ($r['estado'] === 'otp') redirect('modules/auth/verificar.php');
+
+    $error = $r['mensaje'];
 }
 
 // Las credenciales de demostración solo se muestran fuera de producción.
@@ -228,6 +242,15 @@ tailwind.config = { theme: { extend: {
           <span x-text="enviando ? 'Entrando…' : 'Iniciar sesión'">Iniciar sesión</span>
         </button>
       </form>
+
+      <?php if (otp_politica_activa() && otp_operativo()): ?>
+        <p class="mt-4 flex items-start gap-2 text-[12.5px] text-slate-400 leading-relaxed">
+          <svg class="w-4 h-4 shrink-0 mt-px text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>
+          </svg>
+          <span>Verificación en dos pasos activa: al validar tu contraseña te enviaremos un código a tu correo.</span>
+        </p>
+      <?php endif; ?>
 
       <?php if ($mostrarDemo): ?>
         <div class="mt-8">

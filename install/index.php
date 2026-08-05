@@ -128,7 +128,9 @@ function sembrar(): void
         $todos = fn($c, $m) => true;
         $asignar($rSuper, $todos);
         $asignar($rAdmin, $todos);
-        $asignar($rGerente, fn($c, $m) => !in_array($m, ['roles', 'usuarios', 'configuracion', 'auditoria', 'rrhh_nomina']) || str_ends_with($c, '.ver'));
+        // «seguridad» queda fuera del Gerente: cambiar la política de verificación
+        // en dos pasos o eximir cuentas es una decisión de administración.
+        $asignar($rGerente, fn($c, $m) => !in_array($m, ['roles', 'usuarios', 'configuracion', 'auditoria', 'seguridad', 'rrhh_nomina']) || str_ends_with($c, '.ver'));
         $ventasMods = ['pos', 'caja', 'ventas', 'devoluciones', 'clientes'];
         // ventas.muestra queda fuera del Cajero por defecto: entregar producto a
         // RD$0.00 es sensible. Se concede desde Roles y Permisos si el cliente lo decide.

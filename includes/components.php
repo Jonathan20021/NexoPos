@@ -84,6 +84,7 @@ function nav_groups(): array
             ['Usuarios', 'user', url('modules/admin/usuarios.php'), 'usuarios.ver'],
             ['Roles y Permisos', 'shield', url('modules/admin/roles.php'), 'roles.ver'],
             ['Configuración', 'settings', url('modules/admin/configuracion.php'), 'configuracion.ver'],
+            ['Seguridad de acceso', 'lock', url('modules/admin/seguridad.php'), 'configuracion.ver'],
             ['Monedas y tasa', 'coins', url('modules/admin/monedas.php'), 'monedas.gestionar'],
             ['Auditoría / Logs', 'list', url('modules/admin/auditoria.php'), 'auditoria.ver'],
             ['Integridad de datos', 'shield', url('modules/admin/integridad.php'), 'configuracion.ver'],

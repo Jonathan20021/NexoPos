@@ -1,14 +1,21 @@
 <?php
 /**
  * Registro de auditoría. Guarda cada acción relevante en la tabla `auditoria`.
+ *
+ * `$opts['usuario_id']` y `$opts['usuario_nombre']` permiten firmar el evento a
+ * nombre de alguien que TODAVÍA no tiene sesión. Lo necesita la verificación en
+ * dos pasos: el envío del código y los intentos fallidos ocurren antes de que
+ * exista `$_SESSION['user']`, y atribuirlos a «Sistema» dejaría la bitácora sin
+ * la única información que importa cuando se investiga un acceso.
  */
 function audit(string $modulo, string $accion, string $descripcion = '', array $opts = []): void
 {
     try {
         $u = current_user();
+        $nombre = $opts['usuario_nombre'] ?? ($u ? ($u['nombre'] . ' ' . $u['apellido']) : 'Sistema');
         dbInsert('auditoria', [
-            'usuario_id'      => $u['id'] ?? null,
-            'usuario_nombre'  => $u ? ($u['nombre'] . ' ' . $u['apellido']) : 'Sistema',
+            'usuario_id'      => $opts['usuario_id'] ?? ($u['id'] ?? null),
+            'usuario_nombre'  => trim((string) $nombre) !== '' ? trim((string) $nombre) : 'Sistema',
             'sucursal_id'     => $opts['sucursal_id'] ?? ($u['sucursal_id'] ?? null),
             'modulo'          => $modulo,
             'accion'          => $accion,

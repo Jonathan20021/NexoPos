@@ -60,6 +60,24 @@ Patrón PRG: tras procesar un POST siempre `redirect(...)`. Usa `flash('success'
 - En cada formulario: `<?= csrf_field() ?>`. Al inicio del bloque POST: `verify_csrf();`
 - Verificar permiso de la acción específica antes de escribir: `require_perm('modulo.crear')` etc.
 - `audit('modulo','accion','descripción', ['tabla'=>'t','registro_id'=>$id])` tras crear/editar/eliminar.
+  Para firmar un evento de alguien que todavía no tiene sesión (login, OTP), pasa
+  `['usuario_id'=>$id,'usuario_nombre'=>$n]`.
+
+## Inicio de sesión en dos pasos (`includes/otp.php`) — ver `docs/OTP-LOGIN.md`
+El login es de dos fases y **`$_SESSION['user']` no existe hasta el final**.
+
+- `login_intentar($usuario,$password)` → `['estado' => 'ok'|'otp'|'error', 'mensaje' => ...]`.
+  `otp` significa «se emitió el código, manda al usuario a `modules/auth/verificar.php`».
+- `login_confirmar_otp($codigo, $recordarEquipo)` cierra el flujo.
+- `login_establecer_sesion()` es el **único** sitio donde se escribe `$_SESSION['user']`.
+  Si alguna vez hay que endurecer el acceso, se endurece ahí y no en cinco páginas.
+- Entre paso y paso solo vive `$_SESSION['otp_login']`, que **no concede permisos**:
+  nunca leas de ahí para decidir si alguien puede algo.
+- Comprueba `otp_disponible()` antes de tocar `login_otp`, `login_intentos` o
+  `login_dispositivos`: el código puede desplegarse antes que la migración P14.
+- El código se guarda con `password_hash()`, jamás en claro, y el contador de intentos
+  se incrementa con un UPDATE condicional **antes** de comparar (si no, dos peticiones
+  simultáneas gastan el mismo intento).
 
 ## Iconos — `icon('nombre','w-5 h-5')`
 dashboard, store, box, tag, layers, truck, cart, receipt, cash, undo, users, user, shield,

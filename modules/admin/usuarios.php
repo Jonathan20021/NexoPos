@@ -132,7 +132,7 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Usuario</th><th>Acceso</th><th>Email</th><th>Rol</th><th>Sucursal</th><th>Último acceso</th><th>Estado</th><th class="text-right">Acciones</th></tr></thead>
+        <thead><tr><th>Usuario</th><th>Acceso</th><th>Email</th><th>Rol</th><th>Sucursal</th><th>Último acceso</th><th>Estado</th><th>2FA</th><th class="text-right">Acciones</th></tr></thead>
         <tbody>
           <?php foreach ($usuarios as $u): ?>
             <?php $nombreCompleto = trim($u['nombre'] . ' ' . $u['apellido']); ?>
@@ -149,6 +149,16 @@ layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones
               <td class="text-slate-500"><?= $u['sucursal_id'] ? e($u['sucursal_nombre']) : '<span class="text-slate-400 italic">Todas</span>' ?></td>
               <td class="text-slate-500 text-sm"><?= $u['ultimo_acceso'] ? e(fechaHora($u['ultimo_acceso'])) : '—' ?></td>
               <td><?= $u['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
+              <td>
+                <?php
+                  // Solo informativo: se cambia en Seguridad de acceso, que exige
+                  // el permiso `seguridad.gestionar` aparte de `usuarios.editar`.
+                  $dosPasos = (int) ($u['otp_activo'] ?? 1) === 1;
+                ?>
+                <a href="<?= e(url('modules/admin/seguridad.php')) ?>" title="Gestionar en Seguridad de acceso">
+                  <?= $dosPasos ? badge('Activa', 'emerald') : badge('Exenta', 'amber') ?>
+                </a>
+              </td>
               <td>
                 <div class="flex items-center justify-end gap-1">
                   <?php if (can('usuarios.editar')): ?>

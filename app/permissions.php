@@ -16,6 +16,9 @@ function permission_catalog(): array
             'roles'         => ['label' => 'Roles y Permisos', 'acciones' => $crud],
             'configuracion' => ['label' => 'Configuración', 'acciones' => ['ver' => 'Ver', 'editar' => 'Editar']],
             'auditoria'     => ['label' => 'Auditoría / Logs', 'acciones' => ['ver' => 'Ver']],
+            // Se separa de `configuracion` a propósito: quien puede eximir a un
+            // usuario del segundo factor puede debilitar el acceso de todos.
+            'seguridad'     => ['label' => 'Seguridad de acceso', 'acciones' => ['gestionar' => 'Cambiar la política de verificación y revocar equipos']],
             'monedas'       => ['label' => 'Monedas y tasa de cambio', 'acciones' => ['gestionar' => 'Ver y actualizar la tasa']],
         ],
         'Inventario' => [

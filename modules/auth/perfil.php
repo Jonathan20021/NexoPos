@@ -43,14 +43,68 @@ if (isPost()) {
             flash('error', 'La confirmación no coincide.');
         } else {
             dbUpdate('usuarios', ['password_hash' => password_hash($nueva, PASSWORD_DEFAULT)], 'id = ?', [$uid]);
-            audit('auth', 'editar', 'Cambió su contraseña');
-            flash('success', 'Contraseña actualizada correctamente.');
+            // Cambiar la contraseña es lo que se hace cuando se sospecha que alguien
+            // la conoce. Dejar equipos «de confianza» vivos después de eso sería
+            // dejarle a esa persona una puerta abierta sin segundo factor.
+            $equipos = otp_revocar_todos($uid);
+            otp_anular_vivos($uid, 'login', 'cambio_password');
+            audit('auth', 'editar', 'Cambió su contraseña'
+                . ($equipos > 0 ? " (se retiraron $equipos equipo" . ($equipos === 1 ? '' : 's') . ' de confianza)' : ''));
+            flash('success', 'Contraseña actualizada correctamente.'
+                . ($equipos > 0 ? ' Por seguridad se retiraron tus equipos de confianza.' : ''));
         }
+        redirect('modules/auth/perfil.php');
+    }
+
+    if ($accion === 'otp_activar') {
+        if (!otp_disponible()) {
+            flash('error', 'La verificación en dos pasos no está instalada en este servidor.');
+        } else {
+            dbUpdate('usuarios', ['otp_activo' => 1], 'id = ?', [$uid]);
+            audit('auth', 'otp_activado', 'Activó la verificación en dos pasos en su cuenta');
+            flash('success', 'Verificación en dos pasos activada para tu cuenta.');
+        }
+        redirect('modules/auth/perfil.php');
+    }
+
+    // Solo se revocan equipos PROPIOS: otp_revocar_dispositivo() filtra por usuario.
+    if ($accion === 'revocar_equipo') {
+        if (otp_revocar_dispositivo(postInt('id'), $uid)) {
+            audit('auth', 'dispositivo_revocado', 'Retiró un equipo de confianza');
+            flash('success', 'Equipo retirado. La próxima vez pedirá código en ese dispositivo.');
+        } else {
+            flash('error', 'Ese equipo ya no estaba registrado.');
+        }
+        redirect('modules/auth/perfil.php');
+    }
+
+    if ($accion === 'revocar_equipos') {
+        $n = otp_revocar_todos($uid);
+        audit('auth', 'dispositivo_revocado', "Retiró todos sus equipos de confianza ($n)");
+        flash($n > 0 ? 'success' : 'info', $n > 0
+            ? "Se retiraron $n equipo" . ($n === 1 ? '' : 's') . ' de confianza.'
+            : 'No tenías equipos de confianza registrados.');
         redirect('modules/auth/perfil.php');
     }
 }
 
 $u = qOne("SELECT u.*, r.nombre AS rol, s.nombre AS sucursal FROM usuarios u JOIN roles r ON r.id=u.rol_id LEFT JOIN sucursales s ON s.id=u.sucursal_id WHERE u.id=?", [$uid]);
+
+// ---------- Verificación en dos pasos ----------
+$otpCfg      = otp_config();
+$otpInstalado = otp_disponible();
+$otpUsuario  = (int) ($u['otp_activo'] ?? 1) === 1;
+$otpVigente  = otp_politica_activa() && otp_operativo() && $otpUsuario;
+$equipos     = $otpInstalado ? otp_dispositivos($uid) : [];
+$equipoActual = $otpInstalado ? otp_dispositivo_actual_id($uid) : null;
+
+// Últimos accesos: es la señal con la que una persona detecta un acceso ajeno.
+// Cada intento deja dos filas (una por cuenta y otra por IP); aquí solo la de la
+// cuenta, o la lista saldría duplicada.
+$accesos = $otpInstalado ? qAll(
+    "SELECT exito, ip, detalle, created_at FROM login_intentos
+      WHERE tipo = 'password' AND usuario_id = ? AND clave LIKE 'login:%'
+      ORDER BY id DESC LIMIT 6", [$uid]) : [];
 
 // Actividad reciente del usuario (da contexto a la ficha).
 $actividad = qAll(
@@ -91,12 +145,133 @@ layout_start('Mi Perfil', 'Tus datos, tu acceso y tu actividad reciente', $accio
           <h3 class="font-bold text-slate-800">Seguridad de la cuenta</h3>
           <p class="text-sm text-slate-500 mt-1 leading-relaxed">
             Tu contraseña es personal: con ella quedan firmadas las ventas, los ajustes de inventario y los movimientos
-            de caja que hagas. Cámbiala si crees que alguien más la conoce.
+            de caja que hagas. Cámbiala si crees que alguien más la conoce; al hacerlo se retiran también tus equipos
+            de confianza.
           </p>
           <button onclick="<?= jsEvent('perfil:password') ?>" class="btn btn-soft mt-4"><?= icon('lock', 'w-4 h-4') ?> Cambiar contraseña</button>
         </div>
       </div>
     </div>
+
+    <!-- Verificación en dos pasos -->
+    <div class="card p-6">
+      <div class="flex items-start gap-4">
+        <span class="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center <?= $otpVigente ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600' ?>">
+          <?= icon('shield', 'w-5 h-5') ?>
+        </span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <h3 class="font-bold text-slate-800">Verificación en dos pasos</h3>
+            <?= $otpVigente ? badge('Activa', 'emerald') : badge('Inactiva', 'amber') ?>
+          </div>
+
+          <?php if (!$otpInstalado): ?>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+              Este servidor todavía no tiene instalada la verificación en dos pasos.
+              El administrador debe aplicar la migración <span class="font-mono text-[12.5px]">migracion_otp_login_p14.sql</span>.
+            </p>
+          <?php elseif ($otpVigente): ?>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+              Cada vez que entres<?= $otpCfg['modo'] === 'dispositivo_nuevo' ? ' desde un equipo nuevo' : '' ?>
+              te enviaremos un código de <?= OTP_LONGITUD ?> dígitos a
+              <span class="font-semibold text-slate-700"><?= e(otp_email_mascara((string) $u['email'])) ?></span>.
+              Aunque alguien averigüe tu contraseña, sin ese código no entra.
+            </p>
+          <?php elseif (!$otpUsuario): ?>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+              Tu cuenta está exenta del código de verificación. Actívala: es la protección más
+              efectiva que puedes ponerle a tu usuario y no cuesta nada.
+            </p>
+            <form method="post" class="mt-4">
+              <?= csrf_field() ?>
+              <input type="hidden" name="accion" value="otp_activar">
+              <button class="btn btn-primary"><?= icon('shield', 'w-4 h-4') ?> Activar en mi cuenta</button>
+            </form>
+          <?php elseif (!otp_operativo()): ?>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+              La política está encendida, pero el correo saliente no está configurado en el servidor,
+              así que ahora mismo no se puede entregar ningún código. Avisa al administrador.
+            </p>
+          <?php else: ?>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">
+              La empresa tiene la verificación en dos pasos desactivada para todos los usuarios.
+            </p>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <?php if ($otpInstalado && $otpCfg['recordar_dias'] > 0): ?>
+        <div class="mt-5 pt-5 border-t border-slate-100">
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div>
+              <h4 class="font-semibold text-slate-700 text-[14.5px]">Equipos de confianza</h4>
+              <p class="text-[12.5px] text-slate-400 mt-0.5">Aquí no se pide el código durante <?= (int) $otpCfg['recordar_dias'] ?> días.</p>
+            </div>
+            <?php if ($equipos): ?>
+              <form method="post" onsubmit="return confirm('¿Retirar todos tus equipos de confianza? La próxima vez pedirá código en todos.')">
+                <?= csrf_field() ?>
+                <input type="hidden" name="accion" value="revocar_equipos">
+                <button class="btn btn-ghost btn-sm text-rose-600"><?= icon('trash', 'w-4 h-4') ?> Retirar todos</button>
+              </form>
+            <?php endif; ?>
+          </div>
+
+          <?php if (!$equipos): ?>
+            <p class="text-sm text-slate-400 rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+              No tienes equipos marcados como de confianza. Se te pedirá el código en cada acceso.
+            </p>
+          <?php else: ?>
+            <ul class="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+              <?php foreach ($equipos as $d): ?>
+                <li class="flex items-center gap-3 px-4 py-3 <?= (int) $d['id'] === $equipoActual ? 'bg-emerald-50/40' : '' ?>">
+                  <span class="w-8 h-8 rounded-lg bg-slate-50 text-slate-400 flex items-center justify-center shrink-0"><?= icon('lock', 'w-4 h-4') ?></span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-semibold text-slate-700 flex items-center gap-2 flex-wrap">
+                      <?= e($d['nombre']) ?>
+                      <?php if ((int) $d['id'] === $equipoActual): ?><?= badge('Este equipo', 'emerald') ?><?php endif; ?>
+                    </p>
+                    <p class="text-[11.5px] text-slate-400 mt-0.5">
+                      <?= e($d['ip'] ?: 'IP desconocida') ?> ·
+                      último uso <?= e(tiempoRelativo($d['ultimo_uso'] ?: $d['created_at'])) ?> ·
+                      vence <?= e(fechaCorta($d['expira_en'])) ?>
+                    </p>
+                  </div>
+                  <form method="post" class="shrink-0" onsubmit="return confirm('¿Retirar «<?= e($d['nombre']) ?>» de tus equipos de confianza?')">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="accion" value="revocar_equipo">
+                    <input type="hidden" name="id" value="<?= (int) $d['id'] ?>">
+                    <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Retirar equipo"><?= icon('trash', 'w-4 h-4') ?></button>
+                  </form>
+                </li>
+              <?php endforeach; ?>
+            </ul>
+          <?php endif; ?>
+        </div>
+      <?php endif; ?>
+    </div>
+
+    <?php if ($accesos): ?>
+      <!-- Últimos accesos -->
+      <div class="card overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100">
+          <h3 class="font-bold text-slate-800">Últimos intentos de acceso a tu cuenta</h3>
+          <p class="text-[12.5px] text-slate-400 mt-0.5">Si ves un intento que no reconoces, cambia tu contraseña.</p>
+        </div>
+        <ul class="divide-y divide-slate-100">
+          <?php foreach ($accesos as $a): ?>
+            <li class="flex items-center gap-3 px-6 py-3">
+              <span class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 <?= $a['exito'] ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600' ?>">
+                <?= icon($a['exito'] ? 'check' : 'x', 'w-4 h-4') ?>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm text-slate-700"><?= $a['exito'] ? 'Contraseña correcta' : e(ucfirst((string) ($a['detalle'] ?: 'Intento fallido'))) ?></p>
+                <p class="text-[11.5px] text-slate-400 mt-0.5"><?= e($a['ip'] ?: 'IP desconocida') ?> · <?= e(fechaHora($a['created_at'])) ?></p>
+              </div>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+      </div>
+    <?php endif; ?>
 
     <!-- Actividad -->
     <div class="card overflow-hidden">

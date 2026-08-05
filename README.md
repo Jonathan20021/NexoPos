@@ -53,9 +53,15 @@ fiscales **NCF (B01/B02)** y **nómina dominicana** (TSS: AFP/SFS + ISR por esca
 - **Administración** — sucursales, usuarios (con asignación de sucursal y **% de comisión**),
   **roles y permisos por acción**, configuración de empresa/NCF/métodos de pago, **subida de logo**,
   **auditoría** (logs) y **respaldo de la base de datos** descargable (.sql).
+- **Seguridad de acceso** — **verificación en dos pasos**: tras la contraseña, un código de 6
+  dígitos que llega por correo (Resend). Códigos de un solo uso y cifrados en la base, bloqueo
+  automático por fuerza bruta (por cuenta y por IP), equipos de confianza revocables y bitácora
+  de quién pidió cada código y desde dónde. Ver [`docs/OTP-LOGIN.md`](docs/OTP-LOGIN.md).
 - **Exportaciones** — todos los listados y reportes se exportan a **Excel (.xlsx)** y **PDF
   profesional con la marca/logo** de la empresa (factura, nómina, reportes y cualquier listado).
-- **Mi Perfil** — cada usuario actualiza sus datos y **cambia su contraseña**.
+- **Mi Perfil** — cada usuario actualiza sus datos, **cambia su contraseña**, ve el estado de su
+  verificación en dos pasos, retira sus equipos de confianza y revisa los últimos intentos de
+  acceso a su cuenta.
 
 Todo está **automatizado**: cada venta descuenta stock y registra el ingreso; cada compra/
 transferencia/ajuste mueve el inventario; la nómina pagada y las devoluciones impactan finanzas;
@@ -85,6 +91,10 @@ Requiere las extensiones PHP: `gd`, `zip`, `mbstring`, `dom`, `fileinfo` (XAMPP 
 3. Ejecuta el instalador una sola vez (`/install/index.php`) y luego **elimina o protege** la
    carpeta `install/`.
 4. Recomendado: servir por **HTTPS** y usar una contraseña fuerte para MySQL.
+5. Configura **Resend** en `config/config.local.php` (`RESEND_API_KEY`, `MAIL_FROM`). Sin correo
+   saliente, la verificación en dos pasos del inicio de sesión **no se puede aplicar**: el sistema
+   avisa en Administración → Seguridad de acceso y deja entrar solo con contraseña, para no dejar
+   al cliente fuera de su propio sistema. Ver [`docs/OTP-LOGIN.md`](docs/OTP-LOGIN.md).
 
 La ruta base se **autodetecta**, por lo que el sistema funciona igual en una subcarpeta de XAMPP
 o en la raíz de un dominio, sin cambios.

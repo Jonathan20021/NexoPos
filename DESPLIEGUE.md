@@ -59,8 +59,21 @@ Las migraciones posteriores se aplican aparte, en orden:
 | `migracion_marketing_p9.sql` | Marketing: segmentos, plantillas, automatizaciones, rastreo, bajas y envíos por WhatsApp |
 | `migracion_marketing_p10.sql` | Diseño del correo personalizable (colores, logo y pie) |
 | `migracion_cxp_monedas_cotizaciones_p11.sql` | Cuentas por pagar con abonos, monedas (dólares) y cotizaciones |
+| `migracion_codigos_barras_p12.sql` | Códigos de barras: etiquetas y lectura con el teléfono |
+| `migracion_indices_unicos_p12.sql` | Índices únicos de refuerzo (concurrencia) |
+| `migracion_sanidad_p13.sql` | Cumplimiento sanitario: registros, lotes y trazabilidad |
+| `migracion_otp_login_p14.sql` | Verificación en dos pasos al iniciar sesión (código por correo) |
 
 Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
+
+> **`migracion_otp_login_p14.sql` enciende la verificación en dos pasos para todos los
+> usuarios en cuanto se aplica.** Antes de correrla, asegúrate de que `RESEND_API_KEY` está
+> configurada en `config/config.local.php` y de que **los correos de los usuarios son
+> correctos** (Administración → Usuarios): el código llega ahí y a ningún otro sitio.
+> Si el correo no está configurado, el sistema **no** exige el código (dejaría al cliente
+> fuera de su propio sistema) y lo avisa en Administración → Seguridad de acceso.
+> La llave de emergencia es `define('OTP_DESACTIVADO', true);` en `config.local.php`.
+> Ver [`docs/OTP-LOGIN.md`](docs/OTP-LOGIN.md).
 
 > **`migracion_marketing_p9.sql` empieza con `SET NAMES utf8mb4;` y hay que respetarlo.**
 > Sus textos de fábrica llevan tildes, ñ y emojis. Si se importa forzando otra codificación,

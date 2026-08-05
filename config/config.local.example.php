@@ -34,3 +34,23 @@ define('APP_ENV', 'production');
 define('RESEND_API_KEY', '');
 define('MAIL_FROM', 'Pedidos <pedidos@tudominio.com>');
 define('MAIL_REPLY_TO', 'contacto@tudominio.com');
+
+/**
+ * Verificación en dos pasos al iniciar sesión (ver docs/OTP-LOGIN.md).
+ *
+ * Normalmente NO hace falta tocar nada aquí: la política se administra desde
+ * Administración → Seguridad de acceso. Estas dos constantes son llaves de
+ * emergencia y mandan sobre lo que diga la base de datos.
+ *
+ *  OTP_DESACTIVADO     Apaga el segundo factor pase lo que pase. Es la salida
+ *                      cuando nadie puede entrar (el correo dejó de funcionar,
+ *                      el dueño perdió acceso a su buzón…). Quítala después.
+ *
+ *  OTP_EXIGIR_SIEMPRE  Lo contrario: exige el código aunque el correo no esté
+ *                      configurado. Sin ella, si no hay RESEND_API_KEY el
+ *                      sistema deja entrar solo con contraseña para no dejar al
+ *                      negocio fuera de su propio ERP (y lo avisa en pantalla).
+ *                      Con ella, si Resend falla, NADIE entra.
+ */
+// define('OTP_DESACTIVADO', true);
+// define('OTP_EXIGIR_SIEMPRE', true);
