@@ -16,8 +16,17 @@ Options -Indexes
   # qué. El micrófono y la ubicación siguen bloqueados: nada los usa.
   Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
   Header always set X-XSS-Protection "1; mode=block"
-  # Descomenta cuando tengas HTTPS con certificado válido:
-  # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  # HSTS: el navegador recuerda que este dominio es solo-HTTPS y ni siquiera
+  # intenta el http. Se arranca con 1 día a propósito, no con un año.
+  #
+  # HSTS NO SE PUEDE DESHACER a voluntad: el navegador respeta el plazo que ya
+  # guardó. Si el certificado dejara de renovarse, el sitio no daría un aviso
+  # saltable sino un muro, y durante todo ese plazo. Con 86400 el sistema se
+  # recupera solo en 24 horas.
+  #
+  # Cuando lleven un par de semanas sin incidencias con la renovación, sube el
+  # valor a 31536000 (un año), que es el recomendado.
+  Header always set Strict-Transport-Security "max-age=86400; includeSubDomains"
 </IfModule>
 
 # ----- Bloquear archivos sensibles por extensión / nombre -----
@@ -77,6 +86,34 @@ DirectoryIndex index.php
   <IfModule mod_negotiation.c>
     Options -MultiViews
   </IfModule>
+
+  # ----------------------------------------------------------------
+  # 0) Todo por HTTPS. Va PRIMERO: el resto de reglas solo deben correr
+  #    sobre una petición ya cifrada.
+  #
+  #    Por qué importa en este sistema y no es solo higiene:
+  #      · La cookie de sesión solo lleva el atributo `secure` cuando se
+  #        llegó por TLS (app/bootstrap.php lo decide así). Por http viaja
+  #        en claro y quien comparta el WiFi del almacén puede quedarse con
+  #        la sesión de un cajero.
+  #      · El escáner de códigos de barras usa la cámara, y el navegador la
+  #        niega fuera de un contexto seguro. Por http falla siempre.
+  #
+  #    La segunda condición mira la cabecera del proxy: si el TLS lo termina
+  #    un balanceador y le pasa la petición a Apache en claro, `%{HTTPS}`
+  #    vale "off" SIEMPRE y una regla ingenua redirige en bucle infinito,
+  #    dejando el sistema inaccesible. Con las dos condiciones no puede pasar.
+  # ----------------------------------------------------------------
+  #    Y se deja fuera el desarrollo local: XAMPP sirve https con un certificado
+  #    autofirmado, así que forzarlo ahí solo produce un aviso a pantalla completa
+  #    en cada carga. En localhost el navegador ya considera seguro el http, de
+  #    modo que la cámara y la cookie funcionan igual.
+  RewriteCond %{HTTP_HOST} !^localhost$ [NC]
+  RewriteCond %{HTTP_HOST} !^127\.0\.0\.1
+  RewriteCond %{HTTP_HOST} !^\[?::1\]?$
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
 
   # 1) /ruta/index.php  ->  /ruta/     (301, solo GET)
   RewriteCond %{REQUEST_METHOD} =GET
