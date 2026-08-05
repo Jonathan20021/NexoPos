@@ -298,6 +298,95 @@ function notif_generar(): void
     notif_gen_fiscal();
     notif_gen_rrhh();
     notif_gen_margenes();
+    notif_gen_sanidad();
+}
+
+/**
+ * Cumplimiento sanitario: registros que caducan y mercancia vencida.
+ *
+ * Son las dos cosas que sancionan en una inspeccion, y las dos avisan con
+ * antelacion suficiente para poder actuar: un registro sanitario tarda meses en
+ * renovarse, y un lote por vencer todavia se puede mover o devolver.
+ */
+function notif_gen_sanidad(): void
+{
+    if (!san_disponible()) return;
+
+    /* ---- Registros sanitarios ---- */
+    $items = [];
+    $r = san_resumen();
+
+    if (($r['registro_vencido'] ?? 0) > 0) {
+        $n = (int) $r['registro_vencido'];
+        $items[] = [
+            'clave' => 'san_registro_vencido', 'categoria' => 'cumplimiento', 'prioridad' => 'critica',
+            'titulo' => $n . ' registro' . ($n === 1 ? '' : 's') . ' sanitario' . ($n === 1 ? '' : 's') . ' vencido' . ($n === 1 ? '' : 's'),
+            'mensaje' => 'Comercializar con el registro vencido es una infraccion. Inicia la renovacion ante DIGEMAPS.',
+            'url' => 'modules/reportes/registros_sanitarios.php?estado=vencido',
+            'icono' => 'shield', 'color' => 'rose', 'permiso' => 'reportes.sanidad',
+        ];
+    }
+    if (($r['sin_registro'] ?? 0) > 0) {
+        $n = (int) $r['sin_registro'];
+        $items[] = [
+            'clave' => 'san_sin_registro', 'categoria' => 'cumplimiento', 'prioridad' => 'alta',
+            'titulo' => $n . ' producto' . ($n === 1 ? '' : 's') . ' regulado' . ($n === 1 ? '' : 's') . ' sin registro',
+            'mensaje' => 'Sin numero de registro no se pueden justificar ante una inspeccion.',
+            'url' => 'modules/reportes/registros_sanitarios.php?estado=sin_registro',
+            'icono' => 'alert', 'color' => 'rose', 'permiso' => 'reportes.sanidad',
+        ];
+    }
+    if (($r['registro_por_vencer'] ?? 0) > 0) {
+        $n = (int) $r['registro_por_vencer'];
+        $items[] = [
+            'clave' => 'san_registro_por_vencer', 'categoria' => 'cumplimiento', 'prioridad' => 'media',
+            'titulo' => $n . ' registro' . ($n === 1 ? '' : 's') . ' sanitario' . ($n === 1 ? '' : 's') . ' por vencer',
+            'mensaje' => 'Vencen en los proximos ' . SAN_DIAS_AVISO_REGISTRO . ' dias. Una renovacion tarda meses: empieza el tramite.',
+            'url' => 'modules/reportes/registros_sanitarios.php?estado=por_vencer',
+            'icono' => 'clock', 'color' => 'amber', 'permiso' => 'reportes.sanidad',
+        ];
+    }
+    notif_sync('sanidad_registro', $items);
+
+    /* ---- Lotes, por sucursal: quien tiene que retirarlos trabaja en una ---- */
+    $lotes = qAll(
+        "SELECT l.sucursal_id, su.nombre AS sucursal,
+                SUM(CASE WHEN l.fecha_vencimiento < CURDATE() THEN 1 ELSE 0 END) AS vencidos,
+                COALESCE(SUM(CASE WHEN l.fecha_vencimiento < CURDATE() THEN l.cantidad * l.costo_unitario END),0) AS valor_vencido,
+                SUM(CASE WHEN l.fecha_vencimiento >= CURDATE()
+                          AND l.fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS proximos
+           FROM lotes l
+           JOIN sucursales su ON su.id = l.sucursal_id AND su.activo = 1
+          WHERE l.cantidad > 0 AND l.fecha_vencimiento IS NOT NULL
+          GROUP BY l.sucursal_id, su.nombre"
+    );
+    $venc = []; $prox = [];
+    foreach ($lotes as $x) {
+        $sid = (int) $x['sucursal_id'];
+        if ((int) $x['vencidos'] > 0) {
+            $n = (int) $x['vencidos'];
+            $venc[] = [
+                'clave' => "san_lote_vencido:$sid", 'categoria' => 'cumplimiento', 'prioridad' => 'critica',
+                'titulo' => $n . ' lote' . ($n === 1 ? '' : 's') . ' vencido' . ($n === 1 ? '' : 's') . ' en existencia',
+                'mensaje' => 'En ' . $x['sucursal'] . ' hay ' . money($x['valor_vencido']) . ' en mercancia vencida. '
+                           . 'El sistema ya impide venderla, pero tenerla en el area de venta se sanciona: retirala y da la baja.',
+                'url' => 'modules/inventario/lotes.php?estado=vencido',
+                'icono' => 'alert', 'color' => 'rose', 'sucursal_id' => $sid, 'permiso' => 'sanidad.ver',
+            ];
+        }
+        if ((int) $x['proximos'] > 0) {
+            $n = (int) $x['proximos'];
+            $prox[] = [
+                'clave' => "san_lote_proximo:$sid", 'categoria' => 'cumplimiento', 'prioridad' => 'alta',
+                'titulo' => $n . ' lote' . ($n === 1 ? '' : 's') . ' vence' . ($n === 1 ? '' : 'n') . ' en 30 dias',
+                'mensaje' => 'En ' . $x['sucursal'] . '. Muevelos con promocion o devuelvelos al proveedor mientras tienen vida util.',
+                'url' => 'modules/inventario/lotes.php?estado=por_vencer',
+                'icono' => 'clock', 'color' => 'amber', 'sucursal_id' => $sid, 'permiso' => 'sanidad.ver',
+            ];
+        }
+    }
+    notif_sync('sanidad_lote_vencido', $venc);
+    notif_sync('sanidad_lote_proximo', $prox);
 }
 
 /** Stock agotado y stock bajo, agrupado por sucursal (una alerta por sucursal). */

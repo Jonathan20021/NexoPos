@@ -54,6 +54,18 @@ function rep_catalogo(): array
                 ['auxiliar_cuentas.php', 'Auxiliar de cuentas', 'Mayor por cuenta financiera con saldo inicial, movimientos y saldo final.', 'briefcase'],
             ],
         ],
+        'sanidad' => [
+            'titulo' => 'Cumplimiento sanitario',
+            'descripcion' => 'La evidencia que piden Salud Publica, PROCONSUMIDOR, Agricultura e INDOCAL.',
+            'icono' => 'shield', 'color' => 'rose', 'permiso' => 'reportes.sanidad',
+            'reportes' => [
+                ['expediente_auditoria.php', 'Expediente de auditoria', 'El documento consolidado para entregar en una inspeccion: semaforo de cumplimiento, registros, vencidos y proveedores.', 'file'],
+                ['registros_sanitarios.php', 'Registros sanitarios', 'Vigencia del registro de cada producto regulado: sin registro, vencidos y por vencer.', 'shield'],
+                ['vencimientos.php', 'Control de vencimientos', 'Mercancia vencida y proxima a vencer por lote y sucursal, con el dinero inmovilizado.', 'clock'],
+                ['trazabilidad.php', 'Trazabilidad de lote', 'Retiro del mercado: de que proveedor entro un lote y a que clientes salio, con sus facturas.', 'search'],
+                ['proveedores_sanitario.php', 'Ficha sanitaria de proveedores', 'Licencia, vigencia y que productos regulados surte cada proveedor.', 'truck'],
+            ],
+        ],
         'operacion' => [
             'titulo' => 'Operación y Ventas',
             'descripcion' => 'El día a día del piso de venta.',

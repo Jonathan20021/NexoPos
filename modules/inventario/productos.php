@@ -56,6 +56,26 @@ if (isPost()) {
                 'activo' => postInt('activo', 0) ? 1 : 0,
                 'imagen' => guardar_imagen('imagen', 'productos', post('imagen_actual') ?: null),
             ];
+
+            // Ficha sanitaria. Solo la escribe quien tiene el permiso: el catálogo
+            // lo mantiene mucha gente, pero el dato que se le enseña a un inspector
+            // no debería poder cambiarlo cualquiera.
+            if (san_disponible() && can('sanidad.editar')) {
+                $regulado = postInt('regulado', 0) ? 1 : 0;
+                $data += [
+                    'regulado'             => $regulado,
+                    'controla_lote'        => $regulado && postInt('controla_lote', 0) ? 1 : 0,
+                    'registro_sanitario'   => $regulado ? (trim(post('registro_sanitario')) ?: null) : null,
+                    'registro_entidad'     => $regulado ? (array_key_exists(post('registro_entidad'), san_entidades()) ? post('registro_entidad') : null) : null,
+                    'registro_categoria'   => $regulado ? (array_key_exists(post('registro_categoria'), san_categorias()) ? post('registro_categoria') : null) : null,
+                    'registro_emision'     => $regulado ? (post('registro_emision') ?: null) : null,
+                    'registro_vencimiento' => $regulado ? (post('registro_vencimiento') ?: null) : null,
+                    'registro_titular'     => $regulado ? (trim(post('registro_titular')) ?: null) : null,
+                    'fabricante'           => trim(post('fabricante')) ?: null,
+                    'pais_origen'          => trim(post('pais_origen')) ?: null,
+                    'vida_util_dias'       => postInt('vida_util_dias') ?: null,
+                ];
+            }
             // Las comprobaciones de arriba son «mirar y actuar»: entre el SELECT y
             // el INSERT otra persona puede quedarse con el mismo SKU o el mismo
             // código de barras. La red que de verdad lo impide son los índices
@@ -64,7 +84,20 @@ if (isPost()) {
             try {
                 if ($id > 0) {
                     require_perm('productos.editar');
+                    $antesLote = (int) qVal("SELECT controla_lote FROM productos WHERE id = ?", [$id]);
                     dbUpdate('productos', $data, 'id = ?', [$id]);
+
+                    // Al ENCENDER el control de lote, la existencia que ya había no
+                    // pertenece a ninguno. Se deposita en SIN-LOTE para que la venta
+                    // no se detenga, y los reportes la señalan para regularizarla.
+                    if (!empty($data['controla_lote']) && !$antesLote) {
+                        $n = txReintentable(fn() => san_sembrar_lote_inicial($id));
+                        if ($n > 0) {
+                            flash('warning', 'Se activó el control de lote. La existencia que ya había ('
+                                . $n . ' sucursal(es)) quedó en el lote «' . SAN_LOTE_SIN_IDENTIFICAR
+                                . '»: identifícala en Cumplimiento → Lotes para que la trazabilidad quede completa.');
+                        }
+                    }
                     audit('productos', 'editar', "Producto actualizado: $nombre", ['tabla' => 'productos', 'registro_id' => $id]);
                     flash('success', 'Producto actualizado.');
                 } else {
@@ -239,6 +272,18 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
                     <?php elseif ($p['tipo'] === 'producto'): ?>
                       <p class="text-[11px] text-amber-600 mt-0.5">Sin código de barras</p>
                     <?php endif; ?>
+                    <?php if (san_disponible() && !empty($p['regulado'])):
+                      $rs = san_estado_registro($p); ?>
+                      <p class="mt-1 flex items-center gap-1 flex-wrap">
+                        <span class="badge badge-<?= e($rs['color']) ?> text-[10px]"
+                              title="Registro sanitario<?= $p['registro_sanitario'] ? ' ' . e($p['registro_sanitario']) : '' ?>">
+                          <?= icon('shield', 'w-3 h-3') ?> <?= e($rs['etiqueta']) ?>
+                        </span>
+                        <?php if (!empty($p['controla_lote'])): ?>
+                          <span class="badge badge-slate text-[10px]" title="Se despacha por lote, primero lo que antes vence">lote</span>
+                        <?php endif; ?>
+                      </p>
+                    <?php endif; ?>
                   </div>
                 </div>
               </td>
@@ -258,7 +303,24 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
                     </form>
                   <?php endif; ?>
                   <?php if (can('productos.editar')): ?>
-                    <button onclick="<?= jsEvent('prod:edit', ['id'=>$p['id'],'codigo'=>$p['codigo'],'codigo_barras'=>$p['codigo_barras'],'nombre'=>$p['nombre'],'descripcion'=>$p['descripcion'],'categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],'unidad_id'=>$p['unidad_id'],'tipo'=>$p['tipo'],'precio_compra'=>$p['precio_compra'],'precio_venta'=>$p['precio_venta'],'itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],'imagen'=>$p['imagen'],'activo'=>$p['activo']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
+                    <?php
+                    $edit = ['id'=>$p['id'],'codigo'=>$p['codigo'],'codigo_barras'=>$p['codigo_barras'],'nombre'=>$p['nombre'],
+                             'descripcion'=>$p['descripcion'],'categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],
+                             'unidad_id'=>$p['unidad_id'],'tipo'=>$p['tipo'],'precio_compra'=>$p['precio_compra'],
+                             'precio_venta'=>$p['precio_venta'],'itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],
+                             'imagen'=>$p['imagen'],'activo'=>$p['activo']];
+                    if (san_disponible()) {
+                        $edit += [
+                            'regulado' => (int) ($p['regulado'] ?? 0), 'controla_lote' => (int) ($p['controla_lote'] ?? 0),
+                            'registro_sanitario' => $p['registro_sanitario'] ?? '', 'registro_entidad' => $p['registro_entidad'] ?? '',
+                            'registro_categoria' => $p['registro_categoria'] ?? '', 'registro_emision' => $p['registro_emision'] ?? '',
+                            'registro_vencimiento' => $p['registro_vencimiento'] ?? '', 'registro_titular' => $p['registro_titular'] ?? '',
+                            'fabricante' => $p['fabricante'] ?? '', 'pais_origen' => $p['pais_origen'] ?? '',
+                            'vida_util_dias' => $p['vida_util_dias'] ?? '',
+                        ];
+                    }
+                    ?>
+                    <button onclick="<?= jsEvent('prod:edit', $edit) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('productos.eliminar')): ?>
                     <form method="post" class="inline" onsubmit="return confirm('¿Eliminar «<?= e($p['nombre']) ?>»?')">
@@ -327,6 +389,92 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="itbis_aplica" value="0"><input type="checkbox" name="itbis_aplica" value="1" :checked="form.itbis_aplica==1" class="rounded border-slate-300 text-blue-600"> Aplica ITBIS (18%)</label>
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="activo" value="0"><input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600"> Producto activo</label>
           </div>
+
+          <?php if (san_disponible() && can('sanidad.editar')): ?>
+          <!-- ================= Ficha sanitaria ================= -->
+          <div class="sm:col-span-2 pt-2 mt-1 border-t border-slate-100">
+            <label class="flex items-start gap-2.5 cursor-pointer">
+              <input type="hidden" name="regulado" value="0">
+              <input type="checkbox" name="regulado" value="1" x-model="form.regulado" :true-value="1" :false-value="0"
+                     class="rounded border-slate-300 text-blue-600 mt-0.5">
+              <span>
+                <span class="font-semibold text-slate-700 text-sm flex items-center gap-1.5">
+                  <?= icon('shield', 'w-4 h-4 text-blue-600') ?> Producto con control sanitario
+                </span>
+                <span class="block text-xs text-slate-500 mt-0.5">
+                  Cosméticos, higiene personal, suplementos, productos naturales, limpieza y químicos.
+                  Aparecerá en los reportes de cumplimiento para Salud Pública y PROCONSUMIDOR.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <template x-if="form.regulado == 1">
+            <div class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-blue-50/40 border border-blue-100 p-4">
+              <div>
+                <label class="label">N.º de registro sanitario</label>
+                <input name="registro_sanitario" x-model="form.registro_sanitario" class="input font-mono" placeholder="RS-2024-01234">
+              </div>
+              <div>
+                <label class="label">Entidad que lo emite</label>
+                <select name="registro_entidad" x-model="form.registro_entidad" class="select">
+                  <option value="">— Selecciona —</option>
+                  <?php foreach (san_entidades() as $k => $v): ?><option value="<?= e($k) ?>"><?= e($v) ?></option><?php endforeach; ?>
+                </select>
+              </div>
+              <div>
+                <label class="label">Categoría sanitaria</label>
+                <select name="registro_categoria" x-model="form.registro_categoria" class="select">
+                  <option value="">— Selecciona —</option>
+                  <?php foreach (san_categorias() as $k => $v): ?><option value="<?= e($k) ?>"><?= e($v) ?></option><?php endforeach; ?>
+                </select>
+              </div>
+              <div>
+                <label class="label">Titular del registro</label>
+                <input name="registro_titular" x-model="form.registro_titular" class="input" placeholder="A nombre de quién está">
+              </div>
+              <div>
+                <label class="label">Fecha de emisión</label>
+                <input type="date" name="registro_emision" x-model="form.registro_emision" class="input">
+              </div>
+              <div>
+                <label class="label">Vence el</label>
+                <input type="date" name="registro_vencimiento" x-model="form.registro_vencimiento" class="input">
+                <p class="text-xs text-slate-400 mt-1">Se avisa con <?= SAN_DIAS_AVISO_REGISTRO ?> días: renovar tarda meses.</p>
+              </div>
+              <div>
+                <label class="label">Fabricante</label>
+                <input name="fabricante" x-model="form.fabricante" class="input">
+              </div>
+              <div>
+                <label class="label">País de origen</label>
+                <input name="pais_origen" x-model="form.pais_origen" class="input">
+              </div>
+
+              <div class="sm:col-span-2 pt-1 border-t border-blue-100">
+                <label class="flex items-start gap-2.5 cursor-pointer">
+                  <input type="hidden" name="controla_lote" value="0">
+                  <input type="checkbox" name="controla_lote" value="1" x-model="form.controla_lote" :true-value="1" :false-value="0"
+                         class="rounded border-slate-300 text-blue-600 mt-0.5">
+                  <span>
+                    <span class="font-semibold text-slate-700 text-sm">Controlar lote y fecha de vencimiento</span>
+                    <span class="block text-xs text-slate-500 mt-0.5">
+                      Cada entrada pedirá el lote y su vencimiento, y cada salida se despachará por
+                      <strong>FEFO</strong> (primero lo que antes vence). Da trazabilidad para un retiro del mercado
+                      y <strong>bloquea la venta de mercancía vencida</strong>.
+                    </span>
+                  </span>
+                </label>
+                <div class="mt-3" x-show="form.controla_lote == 1" x-cloak>
+                  <label class="label">Vida útil en días (opcional)</label>
+                  <input type="number" min="0" name="vida_util_dias" x-model="form.vida_util_dias" class="input w-40"
+                         placeholder="Ej. 730">
+                  <p class="text-xs text-slate-400 mt-1">Se usa para sugerir el vencimiento al capturar un lote nuevo.</p>
+                </div>
+              </div>
+            </div>
+          </template>
+          <?php endif; ?>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100 sticky bottom-0 bg-white">
           <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
@@ -359,6 +507,10 @@ function prodModal() {
         id: 0, codigo: <?= json_encode($sigCodigo) ?>, codigo_barras: '', nombre: '', descripcion: '',
         categoria_id: '', marca_id: '', unidad_id: '', tipo: 'producto',
         precio_compra: 0, precio_venta: 0, itbis_aplica: 1, stock_minimo: 0, imagen: '', activo: 1,
+        // Ficha sanitaria: un producto nace NO regulado; se marca a conciencia.
+        regulado: 0, controla_lote: 0, registro_sanitario: '', registro_entidad: '',
+        registro_categoria: '', registro_emision: '', registro_vencimiento: '',
+        registro_titular: '', fabricante: '', pais_origen: '', vida_util_dias: '',
       };
       this.barras = { ok: true, msg: '' };
       this.open = true;

@@ -76,6 +76,16 @@ function permission_catalog(): array
                 'finanzas'     => 'Reportes financieros',
                 'contabilidad' => 'Reportes contables y fiscales',
                 'operacion'    => 'Reportes de operación y ventas',
+                'sanidad'      => 'Reportes de cumplimiento sanitario',
+            ]],
+        ],
+        'Cumplimiento' => [
+            'sanidad' => ['label' => 'Cumplimiento sanitario y lotes', 'acciones' => [
+                'ver'      => 'Ver registros y lotes',
+                'editar'   => 'Editar la ficha sanitaria del producto y del proveedor',
+                'lotes'    => 'Registrar y corregir lotes',
+                'bloquear' => 'Bloquear o liberar un lote (retiro del mercado)',
+                'baja'     => 'Dar de baja mercancía vencida',
             ]],
         ],
         'Marketing' => [

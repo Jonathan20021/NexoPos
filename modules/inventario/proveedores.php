@@ -16,6 +16,16 @@ if (isPost()) {
                 'telefono' => trim(post('telefono')) ?: null, 'email' => trim(post('email')) ?: null,
                 'direccion' => trim(post('direccion')) ?: null, 'activo' => postInt('activo', 0) ? 1 : 0,
             ];
+            // Ficha sanitaria del proveedor. El inspector pregunta a quien se le
+            // compra y si esta habilitado; sin esto la respuesta es buscar el papel.
+            if (san_disponible() && can('sanidad.editar')) {
+                $data += [
+                    'licencia_sanitaria'   => trim(post('licencia_sanitaria')) ?: null,
+                    'licencia_vencimiento' => post('licencia_vencimiento') ?: null,
+                    'pais_origen'          => trim(post('pais_origen')) ?: null,
+                    'notas_sanitarias'     => trim(post('notas_sanitarias')) ?: null,
+                ];
+            }
             if ($id > 0) {
                 require_perm('proveedores.editar');
                 dbUpdate('proveedores', $data, 'id = ?', [$id]);
@@ -78,7 +88,7 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
               <td><?= $p['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
-                  <?php if (can('proveedores.editar')): ?><button onclick="<?= jsEvent('prov:edit', ['id'=>$p['id'],'nombre'=>$p['nombre'],'rnc'=>$p['rnc'],'contacto'=>$p['contacto'],'telefono'=>$p['telefono'],'email'=>$p['email'],'direccion'=>$p['direccion'],'activo'=>$p['activo']]) ?>" aria-label="Editar proveedor" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
+                  <?php if (can('proveedores.editar')): ?><button onclick="<?= jsEvent('prov:edit', ['id'=>$p['id'],'nombre'=>$p['nombre'],'rnc'=>$p['rnc'],'contacto'=>$p['contacto'],'telefono'=>$p['telefono'],'email'=>$p['email'],'direccion'=>$p['direccion'],'activo'=>$p['activo'],'licencia_sanitaria'=>$p['licencia_sanitaria'] ?? '','licencia_vencimiento'=>$p['licencia_vencimiento'] ?? '','pais_origen'=>$p['pais_origen'] ?? '','notas_sanitarias'=>$p['notas_sanitarias'] ?? '']) ?>" aria-label="Editar proveedor" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
                   <?php if (can('proveedores.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar «<?= e($p['nombre']) ?>»?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>"><button aria-label="Eliminar proveedor" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
                 </div>
               </td>
@@ -92,7 +102,7 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
 </div>
 
 <div x-data="{open:false, form:{}}"
-     @prov:new.window="form={id:0,nombre:'',rnc:'',contacto:'',telefono:'',email:'',direccion:'',activo:1}; open=true"
+     @prov:new.window="form={id:0,nombre:'',rnc:'',contacto:'',telefono:'',email:'',direccion:'',activo:1,licencia_sanitaria:'',licencia_vencimiento:'',pais_origen:'',notas_sanitarias:''}; open=true"
      @prov:edit.window="form=$event.detail; open=true" @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop>
@@ -106,6 +116,16 @@ layout_start('Proveedores', 'Gestiona tus suplidores de mercancía', $acciones);
           <div><label class="label">Teléfono</label><input name="telefono" x-model="form.telefono" class="input"></div>
           <div><label class="label">Email</label><input type="email" name="email" x-model="form.email" class="input"></div>
           <div class="sm:col-span-2"><label class="label">Dirección</label><input name="direccion" x-model="form.direccion" class="input"></div>
+<?php if (san_disponible() && can('sanidad.editar')): ?>
+          <div class="sm:col-span-2 pt-3 mt-1 border-t border-slate-100">
+            <p class="font-semibold text-slate-700 text-sm flex items-center gap-1.5"><?= icon('shield', 'w-4 h-4 text-blue-600') ?> Ficha sanitaria</p>
+            <p class="text-xs text-slate-500 mt-0.5">Salud Pública pregunta a quién se le compra la mercancía regulada y si ese proveedor está habilitado.</p>
+          </div>
+          <div><label class="label">Licencia sanitaria</label><input name="licencia_sanitaria" x-model="form.licencia_sanitaria" class="input font-mono"></div>
+          <div><label class="label">Licencia vence el</label><input type="date" name="licencia_vencimiento" x-model="form.licencia_vencimiento" class="input"></div>
+          <div><label class="label">País de origen</label><input name="pais_origen" x-model="form.pais_origen" class="input"></div>
+          <div><label class="label">Notas sanitarias</label><input name="notas_sanitarias" x-model="form.notas_sanitarias" class="input" placeholder="Certificaciones, observaciones…"></div>
+<?php endif; ?>
           <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="activo" value="0"><input type="checkbox" name="activo" value="1" :checked="form.activo==1" class="rounded border-slate-300 text-blue-600"> Activo</label>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100"><button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button><button type="submit" class="btn btn-primary"><?= icon('save', 'w-4 h-4') ?> Guardar</button></div>

@@ -29,6 +29,7 @@ function nav_groups(): array
             ['Marcas y Unidades', 'layers', url('modules/inventario/catalogos.php'), 'productos.ver'],
             ['Stock', 'layers', url('modules/inventario/stock.php'), 'inventario.ver'],
             ['Conteo físico', 'clipboard', url('modules/inventario/conteos.php'), 'conteos.ver'],
+            ['Lotes y vencimientos', 'shield', url('modules/inventario/lotes.php'), 'sanidad.ver'],
             ['Movimientos', 'history', url('modules/inventario/movimientos.php'), 'inventario.ver'],
             ['Compras', 'truck', url('modules/inventario/compras.php'), 'compras.ver'],
             ['Proveedores', 'briefcase', url('modules/inventario/proveedores.php'), 'proveedores.ver'],
@@ -75,6 +76,7 @@ function nav_groups(): array
             ['Flujo de efectivo', 'cash', url('modules/reportes/flujo_caja.php'), 'reportes.finanzas'],
             ['Cuentas por cobrar', 'wallet', url('modules/reportes/cxc.php'), 'reportes.finanzas'],
             ['Contabilidad y DGII', 'shield', url('modules/reportes/libro_diario.php'), 'reportes.contabilidad'],
+            ['Expediente de auditoría', 'shield', url('modules/reportes/expediente_auditoria.php'), 'reportes.sanidad'],
             ['Reporte gerencial', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
         ]],
         ['Administración', [

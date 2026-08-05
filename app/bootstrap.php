@@ -46,6 +46,7 @@ require_once dirname(__DIR__) . '/includes/cxp.php';
 require_once dirname(__DIR__) . '/includes/cotizaciones.php';
 require_once dirname(__DIR__) . '/includes/activos.php';
 require_once dirname(__DIR__) . '/includes/notificaciones.php';
+require_once dirname(__DIR__) . '/includes/sanidad.php';
 require_once dirname(__DIR__) . '/includes/barcode.php';
 require_once dirname(__DIR__) . '/includes/busqueda.php';
 require_once dirname(__DIR__) . '/includes/reportes.php';

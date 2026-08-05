@@ -9,8 +9,21 @@
  * Ajusta el stock de un producto en una sucursal y registra el movimiento (kardex).
  * $delta positivo = entrada, negativo = salida. Devuelve el nuevo stock.
  */
+/**
+ * Mueve la existencia de un producto en una sucursal y lo deja en el kardex.
+ *
+ * $lote (opcional) solo se mira en los productos marcados con `controla_lote`
+ * (mercancía con registro sanitario). Acepta el código del lote o un arreglo con
+ * `codigo`, `fecha_vencimiento`, `proveedor_id`, `compra_id`… Si no se indica:
+ *   · al ENTRAR, la mercancía cae en el lote SIN-LOTE y los reportes la marcan
+ *     como pendiente de identificar;
+ *   · al SALIR, se despacha FEFO (primero lo que antes vence) y se rechaza la
+ *     operación si no hay existencia apta.
+ * Ver includes/sanidad.php y docs/SANIDAD-Y-AUDITORIAS.md.
+ */
 function ajustarStock(int $productoId, int $sucursalId, float $delta, string $tipo,
-                      ?string $refTipo = null, ?int $refId = null, float $costo = 0, string $motivo = ''): float
+                      ?string $refTipo = null, ?int $refId = null, float $costo = 0, string $motivo = '',
+                      $lote = null): float
 {
     // Se garantiza que la fila exista ANTES de bloquearla. Si no, dos ventas
     // simultáneas del primer movimiento de un producto no encontraban fila, las
@@ -34,6 +47,12 @@ function ajustarStock(int $productoId, int $sucursalId, float $delta, string $ti
     }
 
     q("UPDATE inventario_stock SET cantidad = ? WHERE id = ?", [$nuevo, $row['id']]);
+
+    // Desglose por lote de la mercancía regulada. Va DENTRO de la misma
+    // transacción que el stock: las dos cifras no pueden separarse nunca. Si no
+    // hay existencia apta (todo vencido o bloqueado), lanza y tumba la operación
+    // entera — que es justo lo que debe pasar antes que vender producto vencido.
+    san_aplicar_lote($productoId, $sucursalId, $delta, $tipo, $refTipo, $refId, $costo, $motivo, $lote);
 
     $u = current_user();
     dbInsert('movimientos_inventario', [

@@ -78,7 +78,24 @@ if (isPost()) {
                     $subtotal += $base; $itbisTotal += $itbis;
                     // 606, columnas 8 y 9: el monto facturado se separa en bienes y servicios.
                     if ($p['tipo'] === 'servicio') $montoServicios += $base; else $montoBienes += $base;
-                    $det[] = ['pid' => $pid, 'cant' => $cant, 'costo' => $costo, 'itbis' => $itbis, 'base' => $base];
+                    // Lote y vencimiento: solo se piden en la mercancia regulada.
+                    // Si el producto los exige y no vienen, la compra NO entra: dejar
+                    // pasar mercancia sanitaria sin lote rompe la trazabilidad justo
+                    // en el punto donde nace, y despues ya no hay forma de recomponerla.
+                    $lote = null;
+                    if (san_disponible() && san_controla_lote($pid)) {
+                        $codigoLote = trim((string) ($l['lote_codigo'] ?? ''));
+                        $vence      = trim((string) ($l['lote_vence'] ?? ''));
+                        if ($codigoLote === '') {
+                            $nom = qVal("SELECT nombre FROM productos WHERE id = ?", [$pid]);
+                            throw new RuntimeException('«' . $nom . '» lleva control sanitario: indica el número de lote.');
+                        }
+                        if ($vence !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $vence)) {
+                            throw new RuntimeException('La fecha de vencimiento del lote ' . $codigoLote . ' no es válida.');
+                        }
+                        $lote = ['codigo' => $codigoLote, 'fecha_vencimiento' => $vence ?: null];
+                    }
+                    $det[] = ['pid' => $pid, 'cant' => $cant, 'costo' => $costo, 'itbis' => $itbis, 'base' => $base, 'lote' => $lote];
                 }
                 if (!$det) throw new RuntimeException('No hay líneas válidas.');
                 // Siempre en el mismo orden de producto: si dos compras coinciden y
@@ -115,7 +132,16 @@ if (isPost()) {
                 ], $dgii, ['ncf' => $dgii['ncf'] ?: null], $extra));
                 foreach ($det as $d) {
                     dbInsert('compra_detalles', ['compra_id' => $compraId, 'producto_id' => $d['pid'], 'cantidad' => $d['cant'], 'costo_unitario' => $d['costo'], 'itbis' => $d['itbis'], 'subtotal' => $d['base']]);
-                    ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero);
+                    $loteEntrada = $d['lote'];
+                    if ($loteEntrada) {
+                        // De donde vino el lote: es la mitad de la trazabilidad (la otra
+                        // mitad es a quien se le vendio).
+                        $loteEntrada['proveedor_id'] = $proveedorId;
+                        $loteEntrada['compra_id']    = $compraId;
+                        $loteEntrada['costo_unitario'] = $d['costo'];
+                        $loteEntrada['registro_sanitario'] = qVal("SELECT registro_sanitario FROM productos WHERE id = ?", [$d['pid']]);
+                    }
+                    ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero, $loteEntrada);
                     q("UPDATE productos SET precio_compra = ? WHERE id = ?", [$d['costo'], $d['pid']]);
                 }
 
@@ -241,8 +267,15 @@ if (export_solicitado()) {
         array_map(fn($c) => [$c['numero'], $c['ncf'], $c['proveedor'], $c['sucursal'], $c['fecha'], $c['subtotal'], $c['itbis'], $c['total'], $c['estado']], $rows));
 }
 
-$productosJs = array_map(fn($p) => ['id' => (int) $p['id'], 'nombre' => $p['nombre'], 'costo' => (float) $p['precio_compra'], 'itbis' => (int) $p['itbis_aplica']],
-    qAll("SELECT id, nombre, precio_compra, itbis_aplica FROM productos WHERE activo=1 AND tipo='producto' ORDER BY nombre"));
+// `lote` y `vida` viajan al navegador para pedir el lote solo donde hace falta
+// y poder sugerir la fecha de vencimiento a partir de la vida util del producto.
+$__colsSan = san_disponible() ? ', controla_lote, vida_util_dias' : '';
+$productosJs = array_map(fn($p) => [
+        'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'costo' => (float) $p['precio_compra'],
+        'itbis' => (int) $p['itbis_aplica'],
+        'lote' => (int) ($p['controla_lote'] ?? 0), 'vida' => (int) ($p['vida_util_dias'] ?? 0),
+    ],
+    qAll("SELECT id, nombre, precio_compra, itbis_aplica$__colsSan FROM productos WHERE activo=1 AND tipo='producto' ORDER BY nombre"));
 $proveedores = qAll("SELECT id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre");
 $sucursales = sucursales_visibles();
 
@@ -458,7 +491,24 @@ layout_start('Compras', 'Registra entradas de mercancía de tus proveedores', $a
             <tbody>
               <template x-for="(l,i) in lineas" :key="i">
                 <tr class="border-t border-slate-100">
-                  <td class="px-3 py-2 font-medium text-slate-700" x-text="l.nombre"></td>
+                  <td class="px-3 py-2 font-medium text-slate-700">
+                    <span x-text="l.nombre"></span>
+                    <template x-if="l.lote">
+                      <div class="mt-1.5 flex flex-wrap items-end gap-2 rounded-lg bg-blue-50/60 border border-blue-100 p-2">
+                        <span class="text-[10px] font-bold uppercase tracking-wide text-blue-700 w-full">Control sanitario</span>
+                        <div>
+                          <label class="block text-[10px] text-slate-500 mb-0.5">N.º de lote *</label>
+                          <input type="text" x-model="l.lote_codigo"
+                                 class="input py-1 px-2 text-xs font-mono w-36" placeholder="L-2026-001">
+                        </div>
+                        <div>
+                          <label class="block text-[10px] text-slate-500 mb-0.5">Vence el</label>
+                          <input type="date" x-model="l.lote_vence"
+                                 class="input py-1 px-2 text-xs w-40">
+                        </div>
+                      </div>
+                    </template>
+                  </td>
                   <td class="px-2 py-2"><input type="number" step="0.001" min="0" x-model.number="l.cantidad" class="input py-1.5 px-2 text-sm"></td>
                   <td class="px-2 py-2"><input type="number" step="0.01" min="0.01" x-model.number="l.costo" class="input py-1.5 px-2 text-sm"></td>
                   <td class="px-2 py-2 text-right font-semibold text-slate-700" x-text="fmt(l.cantidad*l.costo)"></td>
@@ -491,7 +541,15 @@ function comprasForm() {
       const p = this.productos.find(x => x.id === this.nuevoProd);
       if (!p) return;
       if (this.lineas.find(l => l.producto_id === p.id)) return;
-      this.lineas.push({ producto_id: p.id, nombre: p.nombre, cantidad: 1, costo: p.costo, itbis_aplica: p.itbis });
+      // Si el producto declara vida util, se propone la fecha para no teclearla
+      // a mano en cada linea; sigue siendo editable porque el lote manda.
+      let sugerida = '';
+      if (p.lote && p.vida > 0) {
+        const d = new Date(); d.setDate(d.getDate() + p.vida);
+        sugerida = d.toISOString().slice(0, 10);
+      }
+      this.lineas.push({ producto_id: p.id, nombre: p.nombre, cantidad: 1, costo: p.costo, itbis_aplica: p.itbis,
+                         lote: !!p.lote, lote_codigo: '', lote_vence: sugerida });
       this.nuevoProd = 0;
     },
     get subtotal() { return this.lineas.reduce((s, l) => s + (l.cantidad || 0) * (l.costo || 0), 0); },

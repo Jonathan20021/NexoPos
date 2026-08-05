@@ -330,6 +330,20 @@ contra una copia de la base de producción (o contra la de producción, en solo 
   esa separación un disparo se registra dos veces.
 - La cámara exige **HTTPS** y `Permissions-Policy: camera=(self)` en el `.htaccess`.
 
+## Cumplimiento sanitario y lotes (`includes/sanidad.php`) — ver `docs/SANIDAD-Y-AUDITORIAS.md`
+- El control se activa **producto a producto** (`regulado`, `controla_lote`). Un producto no
+  regulado se comporta exactamente igual que antes del módulo.
+- **Todo movimiento de stock pasa por `ajustarStock()`**, que ahora acepta un 9.º parámetro
+  `$lote`. Si escribes directo en `inventario_stock`, rompes la trazabilidad en silencio.
+- Salidas por **FEFO** (primero lo que antes vence), no FIFO. Si no hay existencia apta
+  (todo vencido o bloqueado), la operación **lanza y revierte entera**: antes eso que vender
+  producto vencido.
+- Una entrada de mercancía con `controla_lote` **exige** número de lote.
+- `lote_movimientos` es el libro de trazabilidad: una fila por lote tocado, porque una línea
+  de venta puede consumir dos lotes y eso no cabe en una columna.
+- Comprueba `san_disponible()` antes de tocar sus tablas: el código puede desplegarse antes
+  que la migración.
+
 ## Concurrencia (OBLIGATORIO si tu página escribe) — ver `docs/CONCURRENCIA.md`
 Varias sucursales operan a la vez. Estas reglas no son opcionales:
 
