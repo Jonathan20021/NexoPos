@@ -277,6 +277,85 @@ function san_aplicar_lote(int $productoId, int $sucursalId, float $delta, string
     }
 }
 
+/**
+ * Qué lotes salieron de una sucursal por culpa de un documento concreto.
+ *
+ * Sirve para que la mercancía conserve su identidad cuando cambia de almacén:
+ * al enviar una transferencia, FEFO decide qué lotes salen; al recibirla, el
+ * destino recrea ESOS MISMOS lotes con su fecha de vencimiento en vez de meter
+ * todo en un saco sin identificar. Sin esto, un producto trazable dejaba de
+ * serlo en cuanto cruzaba de sucursal, que es justo cuando más falta hace.
+ */
+function san_lotes_salidos(string $refTipo, int $refId, int $productoId, int $sucursalId): array
+{
+    return qAll(
+        "SELECT l.codigo, l.fecha_vencimiento, l.fecha_fabricacion, l.costo_unitario,
+                l.proveedor_id, l.registro_sanitario, SUM(-lm.cantidad) AS cantidad
+           FROM lote_movimientos lm
+           JOIN lotes l ON l.id = lm.lote_id
+          WHERE lm.referencia_tipo = ? AND lm.referencia_id = ?
+            AND lm.producto_id = ? AND lm.sucursal_id = ? AND lm.cantidad < 0
+          GROUP BY l.id, l.codigo, l.fecha_vencimiento, l.fecha_fabricacion,
+                   l.costo_unitario, l.proveedor_id, l.registro_sanitario
+         HAVING cantidad > 0
+          ORDER BY (l.fecha_vencimiento IS NULL), l.fecha_vencimiento",
+        [$refTipo, $refId, $productoId, $sucursalId]
+    );
+}
+
+/**
+ * Mueve una cantidad conservando la identidad de los lotes que salieron antes
+ * por el mismo documento. Si el producto no controla lote (o no hay rastro),
+ * cae en un único `ajustarStock` normal, exactamente como antes.
+ *
+ * Se usa al RECIBIR una transferencia (los lotes viajan al destino) y al
+ * devolver el stock por rechazo o anulación (vuelven a su sucursal de origen).
+ *
+ * `$buscar` existe porque el documento que DEVUELVE la mercancía casi nunca es el
+ * mismo que la sacó: una devolución de venta se registra con su propio id, pero
+ * los lotes que salieron están guardados bajo la VENTA original. Sin poder
+ * apuntar al documento de salida, no habría a qué lote volver.
+ *   $buscar = ['tipo' => 'venta', 'id' => $ventaId]
+ * Si se omite, se busca por la misma referencia con la que se registra.
+ */
+function san_mover_conservando_lotes(int $productoId, int $sucursalDestino, float $cantidad, string $tipo,
+                                     string $refTipo, int $refId, int $sucursalOrigen,
+                                     float $costo, string $motivo, ?array $buscar = null): void
+{
+    if (!san_disponible() || !san_controla_lote($productoId)) {
+        ajustarStock($productoId, $sucursalDestino, $cantidad, $tipo, $refTipo, $refId, $costo, $motivo);
+        return;
+    }
+
+    $lotes = san_lotes_salidos(
+        (string) ($buscar['tipo'] ?? $refTipo),
+        (int) ($buscar['id'] ?? $refId),
+        $productoId, $sucursalOrigen
+    );
+    $pendiente = round($cantidad, 3);
+
+    foreach ($lotes as $l) {
+        if ($pendiente <= 0.0001) break;
+        $toma = min((float) $l['cantidad'], $pendiente);
+        ajustarStock($productoId, $sucursalDestino, $toma, $tipo, $refTipo, $refId,
+            $costo ?: (float) $l['costo_unitario'], $motivo, [
+                'codigo'             => $l['codigo'],
+                'fecha_vencimiento'  => $l['fecha_vencimiento'],
+                'fecha_fabricacion'  => $l['fecha_fabricacion'],
+                'costo_unitario'     => (float) $l['costo_unitario'],
+                'proveedor_id'       => $l['proveedor_id'],
+                'registro_sanitario' => $l['registro_sanitario'],
+            ]);
+        $pendiente = round($pendiente - $toma, 3);
+    }
+
+    // Si no hubo rastro (por ejemplo, una transferencia enviada ANTES de activar
+    // el control de lote), el resto entra sin identificar en vez de perderse.
+    if ($pendiente > 0.0001) {
+        ajustarStock($productoId, $sucursalDestino, $pendiente, $tipo, $refTipo, $refId, $costo, $motivo);
+    }
+}
+
 /* ============================================================
  *  Activar el control de lote sobre un producto que ya tiene stock
  * ============================================================ */

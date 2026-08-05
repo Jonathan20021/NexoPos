@@ -115,7 +115,15 @@ if (isPost()) {
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('La transferencia no se puede recibir.');
                 if (!can_access_sucursal($t['sucursal_destino_id'])) throw new RuntimeException('Solo la sucursal de destino puede recibir esta transferencia.');
                 foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]) as $d) {
-                    ajustarStock((int) $d['producto_id'], (int) $t['sucursal_destino_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia', $id, 0, 'Transferencia ' . $t['numero'] . ' (entrada)');
+                    // La mercancia conserva su lote al cambiar de almacen: se
+                    // recrean en destino los mismos lotes que FEFO saco del origen.
+                    // Sin esto, un producto trazable dejaba de serlo justo al
+                    // cruzar de sucursal.
+                    san_mover_conservando_lotes(
+                        (int) $d['producto_id'], (int) $t['sucursal_destino_id'], (float) $d['cantidad'],
+                        'transferencia_entrada', 'transferencia', $id, (int) $t['sucursal_origen_id'],
+                        0, 'Transferencia ' . $t['numero'] . ' (entrada)'
+                    );
                 }
                 dbUpdate('transferencias', ['estado' => 'recibida', 'recibida_por' => current_user()['id'], 'recibida_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
             });

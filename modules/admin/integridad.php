@@ -128,6 +128,61 @@ $inventario[] = chk(
         : 'Registra un ajuste de inventario para dejar constancia de la diferencia.'
 );
 
+/* ---------- Cumplimiento sanitario ---------- */
+// Solo se añaden si el módulo está instalado: el código puede desplegarse antes
+// que la migración, y esta pantalla no debe reventar mientras tanto.
+if (san_disponible()) {
+    $inventario[] = chk(
+        'Existencia que no cuadra con sus lotes',
+        'En los productos con control sanitario, la suma de los lotes tiene que ser igual a la existencia. '
+        . 'Las dos se mueven en la misma transacción, así que no debería haber ninguna diferencia; '
+        . 'si aparece, la trazabilidad que se le enseña a un inspector está mintiendo.',
+        function () {
+            $rows = san_descuadres();
+            return [count($rows), array_slice($rows, 0, 10)];
+        },
+        'Revisa los lotes del producto en Inventario → Lotes y vencimientos y corrige la cantidad del lote que corresponda.'
+    );
+
+    $inventario[] = chk(
+        'Mercancía vencida todavía en existencia',
+        'Lotes cuya fecha de vencimiento ya pasó y que siguen con unidades en el almacén. '
+        . 'El sistema impide venderlos, pero PROCONSUMIDOR sanciona tenerlos en el área de venta.',
+        function () {
+            [$sc, $sp] = sucursalScope('l.sucursal_id');
+            $rows = qAll(
+                "SELECT p.codigo, p.nombre, l.codigo AS lote, s.nombre AS sucursal,
+                        l.fecha_vencimiento, l.cantidad
+                   FROM lotes l
+                   JOIN productos p  ON p.id = l.producto_id
+                   JOIN sucursales s ON s.id = l.sucursal_id
+                  WHERE l.cantidad > 0 AND l.fecha_vencimiento IS NOT NULL
+                    AND l.fecha_vencimiento < CURDATE() AND $sc
+                  ORDER BY l.fecha_vencimiento LIMIT 50", $sp
+            );
+            return [count($rows), array_slice($rows, 0, 10)];
+        },
+        'Retíralos del área de venta y dales de baja en Inventario → Lotes y vencimientos.'
+    );
+
+    $inventario[] = chk(
+        'Productos regulados sin registro sanitario',
+        'Productos marcados como sujetos a control sanitario a los que les falta el número de registro. '
+        . 'Sin ese dato no se pueden justificar ante Salud Pública.',
+        function () {
+            $rows = qAll(
+                "SELECT codigo, nombre, registro_categoria
+                   FROM productos
+                  WHERE regulado = 1 AND activo = 1
+                    AND (registro_sanitario IS NULL OR registro_sanitario = '')
+                  ORDER BY nombre LIMIT 50"
+            );
+            return [count($rows), array_slice($rows, 0, 10)];
+        },
+        'Cárgales el número de registro en Inventario → Productos, en la ficha sanitaria.'
+    );
+}
+
 $grupos[] = ['titulo' => 'Inventario', 'icono' => 'box', 'color' => 'amber', 'checks' => $inventario];
 
 /* ============================================================

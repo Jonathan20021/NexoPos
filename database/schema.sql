@@ -179,6 +179,12 @@ CREATE TABLE proveedores (
   direccion VARCHAR(255) NULL,
   balance DECIMAL(12,2) NOT NULL DEFAULT 0,   -- lo que se le debe (cuentas por pagar)
   activo TINYINT(1) NOT NULL DEFAULT 1,
+  -- Ficha sanitaria: el inspector pregunta a quién se le compra la mercancía
+  -- regulada y si ese proveedor está habilitado.
+  licencia_sanitaria VARCHAR(60) NULL,
+  licencia_vencimiento DATE NULL,
+  pais_origen VARCHAR(60) NULL,
+  notas_sanitarias VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_proveedor_codigo (codigo)
@@ -202,9 +208,24 @@ CREATE TABLE productos (
   stock_minimo DECIMAL(12,3) NOT NULL DEFAULT 0,
   imagen VARCHAR(255) NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
+  -- ===== Ficha sanitaria (ver docs/SANIDAD-Y-AUDITORIAS.md) =====
+  -- El control se activa producto a producto: un tornillo no lleva registro,
+  -- una crema sí. Así el peso operativo cae solo donde la ley lo exige.
+  regulado TINYINT(1) NOT NULL DEFAULT 0,             -- sujeto a control sanitario
+  controla_lote TINYINT(1) NOT NULL DEFAULT 0,        -- exige lote y vencimiento al entrar
+  registro_sanitario VARCHAR(60) NULL,
+  registro_entidad VARCHAR(40) NULL,                  -- DIGEMAPS, Agricultura, INDOCAL…
+  registro_categoria VARCHAR(40) NULL,                -- cosmetico, higiene, suplemento…
+  registro_emision DATE NULL,
+  registro_vencimiento DATE NULL,
+  registro_titular VARCHAR(180) NULL,
+  fabricante VARCHAR(180) NULL,
+  pais_origen VARCHAR(60) NULL,
+  vida_util_dias INT UNSIGNED NULL,                   -- sugiere el vencimiento al capturar un lote
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  KEY idx_p_regulado (regulado, registro_vencimiento),
   UNIQUE KEY uq_producto_codigo (codigo),
   -- Único, no un índice normal: dos productos con el mismo código de barras
   -- harían que el escáner cobre el artículo equivocado. Los NULL no chocan
@@ -1511,6 +1532,66 @@ CREATE TABLE conteo_detalles (
   KEY idx_cd_producto (producto_id),
   CONSTRAINT fk_cdet_conteo   FOREIGN KEY (conteo_id)   REFERENCES conteos(id) ON DELETE CASCADE,
   CONSTRAINT fk_cdet_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+--  CUMPLIMIENTO SANITARIO — lotes y trazabilidad
+--  Ver docs/SANIDAD-Y-AUDITORIAS.md
+-- ============================================================================
+
+-- `inventario_stock` sigue siendo la verdad para vender y para los reportes de
+-- siempre. `lotes` DESGLOSA esa existencia en los productos con `controla_lote`.
+-- Las dos se mueven dentro de la misma transacción, desde ajustarStock().
+CREATE TABLE lotes (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  producto_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  codigo VARCHAR(60) NOT NULL,                 -- número de lote del fabricante
+  fecha_vencimiento DATE NULL,
+  fecha_fabricacion DATE NULL,
+  cantidad DECIMAL(12,3) NOT NULL DEFAULT 0,
+  costo_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,
+  proveedor_id INT UNSIGNED NULL,
+  compra_id INT UNSIGNED NULL,
+  bloqueado TINYINT(1) NOT NULL DEFAULT 0,     -- retiro del mercado: no se vende, no se borra
+  motivo_bloqueo VARCHAR(255) NULL,
+  registro_sanitario VARCHAR(60) NULL,         -- copia del registro vigente al entrar el lote
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  -- Un mismo número de lote es un único registro por producto y sucursal: si no,
+  -- dos entradas del mismo lote crearían dos saldos y la trazabilidad se parte.
+  UNIQUE KEY uq_lote (producto_id, sucursal_id, codigo),
+  KEY idx_lote_venc (fecha_vencimiento),
+  KEY idx_lote_prod_venc (producto_id, sucursal_id, fecha_vencimiento),
+  KEY idx_lote_codigo (codigo),
+  CONSTRAINT fk_lote_producto  FOREIGN KEY (producto_id)  REFERENCES productos(id),
+  CONSTRAINT fk_lote_sucursal  FOREIGN KEY (sucursal_id)  REFERENCES sucursales(id),
+  CONSTRAINT fk_lote_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- El libro de trazabilidad: una fila por cada lote tocado.
+-- Va en tabla propia y no como columna de venta_detalles porque UNA línea de
+-- venta puede consumir DOS lotes (se acaba uno y sigue con el siguiente).
+CREATE TABLE lote_movimientos (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  lote_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NOT NULL,
+  sucursal_id INT UNSIGNED NOT NULL,
+  tipo VARCHAR(30) NOT NULL,                   -- entrada, venta, devolucion, ajuste, baja, bloqueo…
+  cantidad DECIMAL(12,3) NOT NULL,             -- + entra, − sale
+  saldo_anterior DECIMAL(12,3) NOT NULL DEFAULT 0,
+  saldo_nuevo DECIMAL(12,3) NOT NULL DEFAULT 0,
+  referencia_tipo VARCHAR(30) NULL,
+  referencia_id INT UNSIGNED NULL,
+  motivo VARCHAR(255) NULL,
+  usuario_id INT UNSIGNED NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_lm_lote (lote_id, id),
+  KEY idx_lm_ref (referencia_tipo, referencia_id),
+  KEY idx_lm_producto (producto_id, created_at),
+  CONSTRAINT fk_lm_lote FOREIGN KEY (lote_id) REFERENCES lotes(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== SISTEMA / CONCURRENCIA =====================

@@ -139,6 +139,37 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
         if ($items) $grupos[] = ['grupo' => 'Proveedores', 'icono' => 'truck', 'color' => 'amber', 'items' => $items];
     }
 
+    /* ---------- Lotes (cumplimiento sanitario) ---------- */
+    // Poder teclear un numero de lote en el buscador global y llegar a su
+    // trazabilidad es lo que hace util un retiro del mercado: se busca con el
+    // fabricante al telefono, no navegando por menus.
+    if (can('sanidad.ver') && san_disponible()) {
+        [$sc, $sp] = sucursalScope('l.sucursal_id');
+        $rows = qAll(
+            "SELECT l.id, l.codigo, l.cantidad, l.fecha_vencimiento, l.bloqueado,
+                    p.nombre AS producto, s.nombre AS sucursal
+               FROM lotes l
+               JOIN productos p  ON p.id = l.producto_id
+               JOIN sucursales s ON s.id = l.sucursal_id
+              WHERE l.codigo LIKE ? AND $sc
+              ORDER BY (l.fecha_vencimiento IS NULL), l.fecha_vencimiento LIMIT $tope",
+            array_merge([$like], $sp)
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $est = san_estado_lote($r);
+            $items[] = [
+                'titulo'    => 'Lote ' . $r['codigo'] . ' · ' . $r['producto'],
+                'subtitulo' => $r['sucursal'] . ' · ' . qty($r['cantidad']) . ' en existencia'
+                             . ($r['fecha_vencimiento'] ? ' · vence ' . fechaCorta($r['fecha_vencimiento']) : ''),
+                'etiqueta'  => $est['etiqueta'],
+                'etiqueta_color' => $est['color'],
+                'url'       => url('modules/reportes/trazabilidad.php?lote_id=' . (int) $r['id']),
+            ];
+        }
+        if ($items) $grupos[] = ['grupo' => 'Lotes', 'icono' => 'shield', 'color' => 'rose', 'items' => $items];
+    }
+
     /* ---------- Compras ---------- */
     if (can('compras.ver')) {
         [$wc, $pc] = sucursalScope('c.sucursal_id');

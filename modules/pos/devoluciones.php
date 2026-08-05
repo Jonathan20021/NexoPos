@@ -73,7 +73,19 @@ if (isPost()) {
                 if ($b04Faltante) flash('warning', 'La devolución se registró, pero no hay una secuencia NCF B04 activa para emitir la nota de crédito. Configúrala en Configuración → Comprobantes.');
                 foreach ($lineas as $l) {
                     dbInsert('devolucion_detalles', ['devolucion_id' => $devId, 'venta_detalle_id' => $l['vdid'], 'producto_id' => $l['pid'], 'descripcion' => $l['desc'], 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'subtotal' => $l['sub']]);
-                    if ($l['pid'] && $l['es_stock']) ajustarStock((int) $l['pid'], (int) $v['sucursal_id'], $l['cant'], 'devolucion', 'devolucion', $devId, $l['costo'], 'Devolución ' . $numero);
+                    // La mercancia devuelta vuelve A SU LOTE, el mismo del que
+                    // salio en la venta original. Si entrara sin identificar, un
+                    // producto trazable dejaria de serlo por el simple hecho de
+                    // que el cliente lo devolvio, y con fecha de caducidad eso
+                    // importa: hay que saber cuando vence lo que vuelve al estante.
+                    if ($l['pid'] && $l['es_stock']) {
+                        san_mover_conservando_lotes(
+                            (int) $l['pid'], (int) $v['sucursal_id'], (float) $l['cant'],
+                            'devolucion', 'devolucion', $devId, (int) $v['sucursal_id'],
+                            (float) $l['costo'], 'Devolución ' . $numero,
+                            ['tipo' => 'venta', 'id' => $ventaId]
+                        );
+                    }
                 }
                 $metodo = qOne(
                     "SELECT m.afecta_caja, m.es_credito FROM venta_pagos vp JOIN metodos_pago m ON m.id=vp.metodo_pago_id WHERE vp.venta_id=? ORDER BY vp.id LIMIT 1",

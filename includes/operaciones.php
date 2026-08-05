@@ -234,6 +234,14 @@ function transferenciaEnviar(int $id): void
 function transferenciaDevolverStock(array $t): void
 {
     foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$t['id']]) as $d) {
-        ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], (float) $d['cantidad'], 'transferencia_entrada', 'transferencia_devuelta', (int) $t['id'], 0, 'Devolución transferencia ' . $t['numero']);
+        // La mercancía vuelve a su sucursal con los MISMOS lotes que salieron: se
+        // buscan bajo la referencia 'transferencia' (la de la salida) aunque el
+        // kardex anote la vuelta como 'transferencia_devuelta'.
+        san_mover_conservando_lotes(
+            (int) $d['producto_id'], (int) $t['sucursal_origen_id'], (float) $d['cantidad'],
+            'transferencia_entrada', 'transferencia_devuelta', (int) $t['id'], (int) $t['sucursal_origen_id'],
+            0, 'Devolución transferencia ' . $t['numero'],
+            ['tipo' => 'transferencia', 'id' => (int) $t['id']]
+        );
     }
 }

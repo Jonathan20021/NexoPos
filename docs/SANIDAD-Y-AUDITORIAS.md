@@ -98,7 +98,27 @@ DOS lotes (se acaba uno y sigue con el siguiente). Con una columna, ese caso no 
 cadena completa: proveedor → compra → lote → facturas → clientes, con teléfono y correo.
 Sin datos de contacto, «saber a quién se le vendió» no sirve para avisarle.
 
-## 8. Avisos
+## 8. El lote sobrevive al cambiar de manos
+
+Un producto trazable dejaría de serlo justo cuando más falta hace si perdiera su lote al
+moverse. `san_mover_conservando_lotes()` lo evita en los casos donde la mercancía cambia de
+sitio y vuelve:
+
+- **Transferencia entre sucursales.** Al enviar, FEFO decide qué lotes salen y queda anotado.
+  Al recibir, el destino recrea ESOS MISMOS lotes con su fecha de vencimiento, en vez de meter
+  todo en un saco sin identificar.
+- **Devolución de venta.** La mercancía vuelve al lote del que salió, con su caducidad. Hay que
+  saber cuándo vence lo que se repone en el estante.
+- **Rechazo o anulación de transferencia.** Los lotes regresan a su sucursal de origen.
+
+El parámetro `$buscar` permite apuntar al documento de SALIDA cuando el de vuelta lleva otra
+referencia: una devolución se registra con su propio id, pero sus lotes están guardados bajo la
+venta original.
+
+Si no hay rastro (por ejemplo, una transferencia enviada ANTES de activar el control de lote),
+el resto entra sin identificar en lugar de perderse.
+
+## 9. Avisos
 
 Se generan con el mismo motor que el resto (`notif_gen_sanidad()` en `includes/notificaciones.php`),
 sin cron:
@@ -109,7 +129,7 @@ sin cron:
 - **Lote vencido con existencia**, por sucursal → crítica
 - Lote que vence en 30 días, por sucursal → alta
 
-## 9. Permisos
+## 10. Permisos
 
 | Permiso | Para qué |
 |---|---|
@@ -123,7 +143,7 @@ sin cron:
 `sanidad.bloquear` y `sanidad.baja` **no** se conceden automáticamente en la migración: son las
 dos acciones que sacan producto de circulación y valen dinero. Se otorgan a mano desde Roles.
 
-## 10. Al extender
+## 11. Al extender
 
 - Si añades un flujo que mueva stock, **usa `ajustarStock()`** y pásale el lote cuando sea una
   entrada. Si escribes directo en `inventario_stock`, rompes la trazabilidad en silencio.
