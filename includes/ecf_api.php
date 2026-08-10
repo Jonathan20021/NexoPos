@@ -669,7 +669,11 @@ function ecfInterpretarEstado(?array $json): string
         $v = $normal($veredicto);
         foreach (['aceptad', 'accepted', 'aprobad', 'approved'] as $a) if (str_contains($v, $a)) return 'aceptado';
         foreach (['rechaz', 'rejected', 'anulad', 'cancel'] as $a) if (str_contains($v, $a)) return 'rechazado';
-        foreach (['proceso', 'pending', 'enviado', 'recib', 'cola'] as $a) if (str_contains($v, $a)) return 'enviado';
+        // «Pendiente» es el estado intermedio real: el proveedor tarda entre 2 y
+        // 4 segundos desde que recibe la trama hasta que la marca aceptada.
+        foreach (['pendient', 'proceso', 'pending', 'enviado', 'recib', 'cola'] as $a) {
+            if (str_contains($v, $a)) return 'enviado';
+        }
     }
 
     // Sin veredicto explícito: heurística sobre el texto completo, conservadora.

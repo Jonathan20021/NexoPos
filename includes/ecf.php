@@ -447,6 +447,46 @@ function ecfEmitirDevolucion(int $devolucionId, array $opciones = []): array
 }
 
 /**
+ * Esperas entre consultas, en microsegundos, para resolver el comprobante en el
+ * mismo viaje de la venta.
+ *
+ * Medido contra el ambiente real: el proveedor recibe la trama al instante pero
+ * tarda entre 2 y 4 segundos en marcarla «Aceptado» —antes devuelve
+ * «Pendiente»—. Consultar una sola vez justo después del envío llega demasiado
+ * pronto y el ticket sale sin QR.
+ *
+ * Tres intentos: inmediato, a 1,5 s y a 2 s. Cubre la ventana observada sin
+ * dejar al cajero esperando más de unos segundos.
+ */
+const ECF_ESPERAS_ACUSE = [0, 1500000, 2000000];
+
+/**
+ * Intenta dejar el comprobante resuelto (aceptado y con QR) antes de imprimir.
+ *
+ * Nunca lanza y nunca es obligatorio: si el proveedor tarda más de la cuenta,
+ * el comprobante ya está transmitido y la cola lo termina. Lo único que se
+ * pierde es el QR en esa primera impresión, y aparece al reimprimir.
+ */
+function ecfResolverComprobante(int $documentoId): void
+{
+    try {
+        foreach (ECF_ESPERAS_ACUSE as $espera) {
+            if ($espera > 0) usleep($espera);
+
+            $r = ecfActualizarEstado($documentoId, ['timeout' => ECF_TIMEOUT_POS]);
+            if (!$r['ok']) return;                       // sin conexión: lo hace la cola
+            if (($r['estado'] ?? '') === 'rechazado') return;   // no hay QR que traer
+            if (($r['estado'] ?? '') === 'aceptado') {
+                ecfQrDataUri($documentoId);
+                return;
+            }
+        }
+    } catch (Throwable $e) {
+        // El comprobante está transmitido; el resto lo hace la cola.
+    }
+}
+
+/**
  * e-NCF que la venta o la devolución ya tiene asignado, o null si lleva un
  * comprobante preimpreso (o ninguno).
  */
@@ -481,9 +521,24 @@ function ecfEmitirSeguro(string $origen, int $origenId): array
     ];
 
     try {
-        return $origen === 'venta'
+        $r = $origen === 'venta'
             ? ecfEmitirVenta($origenId, $opciones)
             : ecfEmitirDevolucion($origenId, $opciones);
+
+        // Resolver el comprobante EN EL MISMO VIAJE.
+        //
+        // Sin esto el ticket sale con «transmisión pendiente» y sin QR, y el
+        // cliente se va con un comprobante a medias que solo se completa al
+        // reimprimirlo. El proveedor acepta en menos de un segundo, así que
+        // vale la pena esperar: se consulta el estado y, si quedó aceptado, se
+        // trae el timbre y se dibuja el QR.
+        //
+        // Con el tope corto del POS y sin poder lanzar: si algo no responde, el
+        // comprobante ya está enviado y la cola lo termina de resolver.
+        if (!empty($r['ok']) && !empty($r['documento_id']) && !empty($r['track_id'])) {
+            ecfResolverComprobante((int) $r['documento_id']);
+        }
+        return $r;
     } catch (Throwable $e) {
         ecfRegistrarLlamada([
             'operacion' => 'emision',

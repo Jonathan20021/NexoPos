@@ -158,6 +158,9 @@ en el *ejemplo* curl, responde 200. El ejemplo tenía razón.
 | `1006` | El RNC del nombre del archivo no corresponde al de la compañía en sesión |
 | `2007` | El documento de identidad indicado es de otra empresa |
 
+Estados del documento observados en la consulta del trackId: **`Pendiente`** →
+**`Aceptado`** (y `ACCEPTED` en el servicio STATUS).
+
 Están en `ecfCodigosRespuesta()`. La lista no es completa —irá creciendo con lo
 que aparezca en `ecf_log`— y nada del flujo depende de que un código esté ahí.
 
@@ -168,6 +171,25 @@ Los códigos `0006`, `1006` y `2007` llegan con **HTTP 200**. El sobre
 la *consulta* salió bien, no el comprobante. Por eso `ecfInterpretarEstado()` lee
 `data.status` (`Aceptado` / `ACCEPTED`) y no el código de arriba — leer el
 equivocado sería dar por bueno lo que la DGII rechazó.
+
+### El acuse tarda de 2 a 4 segundos
+
+El envío es inmediato, pero el documento **no queda «Aceptado» al instante**:
+pasa por un estado intermedio `Pendiente` y tarda entre dos y cuatro segundos en
+resolverse. Medido contra el ambiente real.
+
+Eso importa porque el QR solo existe una vez firmado. Consultar el estado justo
+después del envío llega demasiado pronto y el ticket sale sin QR — que fue
+exactamente lo que ocurrió en la primera prueba en producción.
+
+Por eso `ecfResolverComprobante()` consulta hasta tres veces (inmediato, a 1,5 s
+y a 2 s) antes de imprimir. Coste medido en el servidor: **~3,7 s** de los que
+2,2 s son del proveedor y el resto espera. A cambio, el cliente se lleva un
+comprobante completo en la primera impresión.
+
+Si en algún momento pesa más la velocidad en el mostrador que la impresión
+completa, basta dejar `ECF_ESPERAS_ACUSE = [0]`: el ticket sale sin QR y la cola
+lo completa para la reimpresión.
 
 ### El QR no es una imagen: es la URL del timbre
 
