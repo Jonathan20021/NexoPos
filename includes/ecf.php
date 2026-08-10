@@ -350,9 +350,13 @@ function ecfDocumentoDeDevolucion(int $devolucionId, ?string $encf = null): arra
     // `venta_detalle_id` admite NULL y la propia línea de devolución ya trae
     // descripción, cantidad y precio: se usa LEFT JOIN para no perder líneas
     // que no apunten a un detalle de la venta original.
+    //
+    // De `venta_detalles` se traen además el subtotal y el ITBIS originales,
+    // necesarios para reconstruir la base sin impuesto (ver abajo).
     $detalles = qAll(
         "SELECT dd.*,
                 vd.ecf_indicador_facturacion, vd.ecf_unidad_medida, vd.ecf_bien_servicio,
+                vd.subtotal AS venta_base, vd.itbis AS venta_itbis, vd.cantidad AS venta_cantidad,
                 p.tipo AS producto_tipo, p.ecf_indicador_facturacion AS prod_indicador,
                 u.ecf_codigo AS unidad_ecf
            FROM devolucion_detalles dd
@@ -365,26 +369,66 @@ function ecfDocumentoDeDevolucion(int $devolucionId, ?string $encf = null): arra
     );
     if (!$detalles) throw new RuntimeException('La devolución no tiene líneas.');
 
+    // ------------------------------------------------------------------
+    //  LOS MONTOS DE LA DEVOLUCIÓN VIENEN CON EL ITBIS DENTRO
+    // ------------------------------------------------------------------
+    //  `devolucion_detalles.precio_unitario` es lo que se le REEMBOLSÓ al
+    //  cliente, o sea base + ITBIS: es el importe que salió de la caja.
+    //
+    //  Pero la trama declara `IndicadorMontoGravado = 0`, que significa «estos
+    //  montos NO llevan ITBIS». Usar el precio de reembolso tal cual haría que
+    //  la DGII calculara otro 18% encima: sobre una venta de 2,450 + 441 de
+    //  ITBIS, la nota acreditaría 520 pesos de impuesto que nunca se cobraron.
+    //
+    //  Por eso se reconstruye la base. La vía exacta es rehacer el mismo
+    //  cálculo que hizo la devolución sobre la línea de venta original; si esa
+    //  línea ya no existe, se despeja con la tasa del indicador.
+    $factorVenta = (float) $venta['subtotal'] > 0
+        ? ((float) $venta['subtotal'] - (float) $venta['descuento']) / (float) $venta['subtotal']
+        : 1.0;
+
     $items = [];
+    $acumulado = 0.0;
+    $baseTotal = (float) $dev['subtotal'];     // base sin ITBIS, ya calculada al devolver
+    $ultima = count($detalles) - 1;
+
     foreach ($detalles as $i => $d) {
         $indicador = $d['ecf_indicador_facturacion'] ?? $d['prod_indicador'] ?? null;
         if ($indicador === null || $indicador === '') $indicador = 1;
+        $indicador = (int) $indicador;
 
-        $cant   = (float) $d['cantidad'];
-        $precio = (float) $d['precio_unitario'];
+        $cant = (float) $d['cantidad'];
+
+        if ($i === $ultima) {
+            // La última línea absorbe el redondeo para que la suma sea
+            // exactamente la base de la devolución.
+            $base = round($baseTotal - $acumulado, 2);
+        } elseif (!empty($d['venta_cantidad']) && (float) $d['venta_cantidad'] > 0) {
+            // Camino exacto: la misma proporción que aplicó la devolución.
+            $prop = $cant / (float) $d['venta_cantidad'];
+            $base = round((float) $d['venta_base'] * $factorVenta * $prop, 2);
+            $acumulado += $base;
+        } else {
+            // Sin línea original: se despeja el ITBIS del importe reembolsado.
+            $tasa = ecfTasaPorIndicador($indicador);
+            $base = round((float) $d['subtotal'] / (1 + $tasa / 100), 2);
+            $acumulado += $base;
+        }
+        $base = max(0.0, $base);
+        $precioBase = $cant > 0 ? round($base / $cant, 4) : 0.0;
 
         $items[] = [
             'NumeroLinea'            => $i + 1,
             'TipoCodigoItem'         => '',
-            'IndicadorFacturacion'   => (string) (int) $indicador,
+            'IndicadorFacturacion'   => (string) $indicador,
             'NombreItem'             => $d['descripcion'],
             'IndicadorBienoServicio' => (string) (int) ($d['ecf_bien_servicio']
                                           ?: ecfBienServicioDesdeProducto($d['producto_tipo'] ?? 'producto')),
             'DescripcionItem'        => '',
             'CantidadItem'           => ecfCantidad($cant),
             'UnidadMedida'           => (string) (int) ($d['ecf_unidad_medida'] ?? $d['unidad_ecf'] ?? 43),
-            'PrecioUnitarioItem'     => ecfPrecio($precio),
-            'MontoItem'              => ecfMonto(round($cant * $precio, 2)),
+            'PrecioUnitarioItem'     => ecfPrecio($precioBase),
+            'MontoItem'              => ecfMonto($base),
         ];
     }
 
@@ -414,10 +458,37 @@ function ecfDocumentoDeDevolucion(int $devolucionId, ?string $encf = null): arra
             'NCFModificado'        => $venta['ncf'] ?? '',
             'RNCOtroContribuyente' => '',
             'FechaNCFModificado'   => ecfFecha($venta['fecha']),
-            'CodigoModificacion'   => '1',   // Tabla 18: anula el comprobante
+            'CodigoModificacion'   => (string) ecfCodigoModificacionDevolucion($dev, $venta),
             'RazonModificacion'    => $dev['motivo'] ?? 'Devolución de mercancía',
         ],
     ];
+}
+
+/**
+ * Código de la Tabla 18 que corresponde a una devolución.
+ *
+ *   1 → Anula el NCF modificado   (se devolvió TODO)
+ *   3 → Corrige montos del NCF     (devolución parcial)
+ *
+ * La diferencia no es cosmética. El código 1 le dice a la DGII que la factura
+ * entera queda sin efecto; usarlo en una devolución parcial borraría del
+ * registro una venta que en realidad sigue viva por el resto del importe.
+ *
+ * Se considera anulación total cuando esta nota cubre el importe completo de la
+ * factura Y es la única devolución de esa venta. Si hubo devoluciones previas,
+ * esta es por definición parcial aunque complete el total: lo que se acredita
+ * aquí es solo su parte.
+ */
+function ecfCodigoModificacionDevolucion(array $dev, array $venta): int
+{
+    $otras = (int) qVal(
+        "SELECT COUNT(*) FROM devoluciones WHERE venta_id = ? AND id <> ?",
+        [(int) $dev['venta_id'], (int) $dev['id']]
+    );
+    if ($otras > 0) return 3;
+
+    $cubreTodo = abs((float) $dev['total'] - (float) $venta['total']) < 0.01;
+    return $cubreTodo ? 1 : 3;
 }
 
 /* ============================================================
@@ -455,10 +526,12 @@ function ecfEmitirDevolucion(int $devolucionId, array $opciones = []): array
  * «Pendiente»—. Consultar una sola vez justo después del envío llega demasiado
  * pronto y el ticket sale sin QR.
  *
- * Tres intentos: inmediato, a 1,5 s y a 2 s. Cubre la ventana observada sin
- * dejar al cajero esperando más de unos segundos.
+ * Cuatro intentos: inmediato, a 1,5 s, a 2 s y a 3 s. La escalera solo cuesta
+ * cuando hace falta —una venta normal resuelve en el segundo intento— y el
+ * último escalón está por las notas de crédito, que tardan algo más porque el
+ * proveedor además valida el comprobante al que hacen referencia.
  */
-const ECF_ESPERAS_ACUSE = [0, 1500000, 2000000];
+const ECF_ESPERAS_ACUSE = [0, 1500000, 2000000, 3000000];
 
 /**
  * Intenta dejar el comprobante resuelto (aceptado y con QR) antes de imprimir.

@@ -342,6 +342,102 @@ notif_gen_ecf();
 afirmar('Resuelto el problema, la alerta se cierra sola',
     (int) qVal("SELECT COUNT(*) FROM notificaciones WHERE clave='ecf_error' AND estado='activa'") === 0);
 
+/* ---------------------------------------------------------------------------
+ * 8. Notas de crédito: los dos errores que no se notan hasta la fiscalización
+ * ------------------------------------------------------------------------- */
+echo "\nNota de crédito por devolución\n";
+
+ecfGuardarConfig(['activo' => 1, 'envio_automatico' => 0]);
+dbUpdate('ncf_secuencias', ['secuencia_actual' => 1, 'secuencia_hasta' => 500,
+    'vencimiento' => date('Y-m-d', strtotime('+1 year')), 'activo' => 1], "tipo = 'E34'");
+
+/** Registra una devolución sobre una venta, como lo hace la pantalla. */
+function devolver(int $ventaId, float $cantidad): int
+{
+    $v  = qOne("SELECT * FROM ventas WHERE id = ?", [$ventaId]);
+    $vd = qOne("SELECT * FROM venta_detalles WHERE venta_id = ? ORDER BY id LIMIT 1", [$ventaId]);
+    $factor = (float) $v['subtotal'] > 0
+        ? ((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal'] : 1.0;
+
+    $prop  = $cantidad / (float) $vd['cantidad'];
+    $base  = round((float) $vd['subtotal'] * $factor * $prop, 2);
+    $itbis = round((float) $vd['itbis'] * $prop, 2);
+    $sub   = round($base + $itbis, 2);
+
+    $devId = dbInsert('devoluciones', [
+        'numero' => nextNumero('devoluciones', 'numero', 'DEV'), 'venta_id' => $ventaId,
+        'sucursal_id' => (int) $v['sucursal_id'], 'usuario_id' => current_user()['id'],
+        'motivo' => 'Prueba automatizada', 'ncf' => siguienteNCF(ncfTipoNotaCredito()),
+        'ncf_modificado' => $v['ncf'], 'subtotal' => $base, 'itbis' => $itbis, 'total' => $sub,
+    ]);
+    dbInsert('devolucion_detalles', [
+        'devolucion_id' => $devId, 'venta_detalle_id' => (int) $vd['id'],
+        'producto_id' => (int) $vd['producto_id'], 'descripcion' => $vd['descripcion'],
+        'cantidad' => $cantidad, 'precio_unitario' => round($sub / $cantidad, 2), 'subtotal' => $sub,
+    ]);
+    return $devId;
+}
+
+// --- Devolución TOTAL: se devuelve TODA la cantidad vendida ---
+$vTot = venderUna('consumidor');
+$cantVendida = (float) qVal("SELECT cantidad FROM venta_detalles WHERE venta_id = ? LIMIT 1", [(int) $vTot['id']]);
+$dTot = devolver((int) $vTot['id'], $cantVendida);
+$docTot = ecfDocumentoDeDevolucion($dTot, ecfFormatearENCF('34', 1));
+$devTot = qOne("SELECT * FROM devoluciones WHERE id = ?", [$dTot]);
+$ventaTot = qOne("SELECT * FROM ventas WHERE id = ?", [(int) $vTot['id']]);
+
+afirmar('La nota de crédito toma un e-NCF E34',
+    ecfENCFValido((string) $devTot['ncf']) && str_starts_with((string) $devTot['ncf'], 'E34'),
+    'ncf: ' . $devTot['ncf']);
+afirmar('Referencia el e-NCF de la factura',
+    $docTot['INFR']['NCFModificado'] === $ventaTot['ncf'],
+    $docTot['INFR']['NCFModificado'] . ' vs ' . $ventaTot['ncf']);
+afirmar('Devolución total → código 1 (anula el comprobante)',
+    $docTot['INFR']['CodigoModificacion'] === '1', 'código: ' . $docTot['INFR']['CodigoModificacion']);
+
+// EL ERROR CARO: declarar el importe reembolsado (que lleva el ITBIS dentro)
+// como si fuera base. Se comprueba que el monto sea la BASE, no el total.
+$montoNota = 0.0;
+foreach ($docTot['ITEM'] as $it) $montoNota += (float) $it['MontoItem'];
+afirmar('El monto declarado es la BASE, sin el ITBIS dentro',
+    abs($montoNota - (float) $devTot['subtotal']) < 0.01,
+    'declarado ' . ecfMonto($montoNota) . ' · base ' . ecfMonto($devTot['subtotal'])
+        . ' · reembolsado ' . ecfMonto($devTot['total']));
+afirmar('Y NO es el importe reembolsado (que inflaría el ITBIS)',
+    abs($montoNota - (float) $devTot['total']) > 0.01 || (float) $devTot['itbis'] == 0.0);
+afirmar('La nota de crédito válida pasa la validación',
+    ecfValidarDocumento($docTot) === [], implode(' · ', ecfValidarDocumento($docTot)));
+
+// --- Devolución PARCIAL: 1 de 2 unidades ---
+$sidP = (int) $_SESSION['sucursal_id'];
+$pidP = (int) qVal("SELECT p.id FROM productos p JOIN inventario_stock s ON s.producto_id=p.id
+                     AND s.sucursal_id=? WHERE p.activo=1 AND p.tipo='producto' AND s.cantidad>=5
+                    ORDER BY p.id LIMIT 1", [$sidP]);
+$vPar = registrarVentaPOS(
+    ['cart' => [['id' => $pidP, 'cant' => 2]], 'comprobante' => 'consumidor',
+     'cliente_id' => 1, 'metodo_pago_id' => 1, 'descuento' => 0],
+    ['sid' => $sidP, 'uid' => (int) $u['id'], 'sesion' => null, 'puede_muestra' => false]
+);
+$dPar   = devolver((int) $vPar['id'], 1.0);
+$docPar = ecfDocumentoDeDevolucion($dPar, ecfFormatearENCF('34', 2));
+$devPar = qOne("SELECT * FROM devoluciones WHERE id = ?", [$dPar]);
+
+afirmar('Devolución parcial → código 3 (corrige montos, NO anula)',
+    $docPar['INFR']['CodigoModificacion'] === '3', 'código: ' . $docPar['INFR']['CodigoModificacion']);
+$montoPar = 0.0;
+foreach ($docPar['ITEM'] as $it) $montoPar += (float) $it['MontoItem'];
+afirmar('La parcial acredita solo lo devuelto, en base',
+    abs($montoPar - (float) $devPar['subtotal']) < 0.01,
+    'declarado ' . ecfMonto($montoPar) . ' · base devuelta ' . ecfMonto($devPar['subtotal']));
+afirmar('Y es la mitad de la venta, no el total',
+    abs($montoPar - ((float) qVal("SELECT subtotal FROM ventas WHERE id=?", [(int) $vPar['id']]) / 2)) < 0.01);
+
+// Una segunda devolución de la misma venta nunca puede ser «anulación total».
+$dPar2   = devolver((int) $vPar['id'], 1.0);
+$docPar2 = ecfDocumentoDeDevolucion($dPar2, ecfFormatearENCF('34', 3));
+afirmar('Con una devolución previa, la siguiente sigue siendo código 3',
+    $docPar2['INFR']['CodigoModificacion'] === '3', 'código: ' . $docPar2['INFR']['CodigoModificacion']);
+
 echo "\n", str_repeat('-', 74), "\n";
 printf("  %d pruebas · %d fallos\n\n", $pruebas, count($fallos));
 if ($fallos) { foreach ($fallos as $f) echo "   - $f\n"; echo "\n"; exit(1); }

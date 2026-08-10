@@ -90,12 +90,13 @@ mysqldump -u root --single-transaction inventario_pos | mysql -u root inventario
 php database/ecf_ejemplos/probar_pos.php
 ```
 
-**62 pruebas** del enganche al POS, sobre un clon desechable: registra ventas de
+**72 pruebas** del enganche al POS, sobre un clon desechable: registra ventas de
 verdad y comprueba que apagado nada cambia, que encendido toma E32/E31 y crea su
 documento, y que **con el proveedor caído la venta se completa igual**. También
 cubre el QR (que no se pida antes de tiempo y se sirva de la caché) y la cola
 (que el tick no gaste el turno en balde, que dos ticks seguidos no procesen dos
-veces y que un comprobante atascado genere alerta). Se niega a correr si la base no
+veces y que un comprobante atascado genere alerta), y las notas de crédito
+(que declaren la base y no el reembolso, y que distingan anulación de parcial). Se niega a correr si la base no
 termina en `_ecftest`.
 
 ```bash
@@ -332,6 +333,33 @@ Reglas de operación:
 
 `ecfQrNormalizar()` sigue tolerando que llegue un PNG/JPEG/SVG crudo, un JSON con
 base64 o un data URI, por si el formato cambiara.
+
+### La nota de crédito no puede declarar el importe reembolsado
+
+`devolucion_detalles.precio_unitario` guarda lo que se le devolvió al cliente,
+o sea **base + ITBIS**: es el dinero que salió de la caja. Pero la trama declara
+`IndicadorMontoGravado = 0`, que significa «estos montos NO llevan ITBIS».
+
+Usarlo tal cual haría que la DGII calculara otro 18% encima. Sobre una venta de
+2,450 + 441 de ITBIS, la nota acreditaría **520 pesos de impuesto que nunca se
+cobraron**. Por eso la base se reconstruye: se rehace la misma proporción que
+aplicó la devolución sobre la línea de venta original y, si esa línea ya no
+existe, se despeja con la tasa del indicador. La última línea absorbe el
+redondeo para que la suma cuadre con `devoluciones.subtotal`.
+
+### Anular no es lo mismo que devolver una parte
+
+El código de modificación (Tabla 18) estaba fijo en 1:
+
+| Código | Cuándo |
+|---|---|
+| `1` Anula el NCF modificado | Se devolvió **todo** y es la única devolución de esa venta |
+| `3` Corrige montos | Devolución **parcial**, o ya hubo devoluciones previas |
+
+El 1 le dice a la DGII que la factura entera queda sin efecto. Usarlo en una
+devolución parcial borraría del registro una venta que sigue viva por el resto
+del importe. Los ejemplos oficiales del proveedor lo confirman: sus casos de
+«Anulación e-NCF» usan 1 y los de «Corrección Monto» usan 3.
 
 ### El corte hay que hacerlo con los terminales drenados
 
