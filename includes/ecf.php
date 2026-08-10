@@ -738,16 +738,52 @@ function ecfEnviarDocumento(int $documentoId, array $opciones = []): array
 const ECF_QR_INTENTOS_MAX = 3;
 
 /**
+ * Dibuja el código QR de la Representación Impresa a partir del timbre.
+ *
+ * El servicio de QR del proveedor NO devuelve una imagen: devuelve la URL de
+ * consulta del timbre en la DGII, así:
+ *
+ *   https://fc.dgii.gov.do/testecf/consultatimbrefc
+ *      ?RncEmisor=102616541&ENCF=E320000000001
+ *      &MontoTotal=55250.00&CodigoSeguridad=HDsJrI
+ *
+ * El `CodigoSeguridad` sale de la firma digital, por eso la URL tiene que venir
+ * del proveedor. La imagen, en cambio, la generamos aquí: así se puede imprimir
+ * al tamaño que convenga en un ticket térmico y no depende de la red.
+ *
+ * Se usa corrección de errores M y `pixelated` al pintar: un QR interpolado al
+ * escalar deja de leerse, y un QR que no escanea no sirve de nada.
+ */
+function ecfQrDesdeUrl(string $url): ?string
+{
+    $url = trim($url);
+    if (!preg_match('#^https?://#i', $url)) return null;
+    if (!class_exists(\chillerlan\QRCode\QRCode::class)) return null;
+
+    try {
+        $opciones = new \chillerlan\QRCode\QROptions([
+            'outputInterface' => \chillerlan\QRCode\Output\QRGdImagePNG::class,
+            'eccLevel'        => \chillerlan\QRCode\Common\EccLevel::M,
+            'scale'           => 6,
+            'quietzoneSize'   => 2,
+            'outputBase64'    => true,
+        ]);
+        $data = (new \chillerlan\QRCode\QRCode($opciones))->render($url);
+        return is_string($data) && str_starts_with($data, 'data:image/') ? $data : null;
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+/**
  * Convierte lo que devuelva el proveedor en un data URI listo para <img>.
  *
- * El manual muestra la respuesta de este servicio como una CAPTURA (Ilustración
- * 12), así que no se sabe si llega un PNG crudo, un JSON con el base64 dentro o
- * una URL. Se contemplan los tres; con la primera descarga real queda claro cuál
- * es y, si conviene, se simplifica.
+ * El ambiente real entrega una URL (ver ecfQrDesdeUrl), pero se siguen tolerando
+ * las otras formas plausibles por si cambiara entre ambientes o versiones: PNG
+ * crudo, JSON con el base64 dentro, o un data URI ya formado.
  *
  * Siempre se termina en data URI porque la política de seguridad de la app
- * (`img-src 'self' data: blob:`) bloquea imágenes de dominios externos: un
- * <img src="https://…"> del proveedor no se vería.
+ * (`img-src 'self' data: blob:`) bloquea imágenes de dominios externos.
  *
  * @return string|null data URI, o null si no se pudo interpretar.
  */
@@ -778,14 +814,10 @@ function ecfQrNormalizar(string $crudo, ?array $json): ?string
     // Ya viene como data URI.
     if (stripos($valor, 'data:image/') === 0) return $valor;
 
-    // Es una URL: hay que traerla al servidor, porque la CSP no dejaría cargarla
-    // desde el navegador.
+    // Es una URL. NO se descarga: es el timbre de la DGII, una página de
+    // consulta, no una imagen. Lo que hay que hacer es codificarla como QR.
     if (preg_match('#^https?://#i', $valor)) {
-        $r = ecfHttp('GET', $valor, ['operacion' => 'descarga', 'binario' => true, 'timeout' => 15]);
-        if ($r['http'] === 200 && $r['raw'] !== '') {
-            return ecfQrNormalizar($r['raw'], null);
-        }
-        return null;
+        return ecfQrDesdeUrl($valor);
     }
 
     // Base64 suelto (se tolera el formato URL-safe).
@@ -828,10 +860,19 @@ function ecfQrDataUri(int $documentoId, bool $intentarDescarga = true): ?string
         $r = ecfDescargarRecurso('QR', (string) $doc['rnc_emisor'], (string) $doc['encf'], $documentoId);
         if (!$r['ok']) return null;
 
-        $dataUri = ecfQrNormalizar((string) $r['contenido'], $r['json'] ?? null);
+        // El proveedor entrega la URL del timbre; la imagen la dibujamos aquí.
+        $dataUri = !empty($r['url'])
+            ? ecfQrDesdeUrl((string) $r['url'])
+            : ecfQrNormalizar((string) ($r['contenido'] ?? ''), $r['json'] ?? null);
         if ($dataUri === null) return null;
 
-        dbUpdate('ecf_documentos', ['qr' => $dataUri, 'qr_at' => date('Y-m-d H:i:s')], 'id = ?', [$documentoId]);
+        // Se guarda también la URL: sirve para imprimirla como texto, para
+        // reconstruir el QR a otro tamaño y para verificar a mano ante la DGII.
+        dbUpdate('ecf_documentos', [
+            'qr'     => $dataUri,
+            'qr_url' => $r['url'] ?? null,
+            'qr_at'  => date('Y-m-d H:i:s'),
+        ], 'id = ?', [$documentoId]);
         return $dataUri;
     } catch (Throwable $e) {
         ecfRegistrarLlamada([

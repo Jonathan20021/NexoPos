@@ -134,6 +134,56 @@ function ecfConfigurado(): bool
         && trim((string) ($c['clave'] ?? '')) !== '';
 }
 
+/**
+ * IP pública que se declara en el login. Nunca vacía.
+ *
+ * El proveedor la exige: sin ella responde 1003 «Falta la información de
+ * geolocalización» y el login falla entero. No comprueba que sea la IP real de
+ * origen —acepta cualquier IPv4 bien formada—, pero el campo tiene que venir.
+ *
+ * Orden: lo configurado → la IP del servidor si es pública → un marcador.
+ */
+function ecfIpPublica(): string
+{
+    $c = ecfConfig();
+    $ip = trim((string) ($c['ip_publica'] ?? ''));
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return $ip;
+
+    $delServidor = (string) ($_SERVER['SERVER_ADDR'] ?? '');
+    if (filter_var($delServidor, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+        return $delServidor;
+    }
+
+    // En desarrollo (XAMPP) y bajo cron no hay IP pública a mano. Se manda una
+    // válida para no bloquear la integración; en producción conviene fijar la
+    // real en Configuración o en ECF_IP_PUBLICA.
+    return '0.0.0.0';
+}
+
+/**
+ * Vigencia del token, en segundos, leída de la respuesta.
+ *
+ * El manual dice 3600 pero el ambiente real devuelve 2400 con la cuenta de
+ * envío y 600 con la de consulta. Suponerla es garantía de 401 a media jornada.
+ */
+function ecfVigenciaToken(?array $json): int
+{
+    $v = ecfBuscarValor($json, ['expiresIn', 'expires_in', 'expiration']);
+    return is_numeric($v) && (int) $v > 0 ? (int) $v : 3600;
+}
+
+/**
+ * Margen para refrescar antes de que venza.
+ *
+ * El manual sugiere 5 minutos, pero con un token de 600 s eso deja apenas la
+ * mitad de la vida útil; y con uno más corto no se usaría nunca. Se toma el
+ * menor entre los 5 minutos y un tercio de la vigencia.
+ */
+function ecfMargenRefresco(int $vigencia): int
+{
+    return (int) max(30, min(ECF_MARGEN_REFRESCO, intdiv(max($vigencia, 90), 3)));
+}
+
 /* ============================================================
  *  BITÁCORA
  * ============================================================ */
@@ -268,9 +318,44 @@ function ecfBuscarValor($json, array $claves)
     return null;
 }
 
+/**
+ * Códigos de respuesta observados en el ambiente de pruebas.
+ *
+ * El manual NO publica este catálogo; estos códigos se fueron recogiendo de las
+ * respuestas reales. La lista no pretende ser completa —irá creciendo con lo que
+ * aparezca en `ecf_log`— y por eso nada del flujo depende de que un código esté
+ * aquí: sirve para explicar mejor el fallo, no para decidir.
+ *
+ * `reintentable` marca los que tiene sentido volver a intentar tal cual. Un
+ * error de contenido (RNC que no cuadra, formato del nombre) se reintentaría
+ * eternamente con el mismo resultado.
+ */
+function ecfCodigosRespuesta(): array
+{
+    return [
+        '0'    => ['ok' => true,  'texto' => 'Transacción exitosa'],
+        '0002' => ['ok' => false, 'texto' => "Formato del campo 'filename' inválido. Se espera RncE99Secuencial.ext"],
+        '0006' => ['ok' => false, 'texto' => 'El ticket no se encontró en los registros'],
+        '0010' => ['ok' => false, 'texto' => "El campo 'filecontent' es obligatorio"],
+        '1001' => ['ok' => false, 'texto' => 'Faltan datos obligatorios en la petición'],
+        '1003' => ['ok' => false, 'texto' => 'Falta la información de geolocalización (latitud, longitud e IP pública)'],
+        '1006' => ['ok' => false, 'texto' => 'El RNC del nombre del archivo no corresponde al de la compañía en sesión'],
+        '2007' => ['ok' => false, 'texto' => 'El documento de identidad indicado es de otra empresa'],
+    ];
+}
+
+/** Explicación conocida de un código, o null si todavía no está catalogado. */
+function ecfExplicarCodigo(?string $codigo): ?string
+{
+    if ($codigo === null || $codigo === '') return null;
+    return ecfCodigosRespuesta()[$codigo]['texto'] ?? null;
+}
+
 /** Nombres bajo los que puede venir el access token. */
 function ecfClavesToken(): array
 {
+    // El ambiente real lo entrega en data.token.accessToken; el resto son
+    // alternativas por si cambia entre ambientes.
     return ['accessToken', 'access_token', 'token', 'jwt', 'idToken'];
 }
 
@@ -324,9 +409,12 @@ function ecfLogin(?int $timeout = null): array
                 'appVersion'        => (string) ($c['app_version'] ?: '1.0.0'),
                 'os'                => 'NexoPOS ' . PHP_OS_FAMILY,
                 'deviceId'          => ecfDeviceId(),
-                'latitude'          => (string) ($c['latitud']  ?? '18.486058'),
-                'longitude'         => (string) ($c['longitud'] ?? '-69.931212'),
-                'providerIpAddress' => (string) ($c['ip_publica'] ?? ''),
+                'latitude'          => (string) ($c['latitud']  ?: '18.486058'),
+                'longitude'         => (string) ($c['longitud'] ?: '-69.931212'),
+                // NUNCA vacío: el proveedor responde 1003 «Falta la información
+                // de geolocalización» y el login falla entero. No valida que la
+                // IP sea la real, pero exige que venga algo con forma de IPv4.
+                'providerIpAddress' => ecfIpPublica(),
             ],
         ],
     ]);
@@ -338,14 +426,10 @@ function ecfLogin(?int $timeout = null): array
     $token = ecfBuscarValor($r['json'], ecfClavesToken());
     if ($r['http'] === 200 && $token) {
         $refresh = ecfBuscarValor($r['json'], ecfClavesRefresh());
-        // El manual fija la vigencia por defecto en 3600 s (§6.3).
-        $vence = ecfBuscarValor($r['json'], ['expiresIn', 'expires_in', 'expiration']);
-        $segundos = is_numeric($vence) && (int) $vence > 0 ? (int) $vence : 3600;
-
         ecfGuardarConfig([
             'access_token'  => (string) $token,
             'refresh_token' => $refresh ? (string) $refresh : null,
-            'token_expira'  => date('Y-m-d H:i:s', time() + $segundos),
+            'token_expira'  => date('Y-m-d H:i:s', time() + ecfVigenciaToken($r['json'])),
         ]);
         return ['ok' => true, 'mensaje' => 'Sesión iniciada con el proveedor.', 'json' => $r['json']];
     }
@@ -382,7 +466,11 @@ function ecfRefrescarToken(?int $timeout = null): array
         ecfGuardarConfig([
             'access_token'  => (string) $token,
             'refresh_token' => $refresh ? (string) $refresh : $c['refresh_token'],
-            'token_expira'  => date('Y-m-d H:i:s', time() + 3600),
+            // La vigencia se lee de la respuesta, no se supone. En el ambiente
+            // real vale 2400 s con la cuenta de envío y 600 s con la de
+            // consulta, no los 3600 que dice el manual: darla por hecha
+            // significaría seguir usando un token muerto y comer 401.
+            'token_expira'  => date('Y-m-d H:i:s', time() + ecfVigenciaToken($r['json'])),
         ]);
         return ['ok' => true, 'mensaje' => 'Token renovado.', 'json' => $r['json']];
     }
@@ -425,7 +513,11 @@ function ecfToken(?int $timeout = null): ?string
 
     if ($token !== '' && $expira) {
         $restante = strtotime((string) $expira) - time();
-        if ($restante > ECF_MARGEN_REFRESCO) return $token;
+        // El margen se calcula sobre la vigencia real de ESTE token, no sobre
+        // una constante: las dos cuentas del proveedor dan tokens de duración
+        // muy distinta (2400 s y 600 s).
+        $vigencia = max(1, strtotime((string) $expira) - strtotime((string) ($c['updated_at'] ?? 'now')));
+        if ($restante > ecfMargenRefresco($vigencia)) return $token;
         if ($restante > 0 && ecfRefrescarToken($timeout)['ok']) {
             return (string) ecfConfig(true)['access_token'];
         }
@@ -552,24 +644,38 @@ function ecfConsultarTrackId(string $trackId, ?int $documentoId = null, array $o
 /**
  * Traduce la respuesta de consulta a uno de nuestros estados.
  *
- * Heurística deliberadamente conservadora mientras el proveedor no publique el
- * catálogo: solo se marca «aceptado» ante una señal inequívoca de aceptación.
- * Todo lo ambiguo se queda en «enviado» y se vuelve a consultar más tarde; dar
- * por bueno un comprobante que la DGII rechazó sería el peor error posible.
+ * La respuesta real trae el veredicto en `data.status` («Aceptado» por el
+ * trackId, «ACCEPTED» por el servicio STATUS) junto a `data.responseCode`. Se
+ * lee ese campo, que es determinista, y solo si no viniera se cae a la
+ * heurística de texto.
+ *
+ * OJO: el sobre `status.code` de arriba vale «0» aunque el documento haya sido
+ * rechazado — ese cero dice que la CONSULTA salió bien, no el comprobante. Leer
+ * el código equivocado sería dar por bueno lo que la DGII rechazó.
+ *
+ * Ante la duda se devuelve «enviado» y se vuelve a consultar más tarde.
  */
 function ecfInterpretarEstado(?array $json): string
 {
     if (!is_array($json)) return 'enviado';
 
-    $texto = strtolower(json_encode($json, JSON_UNESCAPED_UNICODE) ?: '');
-    $texto = strtr($texto, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u']);
+    $veredicto = ecfBuscarValor($json['data'] ?? [], ['status', 'estado', 'responseMessage', 'documentStatus']);
+    $normal = static function ($v): string {
+        $s = strtolower(trim((string) $v));
+        return strtr($s, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u']);
+    };
 
-    foreach (['rechaz', 'rejected', 'invalid', 'no valido', 'error'] as $aguja) {
-        if (str_contains($texto, $aguja)) return 'rechazado';
+    if ($veredicto !== null) {
+        $v = $normal($veredicto);
+        foreach (['aceptad', 'accepted', 'aprobad', 'approved'] as $a) if (str_contains($v, $a)) return 'aceptado';
+        foreach (['rechaz', 'rejected', 'anulad', 'cancel'] as $a) if (str_contains($v, $a)) return 'rechazado';
+        foreach (['proceso', 'pending', 'enviado', 'recib', 'cola'] as $a) if (str_contains($v, $a)) return 'enviado';
     }
-    foreach (['aceptad', 'accepted', 'aprobad', 'approved', 'exitosa', 'success', 'completad'] as $aguja) {
-        if (str_contains($texto, $aguja)) return 'aceptado';
-    }
+
+    // Sin veredicto explícito: heurística sobre el texto completo, conservadora.
+    $texto = $normal(json_encode($json, JSON_UNESCAPED_UNICODE) ?: '');
+    foreach (['rechaz', 'rejected', 'invalid', 'no valido'] as $a) if (str_contains($texto, $a)) return 'rechazado';
+    foreach (['aceptad', 'accepted', 'aprobad', 'approved'] as $a) if (str_contains($texto, $a)) return 'aceptado';
     return 'enviado';
 }
 
@@ -606,22 +712,49 @@ function ecfDescargarRecurso(string $recurso, string $rnc, string $encf, ?int $d
         rawurlencode($encf)
     );
 
+    // Los cuatro servicios responden application/json, NO el archivo binario.
+    // El contenido viene dentro, en base64 (PDF y XML) o como URL (QR).
     $r = ecfHttp('GET', $ruta, [
         'operacion'    => 'descarga',
         'documento_id' => $documentoId,
         'timeout'      => 60,
-        'binario'      => $recurso !== 'STATUS',
         'headers'      => ecfHeadersSesion($token),
     ]);
 
-    if ($r['http'] !== 200 || $r['raw'] === '') {
-        $st = ecfEstadoRespuesta($r['json']);
-        return ['ok' => false, 'contenido' => null,
+    $st = ecfEstadoRespuesta($r['json']);
+
+    // El sobre puede decir 200 y traer un error dentro (p. ej. 2007, RNC de otra
+    // empresa). Se comprueba el código, no solo el HTTP.
+    $codigoOk = $st['code'] === null || $st['code'] === '0';
+    if ($r['http'] !== 200 || !$codigoOk || $r['raw'] === '') {
+        return ['ok' => false, 'contenido' => null, 'nombre' => null, 'url' => null, 'json' => $r['json'],
                 'mensaje' => ecfMensajeError($r['http'], $st, 'No se pudo descargar el ' . $recurso, $r['raw'])];
     }
 
-    return ['ok' => true, 'contenido' => $r['raw'], 'json' => $r['json'],
-            'mensaje' => 'Descarga completada.'];
+    $detalle = $r['json']['data']['detail'] ?? [];
+
+    // QR: no llega una imagen, llega la URL del timbre de la DGII.
+    $url = is_array($detalle) ? ($detalle['qrCode'] ?? $detalle['url'] ?? null) : null;
+
+    // PDF y XML: base64 con su nombre de archivo.
+    $b64    = is_array($detalle) ? ($detalle['base64FileContent'] ?? $detalle['content'] ?? null) : null;
+    $nombre = is_array($detalle) ? ($detalle['filename'] ?? null) : null;
+    $binario = null;
+    if (is_string($b64) && $b64 !== '') {
+        $d = base64_decode($b64, true);
+        if ($d !== false && $d !== '') $binario = $d;
+    }
+
+    return [
+        'ok' => true,
+        'contenido' => $binario,          // bytes del PDF/XML, o null
+        'nombre'    => $nombre,           // nombre que le da el proveedor
+        'url'       => is_string($url) ? $url : null,   // QR: URL del timbre
+        'detalle'   => is_array($detalle) ? $detalle : [],
+        'json'      => $r['json'],
+        'raw'       => $r['raw'],
+        'mensaje'   => 'Descarga completada.',
+    ];
 }
 
 /* ============================================================

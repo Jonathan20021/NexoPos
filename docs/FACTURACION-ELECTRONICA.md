@@ -18,6 +18,7 @@ JSON de dos campos**. La API es diminuta; el trabajo está en construir la trama
 | Envío en lote (S3) | **No implementado** |
 | Emisión al vender, facturar un pedido y devolver | Conectada |
 | Cola automática (tick + cron) y alertas | Implementada |
+| **Probado contra el ambiente real** | **Sí — comprobante aceptado, firmado y con QR** |
 
 **El e-CF convive con el NCF preimpreso, no lo reemplaza.** Con
 `ecf_config.activo = 0` —el valor de fábrica— el POS factura exactamente como
@@ -76,10 +77,10 @@ que si no solo aparecería cuando la DGII rechace el comprobante.
 php database/ecf_ejemplos/probar_reglas.php
 ```
 
-**71 pruebas** del criterio que los ejemplos no cubren: el umbral de
+**75 pruebas** del criterio que los ejemplos no cubren: el umbral de
 RD$250,000, la obligatoriedad del comprador en el crédito fiscal, la tolerancia
 de ±1, el redondeo, los campos repetibles, el saneado de caracteres que
-romperían la trama y la normalización del QR.
+romperían la trama y la generación del QR desde el timbre de la DGII.
 
 Correr ambas después de tocar cualquier layout.
 
@@ -96,6 +97,105 @@ cubre el QR (que no se pida antes de tiempo y se sirva de la caché) y la cola
 (que el tick no gaste el turno en balde, que dos ticks seguidos no procesen dos
 veces y que un comprobante atascado genere alerta). Se niega a correr si la base no
 termina en `_ecftest`.
+
+```bash
+php database/ecf_ejemplos/probar_proveedor.php     # necesita red y credenciales
+```
+
+**14 pasos contra el ambiente REAL de LUGANIS**: login → venta → emisión →
+trackId → estado aceptado → timbre → QR → PDF y XML firmados → ticket. Es la
+única suite que sale a la red; si no hay credenciales, sale sin ejecutar nada.
+
+---
+
+## Lo que solo se supo probando contra el ambiente real
+
+El manual deja fuera los cuerpos de respuesta (están como capturas) y el catálogo
+de errores. Todo lo de esta sección se obtuvo llamando a la API de verdad, y
+varias cosas **contradicen** al documento.
+
+### Las dos cuentas hacen lo mismo
+
+LUGANIS entrega dos usuarios, «envío» y «consulta». Se sondearon los cuatro
+servicios con ambas y **ninguna recibió 403**: las dos pueden enviar, consultar y
+descargar. Basta con una sesión. Se usa la de envío porque su token dura más.
+
+### El token NO dura 3600 segundos
+
+| Cuenta | Vigencia real |
+|---|---|
+| envío | **2400 s** (40 min) |
+| consulta | **600 s** (10 min) |
+
+Viene en `data.token.expiresIn`. El manual dice 3600 en ambos casos. Darlo por
+hecho significa seguir usando un token muerto y comer 401 a media jornada, así
+que se lee siempre de la respuesta y el margen de refresco se calcula sobre la
+vigencia de *ese* token, no sobre una constante.
+
+### La IP pública es obligatoria de verdad
+
+Sin `providerIpAddress` el login falla entero con **1003 «Falta la información de
+geolocalización»**. No comprueba que sea la IP real —acepta cualquier IPv4 bien
+formada—, pero el campo tiene que venir. `ecfIpPublica()` garantiza que nunca
+vaya vacío.
+
+### El login va anidado en `deviceInfo`
+
+Confirmado empíricamente: con los campos planos que describe la *tabla* de
+parámetros la API responde **1001 «Faltan datos obligatorios»**; anidados como
+en el *ejemplo* curl, responde 200. El ejemplo tenía razón.
+
+### Códigos de respuesta observados
+
+| Código | Significado |
+|---|---|
+| `0` | Transacción exitosa |
+| `0002` | Formato de `filename` inválido — se espera `RncE99Secuencial.ext` |
+| `0006` | El ticket no se encontró en los registros |
+| `0010` | El campo `filecontent` es obligatorio |
+| `1001` | Faltan datos obligatorios |
+| `1003` | Falta la información de geolocalización |
+| `1006` | El RNC del nombre del archivo no corresponde al de la compañía en sesión |
+| `2007` | El documento de identidad indicado es de otra empresa |
+
+Están en `ecfCodigosRespuesta()`. La lista no es completa —irá creciendo con lo
+que aparezca en `ecf_log`— y nada del flujo depende de que un código esté ahí.
+
+### Un error puede venir con HTTP 200
+
+Los códigos `0006`, `1006` y `2007` llegan con **HTTP 200**. El sobre
+`status.code` vale «0» aunque el documento haya sido rechazado: ese cero dice que
+la *consulta* salió bien, no el comprobante. Por eso `ecfInterpretarEstado()` lee
+`data.status` (`Aceptado` / `ACCEPTED`) y no el código de arriba — leer el
+equivocado sería dar por bueno lo que la DGII rechazó.
+
+### El QR no es una imagen: es la URL del timbre
+
+`/client-service/download/QR` devuelve JSON con la URL de consulta de la DGII:
+
+```
+https://fc.dgii.gov.do/testecf/consultatimbrefc
+   ?RncEmisor=102616541&ENCF=E320000091646
+   &MontoTotal=177.00&CodigoSeguridad=eat/8K
+```
+
+El `CodigoSeguridad` son los **primeros 6 caracteres de la firma digital** del
+XML, por eso la URL tiene que venir del proveedor. La imagen la dibuja
+`ecfQrDesdeUrl()` con `chillerlan/php-qrcode`, así se imprime al tamaño que
+convenga en un ticket térmico y no depende de la red.
+
+### Las descargas son JSON, no binario
+
+Los cuatro servicios (`QR`, `PDF`, `XML`, `STATUS`) responden
+`application/json`. El archivo viene dentro, en `data.detail.base64FileContent`,
+con su nombre en `data.detail.filename`. Pedirlos como binario —como se hacía al
+principio— devuelve el JSON crudo.
+
+### La cuenta está atada a un RNC
+
+Las credenciales de prueba pertenecen a **RNC 102616541 · L OCCITANE EN PROVENCE
+(IMPORTERS)**. Enviar con otro RNC en el nombre del archivo da `1006`. Para
+certificar hay que emitir con ese RNC.
 
 ---
 
@@ -140,18 +240,22 @@ partir de ahí **hay que revisar el catálogo producto por producto**.
 de la venta. Derivarlos por JOIN a `productos` reescribiría el pasado cada vez
 que un producto cambie de tasa.
 
-### El cliente lee las respuestas «a tientas»
+### El cliente busca los valores por varios nombres
 
-El manual muestra los cuerpos de respuesta como **capturas de pantalla**, así que
-los nombres de los campos JSON no están publicados. En vez de adivinar uno, se
-busca el valor por varios nombres plausibles y **siempre** se guarda la respuesta
-cruda en `ecf_log`. Con el primer contacto real quedan a la vista los nombres
-verdaderos y se fijan en `ecfClavesToken()` / `ecfClavesTrackId()`.
+Se escribió así porque el manual no publica los nombres de los campos JSON, y se
+mantiene aunque ya se conozcan: `ecfBuscarValor()` localiza el token o el
+trackId por cualquiera de sus nombres plausibles, en vez de depender de una ruta
+fija como `data.token.accessToken`. Si el proveedor mueve un campo de sitio entre
+ambientes o versiones, sigue funcionando.
 
-Por lo mismo, `ecfInterpretarEstado()` es deliberadamente conservador: solo marca
-«aceptado» ante una señal inequívoca. Lo ambiguo se queda en «enviado» y se
-vuelve a consultar. Dar por bueno un comprobante que la DGII rechazó sería el
-peor error posible.
+Y **siempre** se guarda la respuesta cruda en `ecf_log`: es lo que permitió
+descubrir todo lo de la sección anterior, y lo que permitirá diagnosticar lo que
+venga.
+
+`ecfInterpretarEstado()` sí es determinista: lee `data.status` («Aceptado» /
+«ACCEPTED»). Solo cae a heurística de texto si ese campo faltara, y ante la duda
+deja «enviado» para volver a consultar. Dar por bueno un comprobante que la DGII
+rechazó sería el peor error posible.
 
 ### Un documento inválido no quema secuencia… salvo que ya esté quemada
 
@@ -179,32 +283,33 @@ lanza; lo peor que devuelve es un aviso. Y el envío desde el POS usa un tiempo
 de espera corto (`ECF_TIMEOUT_POS`, 8 s) en vez de los 90 s del envío normal:
 detrás hay un cliente esperando en el mostrador.
 
-### El QR no se puede generar aquí
+### El contenido del QR viene del proveedor; la imagen la dibujamos aquí
 
-El código QR de la Representación Impresa lleva el **código de seguridad**
-derivado de la firma digital del comprobante. Esa firma la pone el proveedor,
-así que el QR solo puede venir de él: se descarga con
-`GET /client-service/download/QR/…` y se guarda en `ecf_documentos.qr` como
-data URI.
+El QR codifica la URL del timbre, que lleva el código de seguridad derivado de la
+firma digital: **eso** solo puede darlo el proveedor. La imagen, en cambio, se
+genera localmente con `chillerlan/php-qrcode`, y eso trae tres ventajas:
 
-Tres consecuencias de diseño:
+- Se imprime **al tamaño que convenga** en un ticket térmico, sin depender de la
+  resolución de una imagen ajena.
+- **No hay una segunda descarga** por cada reimpresión.
+- Se pinta con `image-rendering: pixelated`, que es lo que impide que el
+  navegador interpole los módulos al escalar. **Un QR emborronado no escanea.**
 
-- **Solo se pide cuando el comprobante está aceptado.** Antes de firmarse no
-  existe, así que pedirlo sería gastar una llamada para nada.
-- **Se guarda y no se vuelve a pedir.** Reimprimir el ticket de un cliente que
-  vuelve al mostrador no puede depender de que el proveedor conteste. La cola
+Reglas de operación:
+
+- **Solo se pide cuando el comprobante está aceptado.** Antes de firmarse no hay
+  código de seguridad, así que pedirlo sería gastar una llamada para nada.
+- **Se guarda y no se vuelve a pedir** (`ecf_documentos.qr` y `qr_url`). La cola
   además lo trae sola en cuanto el documento pasa a aceptado.
 - **Termina siempre en data URI.** La política de seguridad de la app
-  (`img-src 'self' data: blob:`) bloquea imágenes de dominios externos, así que
-  un `<img src="https://…">` del proveedor no se vería; y Dompdf lo incrusta en
-  el PDF sin salir a la red.
+  (`img-src 'self' data: blob:`) bloquea imágenes de dominios externos, y Dompdf
+  lo incrusta en el PDF sin salir a la red.
+- Si no se consigue, **el ticket se imprime igual**: un fallo de red nunca puede
+  dejar a un cliente sin comprobante. Tras `ECF_QR_INTENTOS_MAX` (3) intentos
+  deja de insistir para no repetir la llamada en cada reimpresión.
 
-Como el manual muestra la respuesta de ese servicio como una captura,
-`ecfQrNormalizar()` tolera que llegue un PNG/JPEG/SVG crudo, un JSON con el
-base64 dentro, un data URI ya formado o una URL. Si no encuentra el QR devuelve
-null y **el ticket se imprime igual**: un fallo de red nunca puede dejar a un
-cliente sin comprobante. Tras `ECF_QR_INTENTOS_MAX` (3) intentos deja de
-insistir para no repetir la llamada en cada reimpresión.
+`ecfQrNormalizar()` sigue tolerando que llegue un PNG/JPEG/SVG crudo, un JSON con
+base64 o un data URI, por si el formato cambiara.
 
 ### El corte hay que hacerlo con los terminales drenados
 
@@ -322,36 +427,44 @@ contador, no para el manual del proveedor.
 
 ## Preguntas para el consultor de LUGANIS
 
-Antes de certificar conviene aclarar esto. Lo que está implementado funciona con
-la interpretación anotada al lado, pero son puntos donde el documento no cierra:
+Varias de las dudas originales quedaron **resueltas probando** contra el ambiente
+real (ver la sección «Lo que solo se supo probando»): el catálogo de errores se
+fue reconstruyendo, los estados del trackId son `Aceptado`/`ACCEPTED`, la forma
+de las respuestas está documentada arriba, y el login va anidado en `deviceInfo`.
 
-**Bloqueantes**
+Lo que sigue abierto:
 
-1. **Catálogo de códigos de error.** La respuesta trae `status.code` pero no
-   existe la lista. Sin ella no se puede distinguir un rechazo definitivo de uno
-   reintentable.
-2. **Estados posibles de un trackId.** La respuesta de consulta aparece como
-   imagen en el manual; los valores no están en texto.
-3. **Forma exacta de las respuestas JSON** (login y envío), o la colección de
-   Postman.
-4. **URL de producción.**
-5. **Idempotencia**: si el POST `/send` da timeout, ¿reenviar el mismo `filename`
-   duplica el e-CF o lo rechaza? Crítico en un POS.
+**Importante**
 
-**Inconsistencias del documento**
+1. **Idempotencia del envío.** Reenviamos un `filename` cuyo e-NCF ya existía en
+   la cuenta y la API respondió `0` con un trackId nuevo, sin avisar de
+   duplicado. ¿Es el comportamiento esperado? En un POS, un reintento tras un
+   timeout no debe poder duplicar un comprobante.
+2. **URL de producción** y proceso de certificación.
+3. **Vigencia del token.** El manual dice 3600 s; el ambiente devuelve 2400 s
+   (cuenta de envío) y 600 s (consulta). ¿Es intencional y se mantiene en
+   producción?
+4. **Las dos cuentas.** Probamos las dos contra los cuatro servicios y ninguna
+   recibió 403: ambas pueden enviar, consultar y descargar. ¿Es así a propósito o
+   en producción sí estarán separadas por permisos?
+5. **Orden de DERE y FPAG.** Seguimos los ejemplos (DERE justo después de ITEM),
+   que contradicen el índice de secciones. Nuestros comprobantes se aceptaron sin
+   DERE, así que el punto sigue sin verificarse. ¿Cuál es el correcto?
 
-6. **Orden de DERE y FPAG** (ver arriba). ¿Manda el índice o los ejemplos?
-7. **Login**: la tabla de parámetros lista `appVersion`, `os`, `deviceId`… como
-   campos planos del body; el ejemplo curl los anida en `deviceInfo`. Se
-   implementó el ejemplo.
+**Correcciones para la documentación**
+
+6. **`providerIpAddress` no es opcional**: sin él, el login falla con 1003. La
+   tabla de §6.4 no deja claro que sea condición de aceptación.
+7. **`filename` declarado Alfanumérico(26)**: con RNC de 9 dígitos da exactamente
+   26, pero con cédula de 11 da 28. ¿Cuál es el largo real?
 8. **Nombre del archivo en lote**: §5.1(e) dice `132944372-E31-20240909170704.txt`
    y §8.4 dice `132944372E3116042024090025.txt`. Son incompatibles.
-9. **`filename` declarado Alfanumérico(26)**: con RNC de 9 dígitos da exactamente
-   26, pero **con cédula de 11 da 28**. ¿Cuál es el largo real del campo?
-10. **PT-001 remite a «la Tabla 12»** para los códigos de impuestos adicionales;
-    la Tabla 12 es Tipo_Moneda y esos códigos están en la **Tabla 10**.
-11. Los ejemplos curl de PDF, XML y QR apuntan a `pe.stage-api.tech-luganis.net`
+9. **PT-001 remite a «la Tabla 12»** para los códigos de impuestos adicionales;
+   la Tabla 12 es Tipo_Moneda y esos códigos están en la **Tabla 10**.
+10. Los ejemplos curl de PDF, XML y QR apuntan a `pe.stage-api.tech-luganis.net`
     (dominio de **Perú**) y con doble barra.
-12. **Reglas de redondeo (§5.3)**: los rótulos están cruzados respecto a sus
-    ejemplos. Se implementó redondeo normal a 2 decimales, que es lo que ambos
-    ejemplos muestran.
+11. **Reglas de redondeo (§5.3)**: los rótulos están cruzados respecto a sus
+    ejemplos. Se implementó redondeo normal a 2 decimales.
+12. **Las respuestas de los servicios de descarga** son JSON con el archivo en
+    `data.detail.base64FileContent`, y el de QR devuelve la URL del timbre, no
+    una imagen. Convendría decirlo en el manual: la captura no lo transmite.

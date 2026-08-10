@@ -117,10 +117,14 @@ CREATE TABLE IF NOT EXISTS ecf_documentos (
   consultado_at     DATETIME     NULL,
   -- Código QR de la Representación Impresa, como data URI listo para <img>.
   --
-  -- NO se puede generar aquí: lleva el código de seguridad derivado de la firma
-  -- digital, que solo tiene el proveedor. Se descarga una vez y se guarda, para
+  -- La IMAGEN se dibuja aquí, pero su contenido no: el QR codifica la URL del
+  -- timbre de la DGII, que lleva el código de seguridad derivado de la firma
+  -- digital y por tanto solo puede darla el proveedor. Se guarda una vez para
   -- que reimprimir un ticket no dependa de la red ni gaste una llamada.
   qr                MEDIUMTEXT   NULL,
+  -- URL del timbre en la DGII, tal cual la entrega el proveedor. Es de donde
+  -- sale el QR y sirve además para verificar el comprobante a mano.
+  qr_url            VARCHAR(500) NULL,
   qr_at             DATETIME     NULL,
   qr_intentos       TINYINT UNSIGNED NOT NULL DEFAULT 0,
   created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -137,6 +141,7 @@ CREATE TABLE IF NOT EXISTS ecf_documentos (
 -- Para instalaciones donde la tabla ya existía sin estas columnas (el
 -- CREATE TABLE IF NOT EXISTS de arriba no las añadiría).
 CALL nexo_add_col('ecf_documentos', 'qr',          "MEDIUMTEXT NULL COMMENT 'QR de la RI como data URI'");
+CALL nexo_add_col('ecf_documentos', 'qr_url',      "VARCHAR(500) NULL COMMENT 'URL del timbre en la DGII'");
 CALL nexo_add_col('ecf_documentos', 'qr_at',       "DATETIME NULL");
 CALL nexo_add_col('ecf_documentos', 'qr_intentos', "TINYINT UNSIGNED NOT NULL DEFAULT 0");
 

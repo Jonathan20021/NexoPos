@@ -12,6 +12,9 @@
  * No toca la base de datos ni la red: son documentos armados a mano.
  */
 
+// El autoloader de Composer hace falta para el generador de QR
+// (chillerlan/php-qrcode). En la app lo carga app/bootstrap.php.
+require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
 require_once dirname(__DIR__, 2) . '/includes/ecf_trama.php';
 require_once dirname(__DIR__, 2) . '/includes/ecf.php';   // ecfQrNormalizar(); no toca la base al cargarse
 
@@ -307,6 +310,25 @@ afirmar('Un texto cualquiera no se toma por imagen',
     ecfQrNormalizar('hola mundo', null) === null);
 afirmar('Respuesta vacía devuelve null', ecfQrNormalizar('', null) === null);
 afirmar('JSON sin QR devuelve null', ecfQrNormalizar('', ['status' => ['code' => '0']]) === null);
+
+// Lo que devuelve el ambiente REAL: no una imagen, sino la URL del timbre de la
+// DGII. Hay que codificarla como QR, no descargarla — es una página, no un PNG.
+$timbre = 'https://fc.dgii.gov.do/testecf/consultatimbrefc'
+        . '?RncEmisor=102616541&ENCF=E320000091646&MontoTotal=177.00&CodigoSeguridad=eat%2F8K';
+
+$qrTimbre = ecfQrDesdeUrl($timbre);
+afirmar('El timbre de la DGII se convierte en un QR PNG',
+    is_string($qrTimbre) && str_starts_with($qrTimbre, 'data:image/png;base64,'));
+afirmar('Y el PNG es una imagen válida y cuadrada', (function () use ($qrTimbre) {
+    if (!$qrTimbre) return false;
+    $im = @imagecreatefromstring(base64_decode(explode(',', $qrTimbre, 2)[1]));
+    return $im && imagesx($im) > 100 && imagesx($im) === imagesy($im);
+})());
+afirmar('La forma real de la respuesta (data.detail.qrCode) se reconoce',
+    str_starts_with((string) ecfQrNormalizar('', ['data' => ['detail' => ['qrCode' => $timbre]]]),
+                    'data:image/png;base64,'));
+afirmar('Algo que no es URL ni imagen sigue devolviendo null',
+    ecfQrDesdeUrl('esto no es una url') === null);
 
 echo "\n", str_repeat('-', 74), "\n";
 printf("  %d pruebas · %d fallos\n\n", $pruebas, count($fallos));
