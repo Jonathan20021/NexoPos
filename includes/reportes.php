@@ -17,6 +17,20 @@
 function rep_catalogo(): array
 {
     return [
+        // Las tres pantallas de la CEO viven fuera de modules/reportes/ (tienen su
+        // propio permiso y su propia navegación), pero se listan aquí para que el
+        // hub sea de verdad el índice de todo lo que se puede consultar. Una ruta
+        // con «/» se resuelve desde modules/.
+        'ceo' => [
+            'titulo' => 'Área de Dirección',
+            'descripcion' => 'El tablero de la CEO: año contra año, costos y carga histórica.',
+            'icono' => 'trending', 'color' => 'violet', 'permiso' => 'direccion.ver',
+            'reportes' => [
+                ['direccion/index.php', 'Panel de Dirección', 'Año contra año, mes contra mes, ventas por marca y mercancía en camino, en una sola pantalla.', 'dashboard'],
+                ['direccion/comparativo.php', 'Año contra año', 'Matriz de doce meses con los dos años lado a lado y la variación de cada mes, por tienda, sucursal y categoría.', 'chart'],
+                ['direccion/costos.php', 'Reportería de costos', 'Costo de lo vendido, margen real, inventario a costo, recargo de importación y artículos que se venden bajo costo.', 'coins'],
+            ],
+        ],
         'direccion' => [
             'titulo' => 'Dirección General',
             'descripcion' => 'La foto completa del negocio para quien decide.',

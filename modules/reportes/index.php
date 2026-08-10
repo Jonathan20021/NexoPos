@@ -69,7 +69,10 @@ echo rep_filtros($p, ['sucursal' => true, 'acciones' => '']);
 
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       <?php foreach ($g['reportes'] as [$archivo, $titulo, $desc, $ico]):
-        $href = url('modules/reportes/' . $archivo) . '?periodo=' . e($p['preset'])
+        // Un archivo con «/» es una ruta desde modules/ (las pantallas de
+        // Dirección viven fuera de modules/reportes/).
+        $ruta = str_contains($archivo, '/') ? 'modules/' . $archivo : 'modules/reportes/' . $archivo;
+        $href = url($ruta) . '?periodo=' . e($p['preset'])
               . ($p['preset'] === 'personalizado' ? '&desde=' . e($p['desde']) . '&hasta=' . e($p['hasta']) : '')
               . (sucursalFiltroActual() ? '&sucursal_id=' . (int) sucursalFiltroActual() : '');
       ?>

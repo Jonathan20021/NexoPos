@@ -55,6 +55,45 @@ CREATE TABLE sucursales (
   UNIQUE KEY uq_sucursal_codigo (codigo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ===================== TIENDAS (MARCAS COMERCIALES) =====================
+-- La empresa distribuye varias marcas y cada una se presenta al cliente con su
+-- propia cara: la factura de L'Occitane lleva el logo de L'Occitane.
+--
+-- Tienda ≠ sucursal, y son independientes a propósito. Sucursal = DÓNDE se
+-- vende (stock, caja, usuarios). Tienda = CON QUÉ MARCA se vende. Un local
+-- puede atender dos marcas y una marca puede estar en varios locales.
+--
+-- El emisor fiscal sigue siendo la empresa: un solo RNC y una sola secuencia de
+-- NCF. La tienda pone la marca en el papel, no en la declaración.
+-- Ver docs/TIENDAS-Y-DIRECCION.md.
+DROP TABLE IF EXISTS tiendas;
+CREATE TABLE tiendas (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL,
+  nombre VARCHAR(120) NOT NULL,           -- nombre comercial: el que ve el cliente
+  razon_social VARCHAR(180) NULL,         -- solo si difiere del nombre comercial
+  rnc VARCHAR(30) NULL,                   -- informativo; el emisor fiscal es la empresa
+  direccion VARCHAR(255) NULL,
+  ciudad VARCHAR(80) NULL,
+  telefono VARCHAR(40) NULL,
+  whatsapp VARCHAR(20) NULL,
+  email VARCHAR(120) NULL,
+  sitio_web VARCHAR(140) NULL,
+  logo VARCHAR(255) NULL,
+  color VARCHAR(7) NOT NULL DEFAULT '#2563eb',  -- acento de la factura y el ticket
+  encabezado VARCHAR(140) NULL,           -- línea bajo el nombre en el ticket
+  mensaje_ticket VARCHAR(255) NULL,
+  politica_devolucion TEXT NULL,          -- se imprime al pie (PROCONSUMIDOR)
+  pie_factura VARCHAR(255) NULL,
+  orden SMALLINT NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tienda_codigo (codigo),
+  KEY idx_tienda_activo (activo, orden, nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ===================== ROLES Y PERMISOS =====================
 DROP TABLE IF EXISTS roles;
 CREATE TABLE roles (
@@ -206,6 +245,7 @@ CREATE TABLE productos (
   categoria_id INT UNSIGNED NULL,
   marca_id INT UNSIGNED NULL,
   unidad_id INT UNSIGNED NULL,
+  tienda_id INT UNSIGNED NULL,             -- marca comercial (NULL = sin marca asignada)
   tipo ENUM('producto','servicio') NOT NULL DEFAULT 'producto',
   precio_compra DECIMAL(12,2) NOT NULL DEFAULT 0,
   precio_venta DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -239,7 +279,9 @@ CREATE TABLE productos (
   KEY idx_p_categoria (categoria_id),
   KEY idx_p_nombre (nombre),
   KEY idx_p_activo_nombre (activo, nombre),
+  KEY idx_p_tienda (tienda_id, activo),
   CONSTRAINT chk_producto_valores_no_negativos CHECK (precio_compra >= 0 AND precio_venta >= 0 AND stock_minimo >= 0),
+  CONSTRAINT fk_p_tienda FOREIGN KEY (tienda_id) REFERENCES tiendas(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_marca FOREIGN KEY (marca_id) REFERENCES marcas(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_unidad FOREIGN KEY (unidad_id) REFERENCES unidades(id) ON DELETE SET NULL
@@ -294,6 +336,7 @@ CREATE TABLE compras (
   ncf VARCHAR(19) NULL,                 -- col.4  comprobante emitido por el proveedor
   ncf_modificado VARCHAR(19) NULL,      -- col.5  NCF afectado por nota de crédito/débito
   sucursal_id INT UNSIGNED NOT NULL,
+  tienda_id INT UNSIGNED NULL,          -- marca a la que se le compró la mercancía
   proveedor_id INT UNSIGNED NULL,
   moneda_id    INT UNSIGNED NULL,              -- moneda de la factura del proveedor
   tasa_cambio  DECIMAL(14,6) NOT NULL DEFAULT 1,
@@ -330,7 +373,9 @@ CREATE TABLE compras (
   KEY idx_compras_ncf (ncf),
   KEY idx_compras_comprobante (fecha_comprobante),
   KEY idx_c_sucursal (sucursal_id),
+  KEY idx_c_tienda (tienda_id, fecha),
   CONSTRAINT fk_c_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
+  CONSTRAINT fk_c_tienda FOREIGN KEY (tienda_id) REFERENCES tiendas(id) ON DELETE SET NULL,
   CONSTRAINT fk_c_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -404,11 +449,13 @@ CREATE TABLE clientes (
   balance DECIMAL(12,2) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_by INT UNSIGNED NULL,                  -- usuario que registró el cliente (trazabilidad)
+  importacion_id INT UNSIGNED NULL,              -- lote de carga histórica que lo creó
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_cliente_codigo (codigo),
   KEY idx_cli_nombre (nombre),
   KEY idx_cli_cumple (fecha_nacimiento),
+  KEY idx_cli_importacion (importacion_id),
   CONSTRAINT chk_cliente_credito_no_negativo CHECK (limite_credito >= 0 AND balance >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -559,6 +606,8 @@ CREATE TABLE ventas (
   numero VARCHAR(30) NOT NULL,
   uuid CHAR(36) NULL,                    -- identidad idempotente para ventas creadas offline (sync)
   sucursal_id INT UNSIGNED NOT NULL,
+  tienda_id INT UNSIGNED NULL,           -- marca con la que se facturó (congelada: no se deduce del producto)
+  importacion_id INT UNSIGNED NULL,      -- lote de carga histórica que la creó (NULL = venta real del sistema)
   caja_sesion_id INT UNSIGNED NULL,
   cliente_id INT UNSIGNED NULL,
   usuario_id INT UNSIGNED NOT NULL,
@@ -595,6 +644,11 @@ CREATE TABLE ventas (
   KEY idx_v_cliente (cliente_id),
   KEY idx_v_cliente_estado (cliente_id, estado, fecha),
   KEY idx_v_sesion (caja_sesion_id),
+  KEY idx_v_tienda (tienda_id, fecha),
+  KEY idx_v_importacion (importacion_id),
+  -- El panel de Dirección barre 24 meses agrupando por mes y por marca.
+  KEY idx_v_estado_fecha_tienda (estado, fecha, tienda_id),
+  CONSTRAINT fk_v_tienda FOREIGN KEY (tienda_id) REFERENCES tiendas(id) ON DELETE SET NULL,
   CONSTRAINT fk_v_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(id),
   CONSTRAINT fk_v_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE SET NULL,
   CONSTRAINT fk_v_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
@@ -1737,6 +1791,128 @@ CREATE TABLE notificacion_lecturas (
   KEY idx_nl_usuario (usuario_id),
   CONSTRAINT fk_nl_notif   FOREIGN KEY (notificacion_id) REFERENCES notificaciones(id) ON DELETE CASCADE,
   CONSTRAINT fk_nl_usuario FOREIGN KEY (usuario_id)      REFERENCES usuarios(id)       ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== LIQUIDACIÓN DE IMPORTACIONES =====================
+-- El costo real de la mercancía puesta en almacén: FOB + flete + seguro +
+-- arancel + gastos aduanales, repartidos entre los artículos del embarque.
+--
+-- Es un documento de COSTO, no de dinero: no registra la deuda al proveedor ni
+-- el pago de los gastos (de eso ya se encargan Compras y Cuentas por Pagar, y
+-- duplicarlo inflaría los gastos del mes). Ver docs/TIENDAS-Y-DIRECCION.md.
+DROP TABLE IF EXISTS liquidaciones;
+CREATE TABLE liquidaciones (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  numero VARCHAR(30) NOT NULL,
+  tienda_id INT UNSIGNED NULL,
+  sucursal_id INT UNSIGNED NOT NULL,     -- almacén donde entra la mercancía
+  proveedor_id INT UNSIGNED NULL,
+  compra_id INT UNSIGNED NULL,           -- solo en modo recosteo
+  -- entrada  = el embarque aún no está en inventario; al aplicar, ENTRA al costo final.
+  -- recosteo = la compra ya entró la mercancía; al aplicar solo se corrige el costo.
+  modo ENUM('entrada','recosteo') NOT NULL DEFAULT 'entrada',
+  referencia VARCHAR(60) NULL,           -- BL, contenedor, DUA o factura del embarque
+  fecha DATE NOT NULL,
+  fecha_llegada DATE NULL,
+  moneda_id INT UNSIGNED NULL,
+  tasa_cambio DECIMAL(14,6) NOT NULL DEFAULT 1,
+  prorrateo ENUM('valor','cantidad','peso','volumen') NOT NULL DEFAULT 'valor',
+  fob DECIMAL(14,2) NOT NULL DEFAULT 0,             -- mercancía en pesos
+  gastos DECIMAL(14,2) NOT NULL DEFAULT 0,          -- gastos que SÍ entran al costo
+  gastos_no_costo DECIMAL(14,2) NOT NULL DEFAULT 0, -- ITBIS adelantado y otros recuperables
+  costo_total DECIMAL(14,2) NOT NULL DEFAULT 0,     -- fob + gastos
+  estado ENUM('borrador','transito','aplicada','anulada') NOT NULL DEFAULT 'borrador',
+  notas VARCHAR(500) NULL,
+  usuario_id INT UNSIGNED NULL,
+  aplicada_at DATETIME NULL,
+  aplicada_por INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_liq_numero (numero),
+  KEY idx_liq_estado (estado, fecha),
+  KEY idx_liq_sucursal (sucursal_id, estado),
+  KEY idx_liq_tienda (tienda_id, fecha),
+  KEY idx_liq_compra (compra_id),
+  CONSTRAINT fk_liq_sucursal  FOREIGN KEY (sucursal_id)  REFERENCES sucursales(id),
+  CONSTRAINT fk_liq_tienda    FOREIGN KEY (tienda_id)    REFERENCES tiendas(id)     ON DELETE SET NULL,
+  CONSTRAINT fk_liq_proveedor FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE SET NULL,
+  CONSTRAINT fk_liq_compra    FOREIGN KEY (compra_id)    REFERENCES compras(id)     ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- costo_anterior guarda el precio_compra que tenía el producto ANTES de aplicar.
+-- Sin eso, anular una liquidación no puede devolver el costo viejo y el margen
+-- de todos los reportes queda torcido para siempre.
+DROP TABLE IF EXISTS liquidacion_detalles;
+CREATE TABLE liquidacion_detalles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  liquidacion_id INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  costo_moneda DECIMAL(14,4) NOT NULL DEFAULT 0,  -- FOB unitario en la moneda del embarque
+  costo_fob DECIMAL(14,4) NOT NULL DEFAULT 0,     -- FOB unitario en pesos
+  peso DECIMAL(12,3) NOT NULL DEFAULT 0,          -- kg por unidad (prorrateo por peso)
+  volumen DECIMAL(12,4) NOT NULL DEFAULT 0,       -- m3 por unidad (prorrateo por volumen)
+  prorrateo DECIMAL(14,2) NOT NULL DEFAULT 0,     -- gastos asignados a la línea completa
+  costo_final DECIMAL(14,4) NOT NULL DEFAULT 0,   -- costo unitario puesto en almacén
+  costo_anterior DECIMAL(12,2) NULL,
+  -- Un embarque de mercancía regulada entra con su lote: si no se captura aquí,
+  -- la trazabilidad queda coja justo en la entrada.
+  lote VARCHAR(60) NULL,
+  vencimiento DATE NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_liqdet (liquidacion_id, producto_id),
+  KEY idx_liqdet_producto (producto_id),
+  CONSTRAINT chk_liqdet_valores CHECK (cantidad > 0 AND costo_moneda >= 0 AND costo_fob >= 0 AND peso >= 0 AND volumen >= 0),
+  CONSTRAINT fk_liqdet_liq      FOREIGN KEY (liquidacion_id) REFERENCES liquidaciones(id) ON DELETE CASCADE,
+  CONSTRAINT fk_liqdet_producto FOREIGN KEY (producto_id)    REFERENCES productos(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- al_costo = 0 es la trampa clásica del costeo dominicano: el ITBIS pagado en
+-- aduana NO es costo, es un adelanto que se compensa contra el ITBIS cobrado.
+-- Meterlo al costo infla el inventario un 18% y hunde el margen.
+DROP TABLE IF EXISTS liquidacion_gastos;
+CREATE TABLE liquidacion_gastos (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  liquidacion_id INT UNSIGNED NOT NULL,
+  tipo VARCHAR(30) NOT NULL DEFAULT 'otros',  -- flete, seguro, arancel, itbis, aduana, transporte, otros
+  concepto VARCHAR(140) NOT NULL,
+  moneda_id INT UNSIGNED NULL,
+  tasa_cambio DECIMAL(14,6) NOT NULL DEFAULT 1,
+  monto_moneda DECIMAL(14,2) NOT NULL DEFAULT 0,
+  monto DECIMAL(14,2) NOT NULL DEFAULT 0,     -- en pesos
+  al_costo TINYINT(1) NOT NULL DEFAULT 1,     -- 0 = recuperable, no entra al costo
+  orden SMALLINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_liqgas_liq (liquidacion_id, orden),
+  CONSTRAINT chk_liqgas_monto CHECK (monto >= 0 AND monto_moneda >= 0),
+  CONSTRAINT fk_liqgas_liq FOREIGN KEY (liquidacion_id) REFERENCES liquidaciones(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ===================== CARGA HISTÓRICA (DIRECCIÓN) =====================
+-- Todo lo que entra por un archivo queda marcado con su lote. Sin eso, un
+-- archivo mal mapeado se mezcla con las ventas reales y solo se separa
+-- restaurando un respaldo completo. Con el lote, se revierte con un botón.
+--
+-- Sin FK desde ventas/clientes a propósito: purgar lotes viejos no puede
+-- arrastrar ventas ni quedar bloqueado por ellas.
+DROP TABLE IF EXISTS importaciones;
+CREATE TABLE importaciones (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tipo ENUM('clientes','ventas') NOT NULL,
+  archivo VARCHAR(200) NULL,
+  filas INT UNSIGNED NOT NULL DEFAULT 0,
+  creados INT UNSIGNED NOT NULL DEFAULT 0,
+  actualizados INT UNSIGNED NOT NULL DEFAULT 0,
+  omitidos INT UNSIGNED NOT NULL DEFAULT 0,
+  monto DECIMAL(16,2) NOT NULL DEFAULT 0,    -- suma importada (solo ventas)
+  estado ENUM('procesada','revertida') NOT NULL DEFAULT 'procesada',
+  detalle MEDIUMTEXT NULL,                   -- JSON: mapeo usado, avisos y filas rechazadas
+  usuario_id INT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revertida_at DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_imp_tipo (tipo, estado, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===================== Datos de fábrica de Marketing =========================

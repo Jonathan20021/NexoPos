@@ -152,7 +152,7 @@ if (isPost()) {
                 }
                 $total = round($subtotal + $itbisTotal, 2);
 
-                $ncf = siguienteNCF($comprobante === 'credito_fiscal' ? 'B01' : 'B02');
+                $ncf = siguienteNCF(ncfTipoDeComprobante($comprobante));
                 if ($ncf === null) throw new RuntimeException('No hay una secuencia NCF activa y vigente para este comprobante.');
 
                 $numero = nextNumero('ventas', 'numero', 'VTA');
@@ -162,6 +162,7 @@ if (isPost()) {
                     'subtotal' => $subtotal, 'descuento' => 0, 'itbis' => $itbisTotal, 'total' => $total,
                     'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf,
                     'tipo_ingreso' => 1, 'estado' => 'completada',
+                    'ecf_tipo' => ecfENCFValido($ncf) ? substr($ncf, 1, 2) : null,
                     'notas' => 'Pedido en línea ' . $ped['numero'],
                     'canal_venta' => 'Tienda online',
                 ]);
@@ -197,11 +198,24 @@ if (isPost()) {
                 }
 
                 dbUpdate('pedidos', ['venta_id' => $ventaId, 'estado' => 'entregado'], 'id = ?', [$id]);
-                return $ventaId;
+                return ['id' => $ventaId, 'ncf' => $ncf];
             });
+            $ncfVenta = $ventaId['ncf'];
+            $ventaId  = (int) $ventaId['id'];
+
+            // El e-CF se emite FUERA de la transacción: un proveedor caído no
+            // puede deshacer un pedido ya facturado y entregado. Si falla, el
+            // comprobante queda en cola.
+            $avisoEcf = '';
+            if (ecfActivo() && ecfENCFValido((string) $ncfVenta)) {
+                $emision = ecfEmitirSeguro('venta', $ventaId);
+                if (!$emision['ok']) $avisoEcf = ' ' . $emision['mensaje'];
+            }
 
             audit('pedidos', 'facturar', "Pedido facturado como venta #$ventaId", ['tabla' => 'pedidos', 'registro_id' => $id]);
-            flash('success', 'Pedido facturado. Se emitió el NCF y se descontó el inventario.');
+            flash($avisoEcf ? 'warning' : 'success',
+                  'Pedido facturado. Se emitió el ' . (ecfENCFValido((string) $ncfVenta) ? 'e-NCF' : 'NCF')
+                  . ' y se descontó el inventario.' . $avisoEcf);
             redirect('modules/pos/ticket.php?id=' . $ventaId . '&print=1');
         } catch (Throwable $e) {
             flash('error', $e->getMessage());

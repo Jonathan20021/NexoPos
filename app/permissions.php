@@ -12,6 +12,10 @@ function permission_catalog(): array
     return [
         'Administración' => [
             'sucursales'    => ['label' => 'Sucursales', 'acciones' => $crud],
+            // Marcas comerciales con las que se factura (logo, colores, política
+            // del ticket). No es un permiso fiscal: el emisor sigue siendo la
+            // empresa. Ver docs/TIENDAS-Y-DIRECCION.md.
+            'tiendas'       => ['label' => 'Tiendas y marcas', 'acciones' => $crud],
             'usuarios'      => ['label' => 'Usuarios', 'acciones' => $crud],
             'roles'         => ['label' => 'Roles y Permisos', 'acciones' => $crud],
             'configuracion' => ['label' => 'Configuración', 'acciones' => ['ver' => 'Ver', 'editar' => 'Editar']],
@@ -36,6 +40,14 @@ function permission_catalog(): array
             'compras'        => ['label' => 'Compras', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'anular' => 'Anular']],
             'cxp'            => ['label' => 'Cuentas por Pagar', 'acciones' => ['ver' => 'Ver', 'pagar' => 'Registrar pagos']],
             'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],
+            // Aplicar se separa de crear a propósito: es la firma que entra la
+            // mercancía al inventario y reescribe el costo de venta del catálogo.
+            'liquidaciones'  => ['label' => 'Liquidación de importaciones', 'acciones' => [
+                'ver'     => 'Ver',
+                'crear'   => 'Crear y editar el borrador',
+                'aplicar' => 'Aplicar (entra mercancía y fija el costo)',
+                'anular'  => 'Anular',
+            ]],
         ],
         'Ventas' => [
             'pos'          => ['label' => 'Punto de Venta', 'acciones' => ['ver' => 'Ver', 'vender' => 'Vender', 'terminales' => 'Terminales offline (NCF)']],
@@ -71,6 +83,21 @@ function permission_catalog(): array
             'conciliacion' => ['label' => 'Conciliación bancaria', 'acciones' => ['ver' => 'Ver', 'conciliar' => 'Marcar movimientos', 'cerrar' => 'Cerrar corte']],
             'metas'    => ['label' => 'Metas de Venta', 'acciones' => ['ver' => 'Ver', 'gestionar' => 'Crear/editar']],
             'dgii'     => ['label' => 'Reportes DGII', 'acciones' => ['ver' => 'Ver', 'generar' => 'Generar archivo']],
+            // Se separa de `dgii` a propósito: quien puede cambiar el ambiente o
+            // los rangos de secuencia puede emitir comprobantes fiscales reales.
+            'ecf'      => ['label' => 'Facturación Electrónica (e-CF)', 'acciones' => [
+                'ver'        => 'Ver el panel y los comprobantes emitidos',
+                'configurar' => 'Configurar credenciales, ambiente y secuencias',
+                'emitir'     => 'Emitir, reenviar y consultar comprobantes',
+            ]],
+        ],
+        'Dirección' => [
+            // El área de la CEO. `importar` se separa de `ver` porque sube (y
+            // revierte) un año entero de datos de un golpe.
+            'direccion' => ['label' => 'Área de Dirección', 'acciones' => [
+                'ver'      => 'Ver el panel, los comparativos y la reportería de costos',
+                'importar' => 'Cargar y revertir datos históricos',
+            ]],
         ],
         'Reportes' => [
             'reportes' => ['label' => 'Centro de Reportes', 'acciones' => [

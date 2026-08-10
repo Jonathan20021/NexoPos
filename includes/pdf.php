@@ -51,23 +51,54 @@ function pdf_css(): string
     </style>';
 }
 
-/** Cabecera con la marca de la empresa. */
-function pdf_brand_header(string $titulo, string $subtituloDoc = ''): string
+/**
+ * Cabecera con la marca del documento.
+ *
+ * `$marca` es un arreglo de tienda_marca(): si se pasa, el documento sale con el
+ * logo, los colores y los datos de esa tienda en vez de los de la empresa. Se
+ * usa en la factura, donde el cliente compró «en L'Occitane» y no «en la
+ * importadora». Sin `$marca` el comportamiento es el de siempre.
+ */
+function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $marca = null): string
 {
     $e = $GLOBALS['empresa'] ?? [];
-    $logo = pdf_logo_datauri();
+
+    if ($marca !== null) {
+        $nombre    = (string) $marca['nombre'];
+        $rnc       = $marca['rnc'] ?? null;
+        $direccion = trim((string) ($marca['direccion'] ?? '') . ($marca['ciudad'] ? ', ' . $marca['ciudad'] : ''), ', ');
+        $telefono  = $marca['telefono'] ?? null;
+        $email     = $marca['email'] ?? null;
+        $extra     = $marca['encabezado'] ?? null;
+        $color     = preg_match('/^#[0-9A-Fa-f]{6}$/', (string) ($marca['color'] ?? '')) ? $marca['color'] : '#2563eb';
+        $logo      = function_exists('tienda_logo_datauri') ? tienda_logo_datauri($marca) : null;
+    } else {
+        $nombre    = $e['nombre'] ?? APP_NAME;
+        $rnc       = $e['rnc'] ?? null;
+        $direccion = $e['direccion'] ?? null;
+        $telefono  = $e['telefono'] ?? null;
+        $email     = $e['email'] ?? null;
+        $extra     = null;
+        $color     = '#2563eb';
+        $logo      = pdf_logo_datauri();
+    }
+
     $logoCell = $logo
         ? '<td class="logo"><img src="' . $logo . '"></td>'
-        : '<td class="logo"><div style="width:54px;height:54px;background:#2563eb;border-radius:10px;color:#fff;font-size:26px;font-weight:bold;text-align:center;line-height:54px;">' . htmlspecialchars(mb_substr($e['nombre'] ?? 'N', 0, 1)) . '</div></td>';
-    $info = '<div class="empresa">' . htmlspecialchars($e['nombre'] ?? APP_NAME) . '</div>';
-    if (!empty($e['rnc'])) $info .= '<div class="sub">RNC: ' . htmlspecialchars($e['rnc']) . '</div>';
-    if (!empty($e['direccion'])) $info .= '<div class="sub">' . htmlspecialchars($e['direccion']) . '</div>';
-    if (!empty($e['telefono'])) $info .= '<div class="sub">Tel: ' . htmlspecialchars($e['telefono']) . (!empty($e['email']) ? ' · ' . htmlspecialchars($e['email']) : '') . '</div>';
+        : '<td class="logo"><div style="width:54px;height:54px;background:' . $color . ';border-radius:10px;color:#fff;font-size:26px;font-weight:bold;text-align:center;line-height:54px;">'
+          . htmlspecialchars(mb_substr((string) $nombre, 0, 1)) . '</div></td>';
 
-    return '<table class="brand"><tr>'
+    $info = '<div class="empresa">' . htmlspecialchars((string) $nombre) . '</div>';
+    if ($extra)     $info .= '<div class="sub">' . htmlspecialchars((string) $extra) . '</div>';
+    if ($rnc)       $info .= '<div class="sub">RNC: ' . htmlspecialchars((string) $rnc) . '</div>';
+    if ($direccion) $info .= '<div class="sub">' . htmlspecialchars((string) $direccion) . '</div>';
+    if ($telefono)  $info .= '<div class="sub">Tel: ' . htmlspecialchars((string) $telefono) . ($email ? ' · ' . htmlspecialchars((string) $email) : '') . '</div>';
+    elseif ($email) $info .= '<div class="sub">' . htmlspecialchars((string) $email) . '</div>';
+
+    return '<table class="brand" style="border-bottom:2px solid ' . $color . ';"><tr>'
         . $logoCell
         . '<td style="padding-left:10px;">' . $info . '</td>'
-        . '<td class="doc"><div class="titulo">' . htmlspecialchars($titulo) . '</div>'
+        . '<td class="doc"><div class="titulo" style="color:' . $color . ';">' . htmlspecialchars($titulo) . '</div>'
         . ($subtituloDoc ? '<div class="fecha">' . htmlspecialchars($subtituloDoc) . '</div>' : '')
         . '<div class="fecha">' . date('d/m/Y h:i A') . '</div></td>'
         . '</tr></table>';

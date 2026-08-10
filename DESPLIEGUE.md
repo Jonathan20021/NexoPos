@@ -63,8 +63,34 @@ Las migraciones posteriores se aplican aparte, en orden:
 | `migracion_indices_unicos_p12.sql` | Índices únicos de refuerzo (concurrencia) |
 | `migracion_sanidad_p13.sql` | Cumplimiento sanitario: registros, lotes y trazabilidad |
 | `migracion_otp_login_p14.sql` | Verificación en dos pasos al iniciar sesión (código por correo) |
+| `migracion_ecf_p15.sql` | Facturación electrónica (e-CF): configuración, documentos, bitácora y secuencias E31-E34 |
+| `migracion_tiendas_p16.sql` | Tiendas (marcas comerciales en factura y ticket), liquidación de importaciones y carga histórica de Dirección |
 
 Todas imprimen su propia verificación al terminar: **todo debe decir `OK`**.
+
+> **`migracion_tiendas_p16.sql` no crea ninguna tienda.** Mientras no exista una, el POS no
+> pide elegir marca y los comprobantes salen con los datos de la empresa, igual que antes:
+> el sistema se puede desplegar sin repartir el catálogo entre marcas el mismo día. La
+> primera tienda se crea a mano en **Administración → Tiendas y marcas**.
+>
+> Crea además la carpeta `storage/importaciones/`, donde reposan los archivos de carga
+> histórica entre la vista previa y la carga. **Tiene que quedar fuera del alcance web**:
+> el repositorio incluye `storage/.htaccess` con `Require all denied`. Si el servidor no
+> lee `.htaccess`, mueve la carpeta fuera de `public_html`.
+
+> **`migracion_ecf_p15.sql` NO enciende nada.** Crea el esquema del e-CF con el
+> interruptor apagado y las secuencias E31-E34 desactivadas y en rango cero, a
+> propósito: pasar de NCF preimpreso a e-CF es un corte fiscal con fecha, que se
+> hace cuando la DGII apruebe la certificación y con los rangos autorizados
+> cargados a mano. Mientras tanto el POS factura exactamente como hoy.
+>
+> **Cuando lo enciendas, añade el cron de la cola** (cPanel → Cron Jobs, cada 5
+> minutos). Sin él los comprobantes solo se transmiten mientras alguien tenga el
+> sistema abierto, y con la tienda cerrada se quedan sin acusar:
+> ```
+> /usr/local/bin/php /home2/usuario/dominio/modules/finanzas/ecf_cron.php
+> ```
+> Ver [`docs/FACTURACION-ELECTRONICA.md`](docs/FACTURACION-ELECTRONICA.md).
 
 > **`migracion_otp_login_p14.sql` enciende la verificación en dos pasos para todos los
 > usuarios en cuanto se aplica.** Antes de correrla, asegúrate de que `RESEND_API_KEY` está

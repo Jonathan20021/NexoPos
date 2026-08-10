@@ -62,6 +62,9 @@ try {
         'comprobante'    => $in['comprobante'] ?? 'consumidor',
         'metodo_pago_id' => $in['metodo_pago_id'] ?? 1,
         'canal'          => $in['canal'] ?? 'Mostrador',
+        // La marca viaja con la venta: se guardó al cobrarla, sin conexión, y es
+        // la que el cliente ya vio impresa en su ticket provisional.
+        'tienda_id'      => $in['tienda_id'] ?? null,
         'uuid'           => $in['uuid'],
         'fecha'          => $in['fecha'] ?? null,
         'ncf'            => $in['ncf'] ?? null,

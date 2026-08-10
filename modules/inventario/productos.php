@@ -16,6 +16,9 @@ if (isPost()) {
         $categoriaId = postInt('categoria_id') ?: null;
         $marcaId = postInt('marca_id') ?: null;
         $unidadId = postInt('unidad_id') ?: null;
+        // Tienda (marca comercial). NULL = se puede vender desde cualquiera.
+        $tiendaId = tiendas_disponible() ? (postInt('tienda_id') ?: null) : null;
+        if ($tiendaId && !array_key_exists($tiendaId, tiendas_opciones())) $tiendaId = null;
 
         // El código de barras se revisa de verdad: un dígito verificador que no
         // cuadra casi siempre es un número mal tecleado, y si se guarda, la
@@ -56,6 +59,7 @@ if (isPost()) {
                 'activo' => postInt('activo', 0) ? 1 : 0,
                 'imagen' => guardar_imagen('imagen', 'productos', post('imagen_actual') ?: null),
             ];
+            if (tiendas_disponible()) $data['tienda_id'] = $tiendaId;
 
             // Ficha sanitaria. Solo la escribe quien tiene el permiso: el catálogo
             // lo mantiene mucha gente, pero el dato que se le enseña a un inspector
@@ -181,16 +185,31 @@ $stockExpr = $sid === null
 
 $q = trim(get('q'));
 $catFiltro = (int) get('categoria_id');
+$hayTiendas = tiendas_hay();
+// «Sin marca» es un filtro propio y no un id: sirve para encontrar de un golpe
+// el catálogo que todavía no se ha repartido entre las marcas.
+$sinTienda  = $hayTiendas && get('sin_tienda') === '1';
+$tieFiltro  = $hayTiendas && !$sinTienda ? (int) (tiendaFiltroActual() ?? 0) : 0;
 $cond = ['p.activo IN (0,1)'];
 $params = [];
 if ($q !== '') { $cond[] = "(p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; $params[] = "%$q%"; }
 if ($catFiltro > 0) { $cond[] = "p.categoria_id = ?"; $params[] = $catFiltro; }
+if ($tieFiltro > 0) { $cond[] = "p.tienda_id = ?"; $params[] = $tieFiltro; }
+if ($sinTienda)     { $cond[] = "p.tienda_id IS NULL"; }
 $where = 'WHERE ' . implode(' AND ', $cond);
 
 if (export_solicitado()) {
-    $rows = qAll("SELECT p.codigo, p.codigo_barras, p.nombre, c.nombre AS categoria, m.nombre AS marca, p.precio_compra, p.precio_venta, p.stock_minimo, $stockExpr AS stock FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id LEFT JOIN marcas m ON m.id=p.marca_id $where ORDER BY p.nombre", $params);
-    export_tabla('productos', ['Código', 'Cód. barras', 'Nombre', 'Categoría', 'Marca', 'Precio compra', 'Precio venta', 'Stock mínimo', 'Stock actual'],
-        array_map(fn($r) => [$r['codigo'], $r['codigo_barras'], $r['nombre'], $r['categoria'], $r['marca'], $r['precio_compra'], $r['precio_venta'], $r['stock_minimo'], $r['stock']], $rows));
+    $selTienda  = $hayTiendas ? ', t.nombre AS tienda' : '';
+    $joinTienda = $hayTiendas ? ' LEFT JOIN tiendas t ON t.id = p.tienda_id' : '';
+    $rows = qAll("SELECT p.codigo, p.codigo_barras, p.nombre, c.nombre AS categoria, m.nombre AS marca$selTienda, p.precio_compra, p.precio_venta, p.stock_minimo, $stockExpr AS stock FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id LEFT JOIN marcas m ON m.id=p.marca_id$joinTienda $where ORDER BY p.nombre", $params);
+    $cabeceras = ['Código', 'Cód. barras', 'Nombre', 'Categoría', 'Marca'];
+    if ($hayTiendas) $cabeceras[] = 'Tienda';
+    array_push($cabeceras, 'Precio compra', 'Precio venta', 'Stock mínimo', 'Stock actual');
+    export_tabla('productos', $cabeceras, array_map(function ($r) use ($hayTiendas) {
+        $fila = [$r['codigo'], $r['codigo_barras'], $r['nombre'], $r['categoria'], $r['marca']];
+        if ($hayTiendas) $fila[] = $r['tienda'] ?? '';
+        return array_merge($fila, [$r['precio_compra'], $r['precio_venta'], $r['stock_minimo'], $r['stock']]);
+    }, $rows));
 }
 
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM productos p $where", $params), 25);
@@ -232,6 +251,17 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
           <option value="0">Todas las categorías</option>
           <?php foreach ($categorias as $c): ?><option value="<?= (int) $c['id'] ?>" <?= $catFiltro === (int) $c['id'] ? 'selected' : '' ?>><?= e($c['nombre']) ?></option><?php endforeach; ?>
         </select>
+        <?php if ($hayTiendas): ?>
+          <select name="tienda_id" onchange="this.form.submit()" class="select w-48" aria-label="Filtrar por tienda">
+            <option value="0">Todas las tiendas</option>
+            <?php foreach (tiendas_activas() as $t): ?>
+              <option value="<?= (int) $t['id'] ?>" <?= $tieFiltro === (int) $t['id'] ? 'selected' : '' ?>><?= e($t['nombre']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <a href="?<?= e(http_build_query(array_filter(['q' => $q, 'categoria_id' => $catFiltro ?: null, 'sin_tienda' => $sinTienda ? null : '1']))) ?>"
+             class="btn btn-sm <?= $sinTienda ? 'btn-primary' : 'btn-ghost' ?> whitespace-nowrap"
+             title="Productos que todavía no tienen marca asignada">Sin marca</a>
+        <?php endif; ?>
       </form>
     </div>
     <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> productos</span>
@@ -262,6 +292,15 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
                   <div class="min-w-0">
                     <p class="font-semibold text-slate-700 truncate"><?= e($p['nombre']) ?></p>
                     <p class="text-xs text-slate-400"><?= e($p['codigo']) ?><?= $p['marca'] ? ' · ' . e($p['marca']) : '' ?></p>
+                    <?php if ($hayTiendas): ?>
+                      <p class="mt-0.5">
+                        <?php if (!empty($p['tienda_id'])): ?>
+                          <?= tienda_chip((int) $p['tienda_id'], 'text-[11px]') ?>
+                        <?php else: ?>
+                          <span class="text-[11px] text-amber-600">Sin marca comercial</span>
+                        <?php endif; ?>
+                      </p>
+                    <?php endif; ?>
                     <?php if ($cod !== ''): ?>
                       <p class="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
                         <span class="text-slate-300"><?= icon('barcode', 'w-3 h-3') ?></span><?= e($cod) ?>
@@ -305,7 +344,7 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
                   <?php if (can('productos.editar')): ?>
                     <?php
                     $edit = ['id'=>$p['id'],'codigo'=>$p['codigo'],'codigo_barras'=>$p['codigo_barras'],'nombre'=>$p['nombre'],
-                             'descripcion'=>$p['descripcion'],'categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],
+                             'descripcion'=>$p['descripcion'],'tienda_id'=>$p['tienda_id'] ?? '','categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],
                              'unidad_id'=>$p['unidad_id'],'tipo'=>$p['tipo'],'precio_compra'=>$p['precio_compra'],
                              'precio_venta'=>$p['precio_venta'],'itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],
                              'imagen'=>$p['imagen'],'activo'=>$p['activo']];
@@ -378,6 +417,18 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
               <input type="file" name="imagen" accept="image/png,image/jpeg,image/webp,image/gif" class="block w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold hover:file:bg-blue-100 cursor-pointer">
             </div>
           </div>
+          <?php if ($hayTiendas): ?>
+            <div class="sm:col-span-2">
+              <label class="label" for="prod_tienda">Tienda (marca comercial)</label>
+              <select id="prod_tienda" name="tienda_id" x-model="form.tienda_id" class="select">
+                <option value="">— Cualquier tienda —</option>
+                <?php foreach (tiendas_activas() as $t): ?><option value="<?= (int) $t['id'] ?>"><?= e($t['nombre']) ?></option><?php endforeach; ?>
+              </select>
+              <p class="mt-1 text-xs text-slate-500">
+                Decide con qué logo se factura. «Cualquier tienda» deja el artículo disponible desde todas las marcas.
+              </p>
+            </div>
+          <?php endif; ?>
           <div><label class="label">Categoría</label><select name="categoria_id" x-model="form.categoria_id" class="select"><option value="">— Sin categoría —</option><?php foreach ($categorias as $c): ?><option value="<?= (int) $c['id'] ?>"><?= e($c['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Marca</label><select name="marca_id" x-model="form.marca_id" class="select"><option value="">— Sin marca —</option><?php foreach ($marcas as $m): ?><option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Unidad</label><select name="unidad_id" x-model="form.unidad_id" class="select"><option value="">— Unidad —</option><?php foreach ($unidades as $u): ?><option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option><?php endforeach; ?></select></div>
@@ -505,6 +556,9 @@ function prodModal() {
     nuevo() {
       this.form = {
         id: 0, codigo: <?= json_encode($sigCodigo) ?>, codigo_barras: '', nombre: '', descripcion: '',
+        // Si se está filtrando por una tienda, el producto nuevo nace en esa marca:
+        // es lo que quiere quien acaba de filtrar para dar de alta su catálogo.
+        tienda_id: <?= json_encode($tieFiltro > 0 ? (string) $tieFiltro : '') ?>,
         categoria_id: '', marca_id: '', unidad_id: '', tipo: 'producto',
         precio_compra: 0, precio_venta: 0, itbis_aplica: 1, stock_minimo: 0, imagen: '', activo: 1,
         // Ficha sanitaria: un producto nace NO regulado; se marca a conciencia.

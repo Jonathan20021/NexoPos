@@ -1,0 +1,737 @@
+[
+ {
+  "archivo": "31-CAUST-001.txt",
+  "tipo": "31",
+  "lineas": 10
+ },
+ {
+  "archivo": "31-CAUST-002.txt",
+  "tipo": "31",
+  "lineas": 11
+ },
+ {
+  "archivo": "31-CAUST-003.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "31-CAUST-004.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "31-CAUST-005.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "31-CAUST-006.txt",
+  "tipo": "31",
+  "lineas": 4
+ },
+ {
+  "archivo": "31-CAUST-007.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "31-CAUST-008.txt",
+  "tipo": "31",
+  "lineas": 6
+ },
+ {
+  "archivo": "31-CAUST-009.txt",
+  "tipo": "31",
+  "lineas": 10
+ },
+ {
+  "archivo": "31-CAUST-010.txt",
+  "tipo": "31",
+  "lineas": 11
+ },
+ {
+  "archivo": "31-CAUST-011.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "31-CAUST-012.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "31-CAUST-013.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "31-CAUST-014.txt",
+  "tipo": "31",
+  "lineas": 4
+ },
+ {
+  "archivo": "31-CAUST-015.txt",
+  "tipo": "31",
+  "lineas": 6
+ },
+ {
+  "archivo": "31-CAUST-016.txt",
+  "tipo": "31",
+  "lineas": 4
+ },
+ {
+  "archivo": "31-CAUST-017.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "32-CAUST-001.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "32-CAUST-002.txt",
+  "tipo": "32",
+  "lineas": 10
+ },
+ {
+  "archivo": "32-CAUST-003.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "32-CAUST-004.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "32-CAUST-005.txt",
+  "tipo": "32",
+  "lineas": 10
+ },
+ {
+  "archivo": "32-CAUST-006.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-007.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-008.txt",
+  "tipo": "32",
+  "lineas": 8
+ },
+ {
+  "archivo": "32-CAUST-009.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-010.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "32-CAUST-011.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-012.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-013.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-014.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-015.txt",
+  "tipo": "32",
+  "lineas": 3
+ },
+ {
+  "archivo": "32-CAUST-016.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "32-CAUST-017.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "32-CAUST-018.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-019.txt",
+  "tipo": "32",
+  "lineas": 8
+ },
+ {
+  "archivo": "32-CAUST-020.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-021.txt",
+  "tipo": "32",
+  "lineas": 8
+ },
+ {
+  "archivo": "32-CAUST-022.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "32-CAUST-023.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-024.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-025.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-026.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-027.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "32-CAUST-028.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "32-CAUST-029.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "33-CAUST-001.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-001-afectado.txt",
+  "tipo": "31",
+  "lineas": 10
+ },
+ {
+  "archivo": "33-CAUST-002.txt",
+  "tipo": "33",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-002-afectado.txt",
+  "tipo": "31",
+  "lineas": 11
+ },
+ {
+  "archivo": "33-CAUST-003.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-003-afectado.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-004.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-004-afectado.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-005.txt",
+  "tipo": "33",
+  "lineas": 6
+ },
+ {
+  "archivo": "33-CAUST-005-afectado.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "33-CAUST-006.txt",
+  "tipo": "33",
+  "lineas": 5
+ },
+ {
+  "archivo": "33-CAUST-006-afectado.txt",
+  "tipo": "31",
+  "lineas": 4
+ },
+ {
+  "archivo": "33-CAUST-007.txt",
+  "tipo": "33",
+  "lineas": 6
+ },
+ {
+  "archivo": "33-CAUST-007-afectado.txt",
+  "tipo": "31",
+  "lineas": 6
+ },
+ {
+  "archivo": "33-CAUST-008.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-008-afectado.txt",
+  "tipo": "31",
+  "lineas": 10
+ },
+ {
+  "archivo": "33-CAUST-009.txt",
+  "tipo": "33",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-009-afectado.txt",
+  "tipo": "31",
+  "lineas": 11
+ },
+ {
+  "archivo": "33-CAUST-010.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-010-afectado.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-011.txt",
+  "tipo": "33",
+  "lineas": 8
+ },
+ {
+  "archivo": "33-CAUST-011-afectado.txt",
+  "tipo": "31",
+  "lineas": 9
+ },
+ {
+  "archivo": "33-CAUST-012.txt",
+  "tipo": "33",
+  "lineas": 6
+ },
+ {
+  "archivo": "33-CAUST-012-afectado.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "33-CAUST-013.txt",
+  "tipo": "33",
+  "lineas": 5
+ },
+ {
+  "archivo": "33-CAUST-013-afectado.txt",
+  "tipo": "31",
+  "lineas": 4
+ },
+ {
+  "archivo": "33-CAUST-014.txt",
+  "tipo": "33",
+  "lineas": 6
+ },
+ {
+  "archivo": "33-CAUST-014-afectado.txt",
+  "tipo": "31",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-001.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-001-afectado.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-002.txt",
+  "tipo": "34",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-002-afectado.txt",
+  "tipo": "32",
+  "lineas": 10
+ },
+ {
+  "archivo": "34-CAUST-003.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-003-afectado.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-004.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-004-afectado.txt",
+  "tipo": "32",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-005.txt",
+  "tipo": "34",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-005-afectado.txt",
+  "tipo": "32",
+  "lineas": 10
+ },
+ {
+  "archivo": "34-CAUST-006.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-006-afectado.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "34-CAUST-007.txt",
+  "tipo": "34",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-007-afectado.txt",
+  "tipo": "32",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-008.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-008-afectado.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "34-CAUST-009.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-009-afectado.txt",
+  "tipo": "32",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-010.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-010-afectado.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "34-CAUST-011.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-011-afectado.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "34-CAUST-012.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-012-afectado.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "34-CAUST-013.txt",
+  "tipo": "34",
+  "lineas": 4
+ },
+ {
+  "archivo": "34-CAUST-013-afectado.txt",
+  "tipo": "32",
+  "lineas": 3
+ },
+ {
+  "archivo": "34-CAUST-014.txt",
+  "tipo": "34",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-014-afectado.txt",
+  "tipo": "32",
+  "lineas": 7
+ },
+ {
+  "archivo": "34-CAUST-015.txt",
+  "tipo": "34",
+  "lineas": 9
+ },
+ {
+  "archivo": "34-CAUST-015-afectado.txt",
+  "tipo": "32",
+  "lineas": 8
+ },
+ {
+  "archivo": "34-CAUST-016.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-016-afectado.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "34-CAUST-017.txt",
+  "tipo": "34",
+  "lineas": 6
+ },
+ {
+  "archivo": "34-CAUST-017-afectado.txt",
+  "tipo": "31",
+  "lineas": 6
+ },
+ {
+  "archivo": "34-CAUST-018.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-018-afectado.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "34-CAUST-019.txt",
+  "tipo": "34",
+  "lineas": 5
+ },
+ {
+  "archivo": "34-CAUST-019-afectado.txt",
+  "tipo": "32",
+  "lineas": 4
+ },
+ {
+  "archivo": "41-CAUST-001.txt",
+  "tipo": "41",
+  "lineas": 6
+ },
+ {
+  "archivo": "41-CAUST-002.txt",
+  "tipo": "41",
+  "lineas": 7
+ },
+ {
+  "archivo": "41-CAUST-003.txt",
+  "tipo": "41",
+  "lineas": 4
+ },
+ {
+  "archivo": "41-CAUST-004.txt",
+  "tipo": "41",
+  "lineas": 4
+ },
+ {
+  "archivo": "41-CAUST-005.txt",
+  "tipo": "41",
+  "lineas": 5
+ },
+ {
+  "archivo": "41-CAUST-006.txt",
+  "tipo": "41",
+  "lineas": 6
+ },
+ {
+  "archivo": "41-CAUST-007.txt",
+  "tipo": "41",
+  "lineas": 7
+ },
+ {
+  "archivo": "41-CAUST-008.txt",
+  "tipo": "41",
+  "lineas": 5
+ },
+ {
+  "archivo": "43-CAUST-001.txt",
+  "tipo": "43",
+  "lineas": 3
+ },
+ {
+  "archivo": "43-CAUST-002.txt",
+  "tipo": "43",
+  "lineas": 4
+ },
+ {
+  "archivo": "44-CAUST-001.txt",
+  "tipo": "44",
+  "lineas": 5
+ },
+ {
+  "archivo": "44-CAUST-002.txt",
+  "tipo": "44",
+  "lineas": 6
+ },
+ {
+  "archivo": "44-CAUST-003.txt",
+  "tipo": "44",
+  "lineas": 4
+ },
+ {
+  "archivo": "44-CAUST-004.txt",
+  "tipo": "44",
+  "lineas": 4
+ },
+ {
+  "archivo": "44-CAUST-005.txt",
+  "tipo": "44",
+  "lineas": 5
+ },
+ {
+  "archivo": "45-CAUST-001.txt",
+  "tipo": "45",
+  "lineas": 6
+ },
+ {
+  "archivo": "45-CAUST-002.txt",
+  "tipo": "45",
+  "lineas": 7
+ },
+ {
+  "archivo": "45-CAUST-003.txt",
+  "tipo": "45",
+  "lineas": 6
+ },
+ {
+  "archivo": "45-CAUST-004.txt",
+  "tipo": "45",
+  "lineas": 6
+ },
+ {
+  "archivo": "45-CAUST-005.txt",
+  "tipo": "45",
+  "lineas": 5
+ },
+ {
+  "archivo": "45-CAUST-006.txt",
+  "tipo": "45",
+  "lineas": 6
+ },
+ {
+  "archivo": "45-CAUST-007.txt",
+  "tipo": "45",
+  "lineas": 7
+ },
+ {
+  "archivo": "45-CAUST-008.txt",
+  "tipo": "45",
+  "lineas": 5
+ },
+ {
+  "archivo": "45-CAUST-009.txt",
+  "tipo": "45",
+  "lineas": 4
+ },
+ {
+  "archivo": "45-CAUST-010.txt",
+  "tipo": "45",
+  "lineas": 5
+ },
+ {
+  "archivo": "46-CAUST-001.txt",
+  "tipo": "46",
+  "lineas": 5
+ },
+ {
+  "archivo": "46-CAUST-002.txt",
+  "tipo": "46",
+  "lineas": 6
+ },
+ {
+  "archivo": "46-CAUST-003.txt",
+  "tipo": "46",
+  "lineas": 4
+ },
+ {
+  "archivo": "46-CAUST-004.txt",
+  "tipo": "46",
+  "lineas": 5
+ },
+ {
+  "archivo": "46-CAUST-005.txt",
+  "tipo": "46",
+  "lineas": 5
+ },
+ {
+  "archivo": "47-CAUST-001.txt",
+  "tipo": "47",
+  "lineas": 5
+ },
+ {
+  "archivo": "47-CAUST-002.txt",
+  "tipo": "47",
+  "lineas": 6
+ },
+ {
+  "archivo": "47-CAUST-003.txt",
+  "tipo": "47",
+  "lineas": 5
+ },
+ {
+  "archivo": "47-CAUST-004.txt",
+  "tipo": "47",
+  "lineas": 5
+ },
+ {
+  "archivo": "47-CAUST-005.txt",
+  "tipo": "47",
+  "lineas": 4
+ }
+]

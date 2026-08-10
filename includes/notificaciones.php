@@ -300,6 +300,81 @@ function notif_generar(): void
     notif_gen_margenes();
     notif_gen_sanidad();
     notif_gen_seguridad();
+    notif_gen_ecf();
+}
+
+/**
+ * Comprobantes Fiscales Electrónicos que no llegaron a la DGII.
+ *
+ * Un e-CF atascado no se nota: la venta se cobró, el cliente se fue con su
+ * ticket y todo parece normal. Lo único que falta es lo que la DGII no ve, y sin
+ * este aviso nadie se entera hasta que llega una revisión.
+ *
+ * Se avisa de tres situaciones distintas porque se resuelven distinto:
+ *   · En error   → hay que corregir el dato y reenviar, o anular formalmente.
+ *   · Atorados   → el proveedor lleva rato sin aceptar: puede ser la red.
+ *   · Sin acusar → se transmitió pero la DGII no ha resuelto en 24 horas.
+ */
+function notif_gen_ecf(): void
+{
+    // Si el módulo no está instalado o está apagado, no hay nada que vigilar y
+    // tampoco conviene consultar tablas que podrían no existir.
+    if (!function_exists('ecfDisponible') || !ecfDisponible() || !ecfActivo()) {
+        notif_sync('ecf', []);
+        return;
+    }
+
+    $items = [];
+
+    $enError = (int) qVal("SELECT COUNT(*) FROM ecf_documentos WHERE estado = 'error'");
+    if ($enError > 0) {
+        $items[] = [
+            'clave' => 'ecf_error', 'categoria' => 'fiscal', 'prioridad' => 'critica',
+            'titulo' => $enError === 1
+                ? '1 comprobante electrónico con error'
+                : $enError . ' comprobantes electrónicos con error',
+            'mensaje' => 'Se les asignó un e-NCF pero no se pudieron transmitir. '
+                       . 'Hay que corregirlos y reenviarlos, o anularlos ante la DGII.',
+            'url' => 'modules/finanzas/ecf.php?tab=documentos', 'icono' => 'receipt',
+            'color' => 'rose', 'permiso' => 'ecf.ver',
+        ];
+    }
+
+    // Pendientes de hace más de una hora: el reintento con espera creciente ya
+    // debería haberlos despachado.
+    $atorados = (int) qVal(
+        "SELECT COUNT(*) FROM ecf_documentos
+          WHERE estado = 'pendiente' AND created_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+    );
+    if ($atorados > 0) {
+        $items[] = [
+            'clave' => 'ecf_atorados', 'categoria' => 'fiscal', 'prioridad' => 'alta',
+            'titulo' => $atorados . ' comprobante(s) sin transmitir hace más de una hora',
+            'mensaje' => 'La cola no está avanzando. Revisa la conexión con el proveedor '
+                       . 'y que la tarea programada esté corriendo.',
+            'url' => 'modules/finanzas/ecf.php?tab=documentos', 'icono' => 'alert',
+            'color' => 'amber', 'permiso' => 'ecf.ver',
+        ];
+    }
+
+    // Transmitidos hace más de un día sin acuse. Puede ser normal en un corte
+    // del servicio, pero pasadas 24 horas merece una mirada.
+    $sinAcuse = (int) qVal(
+        "SELECT COUNT(*) FROM ecf_documentos
+          WHERE estado = 'enviado' AND enviado_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+    );
+    if ($sinAcuse > 0) {
+        $items[] = [
+            'clave' => 'ecf_sin_acuse', 'categoria' => 'fiscal', 'prioridad' => 'media',
+            'titulo' => $sinAcuse . ' comprobante(s) sin respuesta de la DGII',
+            'mensaje' => 'Se transmitieron hace más de 24 horas y siguen sin acuse. '
+                       . 'Consúltalo con el proveedor si no se resuelve.',
+            'url' => 'modules/finanzas/ecf.php?tab=documentos', 'icono' => 'clock',
+            'color' => 'amber', 'permiso' => 'ecf.ver',
+        ];
+    }
+
+    notif_sync('ecf', $items);
 }
 
 /**

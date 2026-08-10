@@ -28,6 +28,7 @@ require_once __DIR__ . '/permissions.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/audit.php';
 require_once dirname(__DIR__) . '/includes/components.php';
+require_once dirname(__DIR__) . '/includes/tiendas.php';   // marcas comerciales (identidad del comprobante)
 require_once dirname(__DIR__) . '/includes/operaciones.php';
 require_once dirname(__DIR__) . '/includes/dgii.php';
 require_once dirname(__DIR__) . '/includes/dgii_reportes.php';
@@ -41,9 +42,12 @@ require_once dirname(__DIR__) . '/includes/metas.php';
 require_once dirname(__DIR__) . '/includes/conciliacion.php';
 require_once dirname(__DIR__) . '/includes/promociones.php';
 require_once dirname(__DIR__) . '/includes/ncf_reservas.php';
+require_once dirname(__DIR__) . '/includes/ecf.php';   // facturación electrónica (arrastra ecf_catalogos/trama/api)
 require_once dirname(__DIR__) . '/includes/monedas.php';
 require_once dirname(__DIR__) . '/includes/venta_pos.php';
 require_once dirname(__DIR__) . '/includes/cxp.php';
+require_once dirname(__DIR__) . '/includes/liquidaciones.php';  // costeo de importaciones (usa operaciones + monedas)
+require_once dirname(__DIR__) . '/includes/importador.php';     // carga histórica de clientes y ventas (Dirección)
 require_once dirname(__DIR__) . '/includes/cotizaciones.php';
 require_once dirname(__DIR__) . '/includes/activos.php';
 require_once dirname(__DIR__) . '/includes/notificaciones.php';
@@ -51,6 +55,7 @@ require_once dirname(__DIR__) . '/includes/sanidad.php';
 require_once dirname(__DIR__) . '/includes/barcode.php';
 require_once dirname(__DIR__) . '/includes/busqueda.php';
 require_once dirname(__DIR__) . '/includes/reportes.php';
+require_once dirname(__DIR__) . '/includes/direccion.php';  // consultas del área de Dirección (usa reportes.php)
 require_once dirname(__DIR__) . '/includes/charts.php';
 require_once dirname(__DIR__) . '/includes/export.php';
 require_once dirname(__DIR__) . '/includes/uploads.php';

@@ -15,16 +15,31 @@
  *  - `ventas.ncf` es UNIQUE: red de seguridad última contra cualquier duplicado.
  */
 
-/** Formatea un NCF: tipo (B01/B02) + 8 dígitos. Igual que siguienteNCF(). */
-function ncfFormatear(string $tipo, int $seq): string
+/**
+ * Dígitos de secuencia según el tipo de comprobante.
+ *
+ * El NCF preimpreso usa 8 (B0200000001, 11 caracteres) y el e-NCF usa 10
+ * (E310000000001, 13 caracteres). Formatear un e-NCF con 8 dígitos produciría
+ * un comprobante inválido que además ya habría consumido el número.
+ */
+function ncfDigitos(string $tipo): int
 {
-    return $tipo . str_pad((string) $seq, 8, '0', STR_PAD_LEFT);
+    return strtoupper(substr($tipo, 0, 1)) === 'E' ? 10 : 8;
 }
 
-/** Descompone un NCF "B0200000010" en ['tipo'=>'B02','seq'=>10]. null si no calza. */
+/** Formatea un comprobante: tipo (B01/B02/E31/E32) + su cantidad de dígitos. */
+function ncfFormatear(string $tipo, int $seq): string
+{
+    return $tipo . str_pad((string) $seq, ncfDigitos($tipo), '0', STR_PAD_LEFT);
+}
+
+/** Descompone "B0200000010" o "E310000000010" en ['tipo'=>…,'seq'=>…]. null si no calza. */
 function ncfPartes(string $ncf): ?array
 {
-    if (!preg_match('/^([A-Z]\d{2})(\d{8})$/', $ncf, $m)) return null;
+    if (!preg_match('/^([A-DF-Z]\d{2})(\d{8})$/', $ncf, $m)
+        && !preg_match('/^(E\d{2})(\d{10})$/', $ncf, $m)) {
+        return null;
+    }
     return ['tipo' => $m[1], 'seq' => (int) $m[2]];
 }
 
@@ -105,10 +120,31 @@ function ncfReservaDeTerminal(int $terminalId, string $ncf): ?array
     );
 }
 
-/** Tipo de comprobante ('consumidor'|'credito_fiscal') -> tipo de NCF (B02|B01). */
+/**
+ * Tipo de comprobante ('consumidor'|'credito_fiscal') -> secuencia a consumir.
+ *
+ *   e-CF apagado → B02 / B01   (comprobante preimpreso, como siempre)
+ *   e-CF activo  → E32 / E31   (comprobante fiscal electrónico)
+ *
+ * ESTE ES EL ÚNICO SITIO donde se decide. El POS, la facturación de un pedido en
+ * línea, la sincronización offline y las reservas por terminal pasan todas por
+ * aquí: si el interruptor se enciende a media jornada, ninguna de esas rutas
+ * puede quedarse tomando números de la serie vieja.
+ *
+ * `function_exists` porque ncf_reservas.php se carga antes que ecf.php en el
+ * arranque; en tiempo de llamada ya está disponible.
+ */
 function ncfTipoDeComprobante(string $comprobante): string
 {
-    return $comprobante === 'credito_fiscal' ? 'B01' : 'B02';
+    $electronico = function_exists('ecfActivo') && ecfActivo();
+    if ($comprobante === 'credito_fiscal') return $electronico ? 'E31' : 'B01';
+    return $electronico ? 'E32' : 'B02';
+}
+
+/** Secuencia de la nota de crédito: B04 preimpresa, E34 electrónica. */
+function ncfTipoNotaCredito(): string
+{
+    return (function_exists('ecfActivo') && ecfActivo()) ? 'E34' : 'B04';
 }
 
 /**

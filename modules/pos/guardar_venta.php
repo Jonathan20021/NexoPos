@@ -23,6 +23,9 @@ try {
         'comprobante'    => post('comprobante'),
         'metodo_pago_id' => postInt('metodo_pago_id'),
         'canal'          => post('canal_venta'),
+        // Sin dato del formulario se usa la tienda activa de la sesión: es la
+        // que el cajero está viendo en pantalla.
+        'tienda_id'      => postInt('tienda_id') ?: tienda_actual_id(),
         'uuid'           => post('uuid'),
     ], [
         'sid' => $sid, 'uid' => $uid, 'sesion' => $sesion, 'puede_muestra' => can('ventas.muestra'),

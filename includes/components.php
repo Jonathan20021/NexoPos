@@ -10,6 +10,13 @@ function nav_groups(): array
         ['Principal', [
             ['Dashboard', 'dashboard', url('modules/dashboard/index.php'), null],
         ]],
+        ['Dirección', [
+            ['Panel de Dirección', 'trending', url('modules/direccion/index.php'), 'direccion.ver'],
+            ['Año contra año', 'chart', url('modules/direccion/comparativo.php'), 'direccion.ver'],
+            ['Reportería de costos', 'coins', url('modules/direccion/costos.php'), 'direccion.ver'],
+            ['Mercancía en liquidación', 'truck', url('modules/inventario/liquidaciones.php'), 'liquidaciones.ver'],
+            ['Cargar datos históricos', 'download', url('modules/direccion/importar.php'), 'direccion.importar'],
+        ]],
         ['Ventas', [
             ['Punto de Venta', 'cart', url('modules/pos/index.php'), 'pos.ver'],
             ['Caja', 'cash', url('modules/pos/caja.php'), 'caja.ver'],
@@ -32,6 +39,7 @@ function nav_groups(): array
             ['Lotes y vencimientos', 'shield', url('modules/inventario/lotes.php'), 'sanidad.ver'],
             ['Movimientos', 'history', url('modules/inventario/movimientos.php'), 'inventario.ver'],
             ['Compras', 'truck', url('modules/inventario/compras.php'), 'compras.ver'],
+            ['Liquidación de importaciones', 'package', url('modules/inventario/liquidaciones.php'), 'liquidaciones.ver'],
             ['Proveedores', 'briefcase', url('modules/inventario/proveedores.php'), 'proveedores.ver'],
             ['Cuentas por Pagar', 'wallet', url('modules/inventario/cuentas_pagar.php'), 'cxp.ver'],
             ['Transferencias', 'transfer', url('modules/inventario/transferencias.php'), 'transferencias.ver'],
@@ -68,6 +76,7 @@ function nav_groups(): array
             ['Metas de Venta', 'trending', url('modules/finanzas/metas.php'), 'metas.ver'],
             ['Reportes DGII', 'shield', url('modules/finanzas/dgii.php'), 'dgii.ver'],
             ['IT-1 · ITBIS', 'percent', url('modules/finanzas/it1.php'), 'dgii.ver'],
+            ['Facturación Electrónica', 'receipt', url('modules/finanzas/ecf.php'), 'ecf.ver'],
         ]],
         ['Reportes', [
             ['Centro de Reportes', 'grid', url('modules/reportes/index.php'), 'reportes.ver'],
@@ -81,6 +90,7 @@ function nav_groups(): array
         ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],
+            ['Tiendas y marcas', 'tag', url('modules/admin/tiendas.php'), 'tiendas.ver'],
             ['Usuarios', 'user', url('modules/admin/usuarios.php'), 'usuarios.ver'],
             ['Roles y Permisos', 'shield', url('modules/admin/roles.php'), 'roles.ver'],
             ['Configuración', 'settings', url('modules/admin/configuracion.php'), 'configuracion.ver'],

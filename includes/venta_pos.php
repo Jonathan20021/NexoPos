@@ -36,6 +36,17 @@ function registrarVentaPOS(array $in, array $ctx): array
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
     $tasaItbis   = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
+    // Tienda (marca comercial) con la que se factura. Solo decide qué logo y qué
+    // datos se imprimen; el emisor fiscal sigue siendo la empresa.
+    // Se valida contra el catálogo: el navegador no puede imprimir la marca que
+    // le dé la gana. Si no llega ninguna, más abajo se deduce del carrito, y así
+    // los llamadores del servidor (facturar una cotización, la tienda en línea)
+    // no tienen que enterarse de que existen las tiendas.
+    $tiendaId = (int) ($in['tienda_id'] ?? 0) ?: null;
+    if ($tiendaId !== null && !array_key_exists($tiendaId, tiendas_opciones())) {
+        throw new RuntimeException('La tienda seleccionada no existe o está inactiva.');
+    }
+
     // NCF pre-asignado offline (Fase 2): el navegador tomó un número de la reserva
     // del terminal y ya lo imprimió. Se validará contra esa reserva más abajo.
     $ncfOffline  = isset($in['ncf']) && is_string($in['ncf']) ? trim($in['ncf']) : '';
@@ -53,7 +64,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     // abortar una transacción por interbloqueo o espera de bloqueo. Eso no es un
     // problema del negocio y no debe llegarle al cajero como «error»: se reintenta
     // y la venta entra. Los errores reales (stock, crédito, NCF) suben igual.
-    return txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados) {
+    $resultado = txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados, $tiendaId) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -64,6 +75,7 @@ function registrarVentaPOS(array $in, array $ctx): array
 
         // 1) Recalcular en el servidor (no se confía en el cliente).
         $subtotal = 0.0; $itbisBruto = 0.0; $costoTotal = 0.0; $lineas = [];
+        $tiendasEnCarrito = [];
         foreach ($cart as $item) {
             $pid = (int) ($item['id'] ?? 0);
             $cant = (float) ($item['cant'] ?? 0);
@@ -72,8 +84,17 @@ function registrarVentaPOS(array $in, array $ctx): array
             if ($esMuestra && !$puedeMuestra) {
                 throw new RuntimeException('No tienes permiso para facturar muestras (RD$0.00).');
             }
-            $p = qOne("SELECT id, nombre, precio_venta, precio_compra, itbis_aplica, tipo, categoria_id, marca_id FROM productos WHERE id = ? AND activo = 1", [$pid]);
+            $p = qOne(
+                "SELECT p.id, p.nombre, p.codigo, p.precio_venta, p.precio_compra, p.itbis_aplica, p.tipo,
+                        p.categoria_id, p.marca_id, p.tienda_id,
+                        p.ecf_indicador_facturacion, p.ecf_impuesto_adicional, u.ecf_codigo AS ecf_unidad
+                   FROM productos p
+                   LEFT JOIN unidades u ON u.id = p.unidad_id
+                  WHERE p.id = ? AND p.activo = 1",
+                [$pid]
+            );
             if (!$p) throw new RuntimeException('Producto no disponible.');
+            if (!empty($p['tienda_id'])) $tiendasEnCarrito[(int) $p['tienda_id']] = $p['nombre'];
             if ($p['tipo'] === 'producto') {
                 $stock = stockActual($pid, $sid);
                 if ($cant > $stock) throw new RuntimeException('Stock insuficiente de «' . $p['nombre'] . '» (disponible: ' . qty($stock) . ').');
@@ -104,9 +125,42 @@ function registrarVentaPOS(array $in, array $ctx): array
                 'pid' => $pid, 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
                 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis,
                 'es_muestra' => $esMuestra ? 1 : 0, 'precio_original' => $esMuestra ? $precioReal : 0.0,
+                // Datos fiscales CONGELADOS. Si mañana el producto cambia de tasa
+                // o de unidad, el comprobante ya emitido debe seguir declarando lo
+                // que se declaró ese día; derivarlo por JOIN reescribiría el pasado.
+                'ecf_indicador' => $p['ecf_indicador_facturacion'] !== null
+                    ? (int) $p['ecf_indicador_facturacion']
+                    : ($p['itbis_aplica'] ? ecfIndicadorDesdeTasa($tasaItbis) : 4),
+                'ecf_unidad'    => $p['ecf_unidad'] !== null ? (int) $p['ecf_unidad'] : 43,
+                'ecf_bien'      => ecfBienServicioDesdeProducto($p['tipo']),
+                'ecf_impuesto'  => $p['ecf_impuesto_adicional'] ?: null,
             ];
         }
         if (!$lineas) throw new RuntimeException('No hay líneas válidas en la venta.');
+
+        // 1.b) Coherencia de la marca.
+        //
+        // Una factura lleva UN logo. Si el carrito trae artículos de dos marcas
+        // distintas, no hay respuesta correcta: se corta y se dice cuáles son,
+        // en vez de imprimir el logo equivocado sobre la mercancía de otro.
+        // Los artículos sin marca acompañan a cualquiera.
+        $tienda = $tiendaId;
+        if (count($tiendasEnCarrito) > 1) {
+            $nombres = array_map(fn($id) => tiendas_opciones()[$id] ?? ('#' . $id), array_keys($tiendasEnCarrito));
+            throw new RuntimeException('El carrito mezcla artículos de ' . implode(' y ', $nombres)
+                . '. Una factura solo puede llevar el logo de una tienda: sepáralas en dos ventas.');
+        }
+        if ($tiendasEnCarrito) {
+            $delCarrito = (int) array_key_first($tiendasEnCarrito);
+            if ($tienda === null) {
+                // Nadie eligió marca (cotización facturada, pedido en línea):
+                // se toma la del propio artículo.
+                $tienda = $delCarrito;
+            } elseif ($tienda !== $delCarrito) {
+                throw new RuntimeException('«' . $tiendasEnCarrito[$delCarrito] . '» pertenece a otra tienda. '
+                    . 'Cambia la tienda activa del punto de venta o quítalo del carrito.');
+            }
+        }
 
         $descuento = min($descuento, $subtotal);
         $factor    = $subtotal > 0 ? ($subtotal - $descuento) / $subtotal : 1;
@@ -121,15 +175,33 @@ function registrarVentaPOS(array $in, array $ctx): array
         // 2) NCF. Online: lo asigna el servidor desde el maestro (siguienteNCF).
         //    Offline (Fase 2): el navegador ya lo tomó de la reserva del terminal y
         //    lo imprimió; aquí se VALIDA que pertenezca a esa reserva y no esté usado.
-        $tipoNcf = $comprobante === 'credito_fiscal' ? 'B01' : 'B02';
+        //
+        //    Con la facturación electrónica encendida la serie cambia sola a
+        //    E31/E32: el número se toma DENTRO de esta transacción, igual que el
+        //    preimpreso, para que el comprobante impreso y el que se declara a la
+        //    DGII sean siempre el mismo.
+        $tipoNcf = ncfTipoDeComprobante($comprobante);
+        $ncfDeSerieAnterior = false;
         if ($ncfOffline !== '') {
             if ($terminalId <= 0) {
                 throw new RuntimeException('Falta identificar el terminal para validar el NCF offline.');
             }
             $p = ncfPartes($ncfOffline);
-            if (!$p || $p['tipo'] !== $tipoNcf) {
+
+            // El terminal pudo tomar el número ANTES de que se encendiera la
+            // facturación electrónica. Ese comprobante ya está impreso y en manos
+            // del cliente: rechazarlo aquí no lo des-imprime, solo hace perder la
+            // venta. Se acepta la serie contraria equivalente y la venta entra
+            // como preimpresa (no se le genera e-CF, porque su número no es un
+            // e-NCF). Queda avisado en las notas para que se revise al cuadrar.
+            $serieContraria = $comprobante === 'credito_fiscal'
+                ? ($tipoNcf === 'E31' ? 'B01' : 'E31')
+                : ($tipoNcf === 'E32' ? 'B02' : 'E32');
+
+            if (!$p || !in_array($p['tipo'], [$tipoNcf, $serieContraria], true)) {
                 throw new RuntimeException('El NCF offline no corresponde al tipo de comprobante.');
             }
+            $ncfDeSerieAnterior = $p['tipo'] !== $tipoNcf;
             if (!ncfReservaDeTerminal($terminalId, $ncfOffline)) {
                 throw new RuntimeException('El NCF offline no pertenece a una reserva activa de este terminal.');
             }
@@ -151,10 +223,18 @@ function registrarVentaPOS(array $in, array $ctx): array
             // exige caja antes de vender, pero facturar una cotización desde la
             // oficina es normal y no tiene por qué haber un cajón abierto.
             'numero' => $numero, 'sucursal_id' => $sid, 'caja_sesion_id' => $sesion ? (int) $sesion['id'] : null,
+            // Congelada: reimprimir esta factura mañana tiene que dar el mismo
+            // logo aunque el producto cambie de marca.
+            'tienda_id' => $tienda,
             'cliente_id' => $clienteId, 'usuario_id' => $uid, 'fecha' => $fecha,
             'subtotal' => $subtotal, 'descuento' => $descuento, 'itbis' => $itbisTotal, 'total' => $total,
             'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf, 'estado' => 'completada',
             'canal_venta' => $canal, 'uuid' => $uuid,
+            // Vacío cuando el comprobante es preimpreso; '31'/'32' cuando es electrónico.
+            'ecf_tipo' => ecfENCFValido($ncf) ? substr($ncf, 1, 2) : null,
+            'notas' => $ncfDeSerieAnterior
+                ? 'Comprobante de la serie anterior, reservado por el terminal antes del corte a facturación electrónica.'
+                : null,
         ]);
 
         // 4) Detalles, en el orden en que el cajero armó el carrito (así sale el ticket).
@@ -165,6 +245,10 @@ function registrarVentaPOS(array $in, array $ctx): array
                 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'costo_unitario' => $l['costo'],
                 'descuento' => 0, 'itbis' => $itbisLinea, 'subtotal' => $l['base'],
                 'es_muestra' => $l['es_muestra'], 'precio_original' => $l['precio_original'],
+                'ecf_indicador_facturacion' => $l['ecf_indicador'],
+                'ecf_unidad_medida'         => $l['ecf_unidad'],
+                'ecf_bien_servicio'         => $l['ecf_bien'],
+                'ecf_impuesto_adicional'    => $l['ecf_impuesto'],
             ]);
         }
 
@@ -205,4 +289,29 @@ function registrarVentaPOS(array $in, array $ctx): array
 
         return ['id' => $ventaId, 'numero' => $numero, 'ncf' => $ncf, 'total' => $total, 'duplicada' => false];
     });
+
+    // ------------------------------------------------------------------
+    //  Comprobante Fiscal Electrónico
+    // ------------------------------------------------------------------
+    //  FUERA de la transacción, y a propósito.
+    //
+    //  Aquí ya hay una venta cerrada: la mercancía salió, el cliente pagó, el
+    //  stock bajó y el e-NCF se imprimió. Si esto viviera dentro de la
+    //  transacción, un proveedor caído o una red lenta desharían todo eso y el
+    //  cajero vería un error por algo que no tiene nada que ver con la venta.
+    //
+    //  Lo que falta es TRANSMITIR, y para eso está la cola con reintentos.
+    //  ecfEmitirSeguro() nunca lanza: lo peor que puede pasar es que el
+    //  comprobante quede pendiente y se avise.
+    if (!$resultado['duplicada'] && ecfActivo() && ecfENCFValido((string) ($resultado['ncf'] ?? ''))) {
+        $emision = ecfEmitirSeguro('venta', (int) $resultado['id']);
+        $resultado['ecf'] = [
+            'ok'       => $emision['ok'],
+            'encf'     => $emision['encf'],
+            'track_id' => $emision['track_id'],
+            'mensaje'  => $emision['mensaje'],
+        ];
+    }
+
+    return $resultado;
 }

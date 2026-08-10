@@ -79,8 +79,15 @@ function stockActual(int $productoId, int $sucursalId): float
 }
 
 /**
- * Devuelve y consume el siguiente NCF de la secuencia indicada (B01/B02). Null si no hay.
- * Formato resultante: B02 + 8 dígitos => B0200000001
+ * Devuelve y consume el siguiente comprobante de la secuencia indicada.
+ * Null si no hay secuencia activa, vigente y con números disponibles.
+ *
+ * Sirve para las dos series y el formato lo decide ncfFormatear() según el tipo:
+ *   B02 + 8 dígitos  => B0200000001   (preimpreso)
+ *   E32 + 10 dígitos => E320000000001 (electrónico)
+ *
+ * El SELECT ... FOR UPDATE es lo que impide que dos cajas tomen el mismo número;
+ * hay que llamarla dentro de una transacción.
  */
 function siguienteNCF(string $tipo): ?string
 {
@@ -89,7 +96,7 @@ function siguienteNCF(string $tipo): ?string
     $sec = (int) $row['secuencia_actual'];
     if ($sec > (int) $row['secuencia_hasta']) return null;
     if (!empty($row['vencimiento']) && $row['vencimiento'] < date('Y-m-d')) return null;
-    $ncf = $row['tipo'] . str_pad((string) $sec, 8, '0', STR_PAD_LEFT);
+    $ncf = ncfFormatear($row['tipo'], $sec);
     q("UPDATE ncf_secuencias SET secuencia_actual = secuencia_actual + 1 WHERE id = ?", [$row['id']]);
     return $ncf;
 }

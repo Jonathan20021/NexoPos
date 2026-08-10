@@ -10,6 +10,10 @@ notif_scan_si_toca();
 // Mismo enganche para el motor de marketing: despacha campañas programadas y
 // automatizaciones sin necesidad de cron. Solo entra si hay trabajo pendiente.
 mkt_tick_si_toca();
+// Y para la cola de comprobantes electrónicos: reenvía los que no pudieron
+// transmitirse y consulta el estado de los que están en proceso. Red de
+// seguridad por si no hay cron; ver modules/finanzas/ecf_cron.php.
+ecfTickSiToca();
 
 $notifs     = notif_listar(['limit' => 12]);
 $noLeidas   = notif_no_leidas();

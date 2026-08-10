@@ -326,6 +326,18 @@ SELECT COALESCE(p.nombre, vd.descripcion) AS producto, SUM(vd.cantidad)
 Agrupar por una **columna** (`GROUP BY v.sucursal_id` con `JOIN sucursales su ON su.id =
 v.sucursal_id`) sí funciona: MySQL 8 deduce la dependencia a través de la igualdad del JOIN.
 
+**Y al revés: MariaDB rechaza el alias de una función de grupo dentro de `HAVING`.**
+MySQL lo acepta; MariaDB 10.4 responde `1247 Reference 'costo' not supported (reference to
+group function)`. Repite la expresión:
+
+```sql
+-- ROMPE en MariaDB
+SELECT SUM(vd.cantidad * vd.costo_unitario) AS costo ... HAVING costo > ingresos
+-- CORRECTO en ambos
+... HAVING SUM(vd.cantidad * vd.costo_unitario) > SUM(vd.subtotal - vd.descuento)
+```
+En `ORDER BY` el alias sí vale en los dos motores; el problema es solo `HAVING`.
+
 **No pongas `ONLY_FULL_GROUP_BY` en el `sql_mode` local para «igualar» los entornos.**
 Se probó: MariaDB 10.4 no hace esa deducción por JOIN y rechaza consultas que MySQL 8 acepta,
 así que genera decenas de falsas alarmas. La forma de verificar es ejecutar las páginas
@@ -361,6 +373,32 @@ contra una copia de la base de producción (o contra la de producción, en solo 
   de venta puede consumir dos lotes y eso no cabe en una columna.
 - Comprueba `san_disponible()` antes de tocar sus tablas: el código puede desplegarse antes
   que la migración.
+
+## Tiendas, costeo de importaciones y Dirección — ver `docs/TIENDAS-Y-DIRECCION.md`
+
+**Tiendas** (`includes/tiendas.php`) — la marca con la que se factura, no un local:
+- `tiendas_hay()` es el **interruptor**: sin ninguna tienda creada el sistema se comporta
+  igual que antes de la migración. Compruébalo antes de exigir marca en cualquier pantalla.
+- El **emisor fiscal es la empresa**: `tienda_marca()` devuelve siempre el RNC de la empresa.
+  La tienda aporta logo, nombre comercial, dirección impresa y política de devolución.
+- `ventas.tienda_id` está **congelado**. Nunca deduzcas la marca de una factura emitida a
+  partir del producto: reimprimirla mañana daría otro logo.
+- Una factura lleva **un solo logo**: un carrito con artículos de dos marcas se rechaza.
+- Para imprimir con marca: `pdf_brand_header($titulo, $sub, $marca)`. Sin el tercer
+  parámetro se comporta como siempre.
+
+**Liquidaciones** (`includes/liquidaciones.php`) — el costo real puesto en almacén:
+- Es un documento de **costo, no de dinero**: no registra la deuda al proveedor ni el pago
+  de los gastos. Duplicarlo inflaría los gastos del mes.
+- El **ITBIS de aduana no es costo** (`al_costo = 0`): se compensa con el ITBIS de la venta.
+- El reparto cuadra al centavo: el resto se le suma a la línea de mayor base.
+- Aplicar recorre las líneas **en orden de `producto_id`** y guarda `costo_anterior`, que es
+  lo único que permite anular sin dejar el margen torcido para siempre.
+
+**Dirección** (`includes/direccion.php`) — usa el mismo criterio contable que los reportes.
+`dir_scope()` combina sucursal + tienda. La carga histórica **no mueve stock, no consume NCF
+y no genera movimientos de caja**, y todo lo cargado lleva su `importacion_id` para poder
+revertir el lote entero.
 
 ## Concurrencia (OBLIGATORIO si tu página escribe) — ver `docs/CONCURRENCIA.md`
 Varias sucursales operan a la vez. Estas reglas no son opcionales:

@@ -129,8 +129,15 @@ function sembrar(): void
         $asignar($rSuper, $todos);
         $asignar($rAdmin, $todos);
         // «seguridad» queda fuera del Gerente: cambiar la política de verificación
-        // en dos pasos o eximir cuentas es una decisión de administración.
-        $asignar($rGerente, fn($c, $m) => !in_array($m, ['roles', 'usuarios', 'configuracion', 'auditoria', 'seguridad', 'rrhh_nomina']) || str_ends_with($c, '.ver'));
+        // en dos pasos o eximir cuentas es una decisión de administración. Igual
+        // «tiendas» (la identidad con la que se factura) y «direccion.importar»
+        // (sube y revierte un año entero de datos); del costeo de importaciones
+        // prepara el borrador, pero aplicar mueve inventario y reescribe el costo
+        // de venta del catálogo, así que se concede a mano desde Roles.
+        $soloVerGerente = ['roles', 'usuarios', 'configuracion', 'auditoria', 'seguridad', 'rrhh_nomina', 'tiendas', 'direccion'];
+        $vetadosGerente = ['liquidaciones.aplicar', 'liquidaciones.anular'];
+        $asignar($rGerente, fn($c, $m) => !in_array($c, $vetadosGerente, true)
+            && (!in_array($m, $soloVerGerente, true) || str_ends_with($c, '.ver')));
         $ventasMods = ['pos', 'caja', 'ventas', 'devoluciones', 'clientes'];
         // ventas.muestra queda fuera del Cajero por defecto: entregar producto a
         // RD$0.00 es sensible. Se concede desde Roles y Permisos si el cliente lo decide.

@@ -50,6 +50,19 @@ fiscales **NCF (B01/B02)** y **nómina dominicana** (TSS: AFP/SFS + ISR por esca
   clics, bajas y ventas atribuidas), **consola de envío por WhatsApp** (wa.me, un clic por cliente)
   y **automatizaciones**: bienvenida, cumpleaños, post-venta, recompra, cliente dormido y aviso de
   saldo. Ver [`docs/MARKETING.md`](docs/MARKETING.md).
+- **Tiendas (marcas comerciales)** — la empresa distribuye varias marcas y cada factura sale con
+  **el logo, los colores y los datos de su tienda** (ticket térmico de 80 mm y factura A4 en PDF),
+  con código de barras del número, desglose de impuestos y política de devoluciones. El emisor
+  fiscal sigue siendo la empresa: un solo RNC y una sola secuencia de NCF.
+  Ver [`docs/TIENDAS-Y-DIRECCION.md`](docs/TIENDAS-Y-DIRECCION.md).
+- **Liquidación de importaciones** — el **costo real puesto en almacén**: FOB + flete + seguro +
+  arancel + aduana repartidos entre los artículos del embarque (por valor, cantidad, peso o
+  volumen). Estados borrador → en tránsito → aplicada, entrada de mercancía al costo real o
+  recosteo de una compra ya recibida, y anulación que devuelve stock y costos.
+- **Área de Dirección (CEO)** — panel con **año contra año y mes contra mes**, matriz de doce
+  meses por tienda/sucursal/categoría, **reportería de costos** (costo de lo vendido, margen real,
+  inventario a costo, recargo de importación y artículos que se venden bajo costo) y **carga
+  histórica** de clientes y ventas desde CSV o Excel, con vista previa y reversión por lote.
 - **Administración** — sucursales, usuarios (con asignación de sucursal y **% de comisión**),
   **roles y permisos por acción**, configuración de empresa/NCF/métodos de pago, **subida de logo**,
   **auditoría** (logs) y **respaldo de la base de datos** descargable (.sql).

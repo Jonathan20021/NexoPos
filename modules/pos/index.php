@@ -24,11 +24,22 @@ if (!$sesion) {
     return;
 }
 
+// ---- Tienda (marca comercial) con la que se está facturando ----
+//
+// El catálogo se acota a la marca activa MÁS los artículos sin marca: esos se
+// venden desde cualquiera. Mezclar dos marcas en una misma factura no tiene
+// sentido — el papel solo puede llevar un logo.
+$tiendas   = tiendas_activas();
+$tienda    = tienda_actual();
+$tiendaId  = $tienda ? (int) $tienda['id'] : null;
+$marcaPos  = tienda_marca($tiendaId);
+
+$filtroTienda = $tiendaId ? "AND (p.tienda_id = " . $tiendaId . " OR p.tienda_id IS NULL)" : '';
 $productos = qAll(
     "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
      FROM productos p LEFT JOIN inventario_stock s ON s.producto_id=p.id AND s.sucursal_id=?
      LEFT JOIN categorias c ON c.id=p.categoria_id
-     WHERE p.activo=1 AND p.tipo='producto' ORDER BY p.nombre", [$sid]
+     WHERE p.activo=1 AND p.tipo='producto' $filtroTienda ORDER BY p.nombre", [$sid]
 );
 $prodJs = array_map(function ($p) {
     // El precio mostrado ya trae la promoción vigente (el servidor la recalcula al vender).
@@ -67,7 +78,10 @@ if ($miMeta) {
     <?php
 }
 
-$categorias = qAll("SELECT DISTINCT c.id, c.nombre, c.color FROM categorias c JOIN productos p ON p.categoria_id=c.id WHERE p.activo=1 ORDER BY c.nombre");
+$categorias = qAll(
+    "SELECT DISTINCT c.id, c.nombre, c.color FROM categorias c JOIN productos p ON p.categoria_id=c.id
+      WHERE p.activo=1 $filtroTienda ORDER BY c.nombre"
+);
 $metodos = qAll("SELECT id, nombre, afecta_caja FROM metodos_pago WHERE activo=1 ORDER BY id");
 $clientes = qAll("SELECT id, nombre FROM clientes WHERE activo=1 ORDER BY nombre");
 $efectivoId = (int) (qVal("SELECT id FROM metodos_pago WHERE afecta_caja=1 AND activo=1 ORDER BY id LIMIT 1") ?: 1);
@@ -75,6 +89,43 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
 ?>
 
 <div x-data="pos()" class="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start pb-24 lg:pb-0">
+
+  <?php if ($tienda): ?>
+    <!-- Marca con la que se está facturando.
+         Se muestra siempre, aunque haya una sola tienda: el cajero tiene que
+         poder ver de un golpe qué logo va a salir impreso antes de cobrar. -->
+    <div class="lg:col-span-3 card p-3 flex items-center gap-3 flex-wrap"
+         style="border-left: 4px solid <?= e($marcaPos['color']) ?>">
+      <?php $logoPos = tienda_logo_url($marcaPos); ?>
+      <?php if ($logoPos): ?>
+        <img src="<?= e($logoPos) ?>" alt="Logo de <?= e($marcaPos['nombre']) ?>"
+             class="h-9 max-w-[120px] object-contain shrink-0">
+      <?php else: ?>
+        <span class="w-9 h-9 rounded-lg text-white text-sm font-bold flex items-center justify-center shrink-0"
+              style="background: <?= e($marcaPos['color']) ?>"><?= e(tienda_iniciales($marcaPos['nombre'])) ?></span>
+      <?php endif; ?>
+      <div class="min-w-0 flex-1">
+        <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Facturando como</p>
+        <p class="font-bold text-slate-800 leading-tight truncate"><?= e($marcaPos['nombre']) ?></p>
+        <?php if ($marcaPos['encabezado']): ?>
+          <p class="text-xs text-slate-400 truncate"><?= e($marcaPos['encabezado']) ?></p>
+        <?php endif; ?>
+      </div>
+      <?php if (count($tiendas) > 1): ?>
+        <form method="post" action="<?= e(url('modules/pos/cambiar_tienda.php')) ?>" class="flex items-center gap-2 shrink-0">
+          <?= csrf_field() ?>
+          <input type="hidden" name="redir" value="<?= e(url('modules/pos/index.php')) ?>">
+          <label for="pos_tienda" class="text-xs font-semibold text-slate-500 hidden sm:block">Cambiar tienda</label>
+          <select id="pos_tienda" name="tienda_id" onchange="this.form.submit()" class="select cursor-pointer py-1.5 text-sm">
+            <?php foreach ($tiendas as $t): ?>
+              <option value="<?= (int) $t['id'] ?>" <?= $tiendaId === (int) $t['id'] ? 'selected' : '' ?>><?= e($t['nombre']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <noscript><button class="btn btn-soft btn-sm">Cambiar</button></noscript>
+        </form>
+      <?php endif; ?>
+    </div>
+  <?php endif; ?>
 
   <!-- Estado del modo offline (conexión / cola de sincronización) -->
   <div class="lg:col-span-3 flex flex-wrap items-center gap-2" x-show="!online || pendientes>0 || errores>0" x-cloak>
@@ -302,7 +353,10 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
         <p class="text-sm text-slate-500 mt-1" x-show="prov && prov.ncf">Se registró sin conexión con su <strong>comprobante fiscal (NCF)</strong>. Se enviará automáticamente al volver el internet.</p>
         <p class="text-sm text-slate-500 mt-1" x-show="prov && !prov.ncf">Se registró sin conexión. Se enviará automáticamente y su comprobante fiscal (NCF) se asignará al sincronizar.</p>
         <div class="text-left mt-4 border border-dashed border-slate-300 rounded-xl p-4 text-sm">
-          <p class="text-center font-bold text-slate-700"><?= e($GLOBALS['empresa']['nombre'] ?? APP_NAME) ?></p>
+          <p class="text-center font-bold text-slate-700"><?= e($marcaPos['nombre']) ?></p>
+          <?php if ($marcaPos['encabezado']): ?>
+            <p class="text-center text-[11px] text-slate-400"><?= e($marcaPos['encabezado']) ?></p>
+          <?php endif; ?>
           <p class="text-center text-[11px] uppercase tracking-wide font-bold mt-0.5 text-emerald-600" x-show="prov && prov.ncf">NCF <span x-text="prov ? prov.ncf : ''"></span></p>
           <p class="text-center text-[11px] uppercase tracking-wide text-amber-600 font-bold mt-0.5" x-show="prov && !prov.ncf">Ticket provisional · sin valor fiscal</p>
           <p class="text-center text-xs text-slate-400 mb-3" x-text="prov ? prov.fecha.toLocaleString('es-DO') : ''"></p>
@@ -359,6 +413,7 @@ function pos() {
     pay: false, comprobante: 'consumidor', cliente_id: 1,
     metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
     canal_venta: 'Mostrador',
+    tienda_id: <?= json_encode($tiendaId) ?>,
     tasa: <?= $tasa ?>,
     puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,
     // Estado del modo offline
@@ -405,6 +460,9 @@ function pos() {
         comprobante: this.comprobante,
         metodo_pago_id: this.metodo_pago_id,
         canal: this.canal_venta,
+        // Marca con la que se está facturando. El servidor la revalida: el
+        // navegador no puede imprimir un logo que no le corresponde.
+        tienda_id: this.tienda_id,
         uuid: PosOffline.uuid(),
         fecha: this._ahora(),
         total: this.total,   // solo informativo (para la lista de errores); el servidor recalcula

@@ -35,10 +35,21 @@ if (!is_array($in) || empty($in['device_token'])) {
     term_salir(400, ['ok' => false, 'error' => 'Falta el identificador del terminal.']);
 }
 
-// Cuántos NCF pedir por tipo (el navegador manda cuántos le faltan para el objetivo).
+// Cuántos comprobantes pedir por tipo (el navegador manda cuántos le faltan).
+//
+// «B02» y «B01» son NOMBRES DE RANURA en el protocolo con el navegador, no la
+// serie real: identifican «consumidor final» y «crédito fiscal». Con la
+// facturación electrónica encendida, esas mismas ranuras se llenan con números
+// E32 y E31. El navegador nunca interpreta la cadena —solo la guarda y la
+// devuelve al sincronizar—, así que no hay que tocar el front para el corte.
 $necesita = is_array($in['need'] ?? null) ? $in['need'] : [];
 $pedidoB02 = max(0, min(300, (int) ($necesita['B02'] ?? 0)));
 $pedidoB01 = max(0, min(300, (int) ($necesita['B01'] ?? 0)));
+
+$serie = [
+    'B02' => ncfTipoDeComprobante('consumidor'),      // B02 o E32
+    'B01' => ncfTipoDeComprobante('credito_fiscal'),  // B01 o E31
+];
 
 try {
     $term = terminalUpsert((string) $in['device_token'], $sid, $in['nombre'] ?? null);
@@ -46,8 +57,8 @@ try {
 
     $ncfs = ['B02' => [], 'B01' => []];
     $venc = ['B02' => null, 'B01' => null];
-    if ($pedidoB02 > 0) { $r = reservarNCF($tid, 'B02', $pedidoB02); $ncfs['B02'] = $r['ncfs']; $venc['B02'] = $r['vencimiento']; }
-    if ($pedidoB01 > 0) { $r = reservarNCF($tid, 'B01', $pedidoB01); $ncfs['B01'] = $r['ncfs']; $venc['B01'] = $r['vencimiento']; }
+    if ($pedidoB02 > 0) { $r = reservarNCF($tid, $serie['B02'], $pedidoB02); $ncfs['B02'] = $r['ncfs']; $venc['B02'] = $r['vencimiento']; }
+    if ($pedidoB01 > 0) { $r = reservarNCF($tid, $serie['B01'], $pedidoB01); $ncfs['B01'] = $r['ncfs']; $venc['B01'] = $r['vencimiento']; }
 
     term_salir(200, [
         'ok' => true,
@@ -55,6 +66,8 @@ try {
         'nombre' => $term['nombre'],
         'ncfs' => $ncfs,
         'vencimiento' => $venc,
+        'serie' => $serie,          // para que la pantalla rotule E32/E31 cuando toque
+        'electronico' => ecfActivo(),
     ]);
 } catch (Throwable $e) {
     term_salir(422, ['ok' => false, 'error' => $e->getMessage()]);

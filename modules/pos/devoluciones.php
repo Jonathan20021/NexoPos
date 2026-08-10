@@ -64,13 +64,15 @@ if (isPost()) {
                 $numero = nextNumero('devoluciones', 'numero', 'DEV');
                 // Nota de crédito (B04): solo si la venta llevaba NCF fiscal. Referencia
                 // el NCF original y baja el ITBIS facturado en el 607 / IT-1.
-                $b04 = null; $b04Faltante = false;
+                $b04 = null; $b04Faltante = false; $tipoNC = ncfTipoNotaCredito();
                 if (!empty($v['ncf'])) {
-                    $b04 = siguienteNCF('B04');
-                    if (!$b04) $b04Faltante = true; // sin secuencia B04 activa: no bloquea, pero avisa
+                    $b04 = siguienteNCF($tipoNC);
+                    if (!$b04) $b04Faltante = true; // sin secuencia activa: no bloquea, pero avisa
                 }
                 $devId = dbInsert('devoluciones', ['numero' => $numero, 'venta_id' => $ventaId, 'sucursal_id' => $v['sucursal_id'], 'usuario_id' => current_user()['id'], 'motivo' => $motivo, 'ncf' => $b04, 'ncf_modificado' => $b04 ? $v['ncf'] : null, 'subtotal' => $subtotalDev, 'itbis' => $itbisDev, 'total' => $totalDev]);
-                if ($b04Faltante) flash('warning', 'La devolución se registró, pero no hay una secuencia NCF B04 activa para emitir la nota de crédito. Configúrala en Configuración → Comprobantes.');
+                if ($b04Faltante) flash('warning', 'La devolución se registró, pero no hay una secuencia ' . $tipoNC
+                    . ' activa para emitir la nota de crédito. Configúrala en '
+                    . ($tipoNC === 'E34' ? 'Finanzas → Facturación Electrónica → Secuencias.' : 'Configuración → Comprobantes.'));
                 foreach ($lineas as $l) {
                     dbInsert('devolucion_detalles', ['devolucion_id' => $devId, 'venta_detalle_id' => $l['vdid'], 'producto_id' => $l['pid'], 'descripcion' => $l['desc'], 'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'subtotal' => $l['sub']]);
                     // La mercancia devuelta vuelve A SU LOTE, el mismo del que
@@ -124,8 +126,20 @@ if (isPost()) {
                 return ['id' => $devId, 'ncf' => $b04];
             });
             $devNcf = $devId['ncf'] ?? null; $devId = $devId['id'];
+
+            // Nota de Crédito Electrónica (tipo 34), FUERA de la transacción: la
+            // mercancía ya volvió al estante y el dinero ya se reembolsó; que el
+            // proveedor esté caído no puede deshacer nada de eso.
+            $avisoEcf = '';
+            if (ecfActivo() && ecfENCFValido((string) $devNcf)) {
+                $emision = ecfEmitirSeguro('devolucion', (int) $devId);
+                if (!$emision['ok']) $avisoEcf = ' ' . $emision['mensaje'];
+            }
+
             audit('devoluciones', 'crear', 'Devolución registrada' . ($devNcf ? " (NC $devNcf)" : ''), ['tabla' => 'devoluciones', 'registro_id' => $devId]);
-            flash('success', 'Devolución registrada y stock actualizado.' . ($devNcf ? ' Nota de crédito ' . $devNcf . ' emitida.' : ''));
+            flash($avisoEcf ? 'warning' : 'success',
+                  'Devolución registrada y stock actualizado.'
+                  . ($devNcf ? ' Nota de crédito ' . $devNcf . ' emitida.' : '') . $avisoEcf);
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
