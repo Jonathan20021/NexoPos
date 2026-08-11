@@ -44,6 +44,25 @@ function ncfPartes(string $ncf): ?array
 }
 
 /**
+ * ¿Es un comprobante que la DGII pueda reconocer como emitido?
+ *
+ * Tener la forma correcta no basta: **la secuencia cero no existe en ninguna
+ * autorización**. Un `B0200000000` sale de un rango mal configurado que arrancó
+ * en 0, y aunque llegue a imprimirse no es un comprobante fiscal: es un número
+ * que la DGII nunca entregó.
+ *
+ * Importa al anular. El 608 reporta los comprobantes emitidos que se dejaron
+ * sin efecto; meter ahí un número inexistente le entrega a la DGII algo que no
+ * puede casar con nada y ensucia la declaración. La venta se anula igual —el
+ * dinero y el inventario se revierten—, pero al 608 no sube.
+ */
+function ncfEsReportable(string $ncf): bool
+{
+    $p = ncfPartes($ncf);
+    return $p !== null && $p['seq'] > 0;
+}
+
+/**
  * Registra/actualiza un terminal por su token de dispositivo (generado en el
  * navegador y guardado en localStorage). Devuelve la fila del terminal.
  */
