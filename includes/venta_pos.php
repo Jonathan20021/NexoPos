@@ -121,7 +121,23 @@ function registrarVentaPOS(array $in, array $ctx): array
                 $precio = round((float) $item['precio'], 2);
             }
             $base   = round($precio * $cant, 2);
-            $itbis  = ($esMuestra || !$p['itbis_aplica']) ? 0.0 : round($base * $tasaItbis / 100, 2);
+
+            // Régimen especial: el EXENTO ES EL COMPRADOR, no el producto.
+            //
+            // Zonas francas, misiones diplomáticas e instituciones sin fines de
+            // lucro no pagan ITBIS por lo que compran, sea lo que sea. Así que
+            // en este comprobante ninguna línea lo lleva aunque el artículo
+            // normalmente tribute — y por eso la exención no puede deducirse del
+            // catálogo, tiene que venir del tipo de comprobante.
+            //
+            // También decide el comprobante electrónico: con las líneas
+            // gravadas, el proveedor arma un `Totales` con MontoGravadoTotal y
+            // el esquema de la DGII rechaza el tipo 44, que solo admite exento.
+            $exentoPorRegimen = $comprobante === 'regimen_especial';
+
+            $itbis  = ($esMuestra || $exentoPorRegimen || !$p['itbis_aplica'])
+                ? 0.0
+                : round($base * $tasaItbis / 100, 2);
             $subtotal   += $base;
             $itbisBruto += $itbis;
             $costoTotal += (float) $p['precio_compra'] * $cant;
@@ -145,9 +161,13 @@ function registrarVentaPOS(array $in, array $ctx): array
                 // Datos fiscales CONGELADOS. Si mañana el producto cambia de tasa
                 // o de unidad, el comprobante ya emitido debe seguir declarando lo
                 // que se declaró ese día; derivarlo por JOIN reescribiría el pasado.
-                'ecf_indicador' => $p['ecf_indicador_facturacion'] !== null
-                    ? (int) $p['ecf_indicador_facturacion']
-                    : ($p['itbis_aplica'] ? ecfIndicadorDesdeTasa($tasaItbis) : 4),
+                // 4 = exento (Tabla 1). En un régimen especial manda el
+                // comprobante por encima del indicador del producto.
+                'ecf_indicador' => $exentoPorRegimen
+                    ? 4
+                    : ($p['ecf_indicador_facturacion'] !== null
+                        ? (int) $p['ecf_indicador_facturacion']
+                        : ($p['itbis_aplica'] ? ecfIndicadorDesdeTasa($tasaItbis) : 4)),
                 'ecf_unidad'    => $p['ecf_unidad'] !== null ? (int) $p['ecf_unidad'] : 43,
                 'ecf_bien'      => ecfBienServicioDesdeProducto($p['tipo']),
                 'ecf_impuesto'  => $p['ecf_impuesto_adicional'] ?: null,

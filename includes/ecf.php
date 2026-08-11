@@ -307,7 +307,9 @@ function ecfDocumentoDeVenta(int $ventaId, ?string $encf = null): array
         'FechaHasta'             => '',
         'FechaEmision'           => ecfFecha($venta['fecha']),
     ];
-    if ($tipo === '31' || $tipo === '33') {
+    // Los tipos que declaran la vigencia de la secuencia autorizada. El 32 no
+    // la lleva; los demás sí, y el proveedor la exige (código 3002 si falta).
+    if (in_array($tipo, ['31', '33', '44', '45'], true)) {
         $idoc['FechaVencimientoSecuencia'] = ecfFecha(ecfVencimientoSecuencia($tipo));
     }
     if ($tipoPago === 2) {
@@ -1039,6 +1041,37 @@ function ecfQrDeVenta(int $ventaId): ?string
 {
     $id = qVal("SELECT id FROM ecf_documentos WHERE origen = 'venta' AND origen_id = ?", [$ventaId]);
     return $id ? ecfQrDataUri((int) $id) : null;
+}
+
+/**
+ * Corta la transmisión de un e-CF que TODAVÍA no llegó a aceptarse.
+ *
+ * Se llama al anular una venta. Sin esto, la cola seguiría intentando
+ * transmitir el comprobante de una venta que ya no existe, y si el proveedor lo
+ * aceptaba quedaba un e-CF vivo en la DGII contra una venta anulada — que es
+ * justo lo contrario de lo que se quiso hacer.
+ *
+ * Un documento YA ACEPTADO no se toca: ese sí existe para la DGII y su
+ * anulación se reporta por el 608, no borrando nada.
+ *
+ * El e-NCF se conserva, como siempre: un número consumido no desaparece.
+ */
+function ecfCancelarPendiente(string $origen, int $origenId, string $motivo): bool
+{
+    if (!ecfDisponible()) return false;
+
+    $doc = qOne(
+        "SELECT id, estado FROM ecf_documentos WHERE origen = ? AND origen_id = ?",
+        [$origen, $origenId]
+    );
+    if (!$doc || !in_array($doc['estado'], ['pendiente', 'enviado'], true)) return false;
+
+    dbUpdate('ecf_documentos', [
+        'estado'          => 'error',
+        'estado_detalle'  => mb_substr($motivo, 0, 500),
+        'proximo_intento' => null,
+    ], 'id = ?', [(int) $doc['id']]);
+    return true;
 }
 
 /** Lo mismo para la nota de crédito de una devolución. */

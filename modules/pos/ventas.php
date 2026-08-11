@@ -44,6 +44,12 @@ if (isPost()) {
                 }
                 dbUpdate('ventas', ['estado' => 'anulada'], 'id = ?', [$id]);
 
+                // Si su e-CF aún no se aceptó, se corta la transmisión: la cola
+                // no puede seguir mandando el comprobante de una venta anulada.
+                if (function_exists('ecfCancelarPendiente')) {
+                    ecfCancelarPendiente('venta', $id, 'Transmisión cancelada: la venta ' . $v['numero'] . ' fue anulada.');
+                }
+
                 // Formato 608: solo se reportan comprobantes realmente EMITIDOS.
                 // Ver ncfComprobanteEmitido() — un número con secuencia cero, o
                 // un e-CF que la DGII rechazó, no son comprobantes suyos y no
