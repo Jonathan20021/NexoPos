@@ -79,6 +79,29 @@ if (isPost()) {
         redirect('modules/pos/cotizaciones.php');
     }
 
+    if ($accion === 'guardar_ajustes') {
+        require_perm('cotizaciones.crear');
+        $campos = [];
+        foreach ((array) ($_POST['campo_etiqueta'] ?? []) as $et) {
+            $campos[] = ['etiqueta' => (string) $et];
+        }
+        cot_guardarConfig([
+            'validez_dias'         => postInt('validez_dias', 15),
+            'prefijo'              => post('prefijo'),
+            'condiciones'          => post('condiciones'),
+            'pie'                  => post('pie'),
+            'mensaje_cierre'       => post('mensaje_cierre'),
+            'mostrar_itbis'        => post('mostrar_itbis'),
+            'mostrar_sku'          => post('mostrar_sku'),
+            'mostrar_descuento'    => post('mostrar_descuento'),
+            'producto_servicio_id' => postInt('producto_servicio_id'),
+            'campos'               => $campos,
+        ]);
+        audit('cotizaciones', 'editar', 'Ajustes del cotizador actualizados');
+        flash('success', 'Ajustes guardados. Se aplican a las cotizaciones nuevas.');
+        redirect('modules/pos/cotizaciones.php?tab=ajustes');
+    }
+
     if ($accion === 'eliminar') {
         require_perm('cotizaciones.eliminar');
         $id = postInt('id');
@@ -143,8 +166,121 @@ if (export_solicitado()) {
         'Cotizaciones');
 }
 
-$acciones = can('cotizaciones.crear') ? btn_nuevo('cot:new', 'Nueva cotización') : '';
-layout_start('Cotizaciones', 'La oferta que va antes de la factura', $acciones);
+$tab = get('tab') === 'ajustes' && can('cotizaciones.crear') ? 'ajustes' : 'lista';
+
+$acciones = can('cotizaciones.crear')
+    ? ($tab === 'ajustes'
+        ? '<a href="' . e(url('modules/pos/cotizaciones.php')) . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Cotizaciones</a>'
+        : btn_nuevo('cot:new', 'Nueva cotización')
+          . '<a href="' . e(url('modules/pos/cotizaciones.php?tab=ajustes')) . '" class="btn btn-ghost">' . icon('settings', 'w-4 h-4') . ' Ajustes</a>')
+    : '';
+
+layout_start('Cotizaciones',
+    $tab === 'ajustes' ? 'Cómo se ve y se comporta el cotizador' : 'La oferta que va antes de la factura',
+    $acciones);
+
+if ($tab === 'ajustes') {
+    $cfg      = cot_config(true);
+    $campos   = cot_campos();
+    $servicios = qAll("SELECT id, codigo, nombre FROM productos WHERE activo = 1 AND tipo = 'servicio' ORDER BY nombre");
+    ?>
+    <form method="post" class="grid lg:grid-cols-2 gap-5 items-start max-w-5xl">
+      <?= csrf_field() ?><input type="hidden" name="accion" value="guardar_ajustes">
+
+      <div class="card p-5 space-y-4">
+        <h3 class="font-bold text-slate-800">Valores por defecto</h3>
+        <p class="text-sm text-slate-500 -mt-2">Se aplican a cada cotización nueva; dentro de una se pueden cambiar.</p>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label" for="validez_dias">Validez</label>
+            <div class="flex items-center gap-2">
+              <input id="validez_dias" type="number" name="validez_dias" min="1" max="365"
+                     value="<?= (int) $cfg['validez_dias'] ?>" class="input">
+              <span class="text-sm text-slate-400">días</span>
+            </div>
+          </div>
+          <div>
+            <label class="label" for="prefijo">Prefijo</label>
+            <input id="prefijo" name="prefijo" maxlength="10" value="<?= e((string) $cfg['prefijo']) ?>" class="input">
+            <p class="text-xs text-slate-400 mt-1">Solo afecta a las nuevas.</p>
+          </div>
+        </div>
+
+        <div>
+          <label class="label" for="condiciones">Condiciones</label>
+          <textarea id="condiciones" name="condiciones" rows="4" class="input text-sm"
+                    placeholder="Forma de pago, tiempo de entrega, garantía…"><?= e((string) $cfg['condiciones']) ?></textarea>
+        </div>
+        <div>
+          <label class="label" for="mensaje_cierre">Mensaje de cierre</label>
+          <input id="mensaje_cierre" name="mensaje_cierre" maxlength="255" class="input"
+                 value="<?= e((string) $cfg['mensaje_cierre']) ?>">
+        </div>
+        <div>
+          <label class="label" for="pie">Pie del documento</label>
+          <input id="pie" name="pie" maxlength="500" class="input" value="<?= e((string) $cfg['pie']) ?>">
+        </div>
+      </div>
+
+      <div class="space-y-5">
+        <div class="card p-5 space-y-4">
+          <h3 class="font-bold text-slate-800">Qué se imprime</h3>
+          <?php foreach ([
+              'mostrar_itbis'     => ['Columna de ITBIS', 'Útil vendiendo a empresas; de más en venta a consumidor final.'],
+              'mostrar_sku'       => ['Códigos de producto', 'El SKU debajo de cada descripción.'],
+              'mostrar_descuento' => ['Columna de descuento', 'Enseña el precio de lista tachado y lo que se rebajó.'],
+          ] as $k => [$lbl, $ayuda]): ?>
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" name="<?= $k ?>" value="1" <?= !empty($cfg[$k]) ? 'checked' : '' ?>
+                     class="mt-0.5 rounded border-slate-300 text-blue-600">
+              <span>
+                <span class="block text-sm font-medium text-slate-700"><?= e($lbl) ?></span>
+                <span class="block text-xs text-slate-400"><?= e($ayuda) ?></span>
+              </span>
+            </label>
+          <?php endforeach; ?>
+        </div>
+
+        <div class="card p-5 space-y-3">
+          <h3 class="font-bold text-slate-800">Conceptos libres</h3>
+          <p class="text-sm text-slate-500 -mt-1">
+            Una línea escrita a mano —instalación, flete, montaje— se factura sobre este producto de servicio,
+            llevando su propia descripción. Sin esto, esas líneas no se pueden facturar.
+          </p>
+          <select name="producto_servicio_id" class="select">
+            <option value="">— Sin configurar —</option>
+            <?php foreach ($servicios as $sv): ?>
+              <option value="<?= (int) $sv['id'] ?>" <?= (int) $cfg['producto_servicio_id'] === (int) $sv['id'] ? 'selected' : '' ?>>
+                <?= e($sv['nombre']) ?><?= $sv['codigo'] ? ' · ' . e($sv['codigo']) : '' ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+          <?php if (!$servicios): ?>
+            <p class="text-xs text-amber-600">No hay productos de tipo «servicio». Crea uno en Inventario para poder facturar conceptos libres.</p>
+          <?php endif; ?>
+        </div>
+
+        <div class="card p-5 space-y-3">
+          <h3 class="font-bold text-slate-800">Campos propios</h3>
+          <p class="text-sm text-slate-500 -mt-1">
+            Datos que tu negocio necesita en cada cotización y salen en el documento.
+            Deja en blanco los que no uses.
+          </p>
+          <?php for ($i = 0; $i < 4; $i++): ?>
+            <input type="text" name="campo_etiqueta[]" maxlength="60" class="input"
+                   value="<?= e((string) ($campos[$i]['etiqueta'] ?? '')) ?>"
+                   placeholder="<?= ['Ej. Orden de compra', 'Ej. Proyecto u obra', 'Ej. Contacto', 'Ej. Referencia'][$i] ?>">
+          <?php endfor; ?>
+        </div>
+
+        <button class="btn btn-primary w-full"><?= icon('check', 'w-4 h-4') ?> Guardar ajustes</button>
+      </div>
+    </form>
+    <?php
+    layout_end();
+    return;
+}
 ?>
 
 <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-5">

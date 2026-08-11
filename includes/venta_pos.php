@@ -121,8 +121,21 @@ function registrarVentaPOS(array $in, array $ctx): array
             $subtotal   += $base;
             $itbisBruto += $itbis;
             $costoTotal += (float) $p['precio_compra'] * $cant;
+            // Descripción propia de la línea.
+            //
+            // La pide el cotizador: un concepto libre («Instalación y montaje»)
+            // se factura sobre un producto genérico de tipo servicio, pero en el
+            // comprobante tiene que leerse el concepto real, no «Servicio». Va
+            // con la MISMA guarda que el precio pactado —solo cuando lo marca
+            // código del servidor— porque el navegador no puede decidir lo que
+            // dice una factura.
+            $nombreLinea = $p['nombre'];
+            if ($preciosPactados && !empty($item['descripcion'])) {
+                $nombreLinea = mb_substr(trim((string) $item['descripcion']), 0, 180);
+            }
+
             $lineas[] = [
-                'pid' => $pid, 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
+                'pid' => $pid, 'nombre' => $nombreLinea, 'tipo' => $p['tipo'], 'cant' => $cant,
                 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis,
                 'es_muestra' => $esMuestra ? 1 : 0, 'precio_original' => $esMuestra ? $precioReal : 0.0,
                 // Datos fiscales CONGELADOS. Si mañana el producto cambia de tasa

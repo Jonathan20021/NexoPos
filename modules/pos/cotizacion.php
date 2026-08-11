@@ -89,8 +89,15 @@ if (isPost()) {
     if ($accion === 'facturar') {
         require_perm('cotizaciones.facturar');
         try {
-            $r = cot_facturar($id, postInt('metodo_pago_id') ?: 1);
-            flash('success', 'Factura ' . $r['numero'] . ' generada' . ($r['ncf'] ? ' con NCF ' . $r['ncf'] : '') . '.');
+            // Cantidades marcadas por línea. Sin nada marcado se factura todo,
+            // que es el caso normal.
+            $sel = [];
+            foreach ((array) ($_POST['ret'] ?? []) as $detId => $cant) {
+                $sel[(int) $detId] = (float) $cant;
+            }
+            $r = cot_facturar($id, postInt('metodo_pago_id') ?: 1, $sel ?: null);
+            flash('success', 'Factura ' . $r['numero'] . ' generada' . ($r['ncf'] ? ' con NCF ' . $r['ncf'] : '') . '.'
+                . (!empty($r['parcial']) ? ' Se facturó solo parte de lo cotizado; el resto queda registrado como no vendido.' : ''));
             redirect('modules/pos/ventas.php?q=' . urlencode($r['numero']));
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
@@ -123,8 +130,15 @@ $lineasJs = array_map(fn($l) => [
     'descripcion'     => $l['descripcion'],
     'cantidad'        => (float) $l['cantidad'],
     'precio_unitario' => (float) $l['precio_unitario'],
+    'descuento_pct'   => (float) ($l['descuento_pct'] ?? 0),
     'itbis_aplica'    => (float) $l['itbis'] > 0 ? 1 : 0,
+    'es_servicio'     => (int) ($l['es_servicio'] ?? 0),
 ], $lineas);
+
+$cotCfg      = cot_config();
+$camposProp  = cot_campos();
+$camposVal   = cot_camposValores($c);
+$hayServicio = cot_productoServicio() !== null;
 
 [$etEstado, $colEstado] = $estados[$visible] ?? ['—', 'slate'];
 $telWa = function_exists('mkt_telefono') ? mkt_telefono($c['cliente_telefono']) : '';
@@ -149,6 +163,22 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
           <?php if ($c['estado'] === 'facturada'): ?>
             Esta cotización ya se convirtió en la factura <strong><?= e($c['venta_id'] ? (qVal("SELECT numero FROM ventas WHERE id=?", [(int) $c['venta_id']]) ?: '') : '') ?></strong>
             y no se puede editar: cambiarla dejaría un documento que no coincide con lo facturado.
+            <?php
+              // Lo que el cliente NO se llevó. Es información de negocio: dice qué
+              // se ofreció y no se vendió.
+              $sinVender = array_filter($lineas, fn($l) => (float) $l['cantidad'] - (float) ($l['cantidad_facturada'] ?? 0) > 0.0001);
+            ?>
+            <?php if ($sinVender): ?>
+              <span class="block mt-2 font-semibold text-slate-700">No entró en la factura:</span>
+              <ul class="mt-1 space-y-0.5">
+                <?php foreach ($sinVender as $l): ?>
+                  <li class="text-[13px] text-slate-500">
+                    <?= e($l['descripcion']) ?> ·
+                    <?= qty((float) $l['cantidad'] - (float) ($l['cantidad_facturada'] ?? 0)) ?> de <?= qty($l['cantidad']) ?>
+                  </li>
+                <?php endforeach; ?>
+              </ul>
+            <?php endif; ?>
           <?php else: ?>
             No tienes permiso para editar cotizaciones.
           <?php endif; ?>
@@ -229,6 +259,7 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
                   <th class="p-2.5 font-semibold">Descripción</th>
                   <th class="p-2.5 font-semibold text-right w-24">Cant.</th>
                   <th class="p-2.5 font-semibold text-right w-32">Precio</th>
+                  <th class="p-2.5 font-semibold text-right w-20">Desc. %</th>
                   <th class="p-2.5 font-semibold text-center w-16">ITBIS</th>
                   <th class="p-2.5 font-semibold text-right w-32">Importe</th>
                   <th class="w-10"></th>
@@ -246,16 +277,27 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
                              class="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-right"></td>
                     <td class="p-2"><input type="number" step="0.01" min="0" x-model.number="l.precio_unitario"
                              class="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-right"></td>
-                    <td class="p-2 text-center"><input type="checkbox" :checked="l.itbis_aplica==1"
-                             @change="l.itbis_aplica = $event.target.checked ? 1 : 0"
-                             class="rounded border-slate-300 text-blue-600"></td>
-                    <td class="p-2 text-right font-semibold text-slate-700 whitespace-nowrap" x-text="fmt(l.cantidad * l.precio_unitario)"></td>
+                    <td class="p-2"><input type="number" step="0.01" min="0" max="100" x-model.number="l.descuento_pct"
+                             class="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-right"
+                             placeholder="0"></td>
+                    <?php /* El ITBIS lo decide el producto y la ley, no quien cotiza: se
+                             muestra, no se edita. Ver cot_resolverItbis(). */ ?>
+                    <td class="p-2 text-center">
+                      <span class="text-xs font-semibold" :class="l.itbis_aplica ? 'text-slate-600' : 'text-slate-300'"
+                            x-text="l.itbis_aplica ? 'Sí' : 'No'"
+                            title="Lo determina el producto"></span>
+                    </td>
+                    <td class="p-2 text-right whitespace-nowrap">
+                      <span class="font-semibold text-slate-700" x-text="fmt(netoLinea(l))"></span>
+                      <span x-show="(Number(l.descuento_pct)||0) > 0" class="block text-[11px] text-slate-400 line-through"
+                            x-text="fmt((Number(l.cantidad)||0) * (Number(l.precio_unitario)||0))"></span>
+                    </td>
                     <td class="p-2 text-center">
                       <button type="button" @click="quitar(i)" class="text-slate-300 hover:text-rose-600" title="Quitar">✕</button>
                     </td>
                   </tr>
                 </template>
-                <tr x-show="!lineas.length"><td colspan="6" class="p-6 text-center text-slate-400 text-sm">Sin líneas. Pulsa «Agregar línea».</td></tr>
+                <tr x-show="!lineas.length"><td colspan="7" class="p-6 text-center text-slate-400 text-sm">Sin líneas. Pulsa «Agregar línea».</td></tr>
               </tbody>
             </table>
           </div>
@@ -268,7 +310,13 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
           </datalist>
           <p class="text-xs text-slate-400 mt-2">
             Al elegir un producto del catálogo se trae su precio, pero puedes cambiarlo: una cotización es una oferta.
-            Una línea escrita a mano (sin producto) no se puede facturar después.
+            El ITBIS lo determina el producto y no se edita aquí, para que el total cotizado y el facturado no puedan separarse.
+            <?php if ($hayServicio): ?>
+              Una línea escrita a mano se factura como servicio y no toca inventario.
+            <?php else: ?>
+              <span class="text-amber-600">Para poder facturar líneas escritas a mano, elige el producto de servicio en
+              <a href="<?= e(url('modules/pos/cotizaciones.php?tab=ajustes')) ?>" class="underline">Ajustes</a>.</span>
+            <?php endif; ?>
           </p>
         </div>
 
@@ -288,6 +336,16 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
               <label class="label">Notas</label>
               <input type="text" name="notas" maxlength="500" value="<?= e((string) $c['notas']) ?>" class="input">
             </div>
+            <?php /* Campos propios del negocio: se definen una vez en Ajustes y
+                     salen en el documento. */ ?>
+            <?php foreach ($camposProp as $cp): ?>
+              <div>
+                <label class="label"><?= e($cp['etiqueta']) ?></label>
+                <input type="text" maxlength="180" class="input"
+                       name="campos_extra[<?= e($cp['clave']) ?>]"
+                       value="<?= e((string) ($camposVal[$cp['clave']] ?? '')) ?>">
+              </div>
+            <?php endforeach; ?>
           </div>
 
           <div class="rounded-xl bg-slate-50 p-4 h-fit">
@@ -371,9 +429,38 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
           Genera la venta con NCF, descuenta el stock y respeta los precios cotizados,
           aunque la lista haya cambiado.
         </p>
-        <form method="post" class="space-y-3"
-              onsubmit="return confirm('Se generará una factura real con NCF y se descontará el stock. ¿Continuar?')">
+        <?php /* Rara vez el cliente se lleva todo. Aquí se marca lo que sí, con
+                 su cantidad; lo que quede en cero no se factura y queda escrito
+                 como no vendido. Ver cot_facturar(). */ ?>
+        <form method="post" class="space-y-3" x-data="facturarParcial()"
+              @submit="return confirmar($event)">
           <?= csrf_field() ?><input type="hidden" name="accion" value="facturar">
+
+          <div class="rounded-xl border border-slate-200 overflow-hidden">
+            <div class="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-200">
+              <span class="text-xs font-semibold uppercase tracking-wide text-slate-400">Qué se lleva</span>
+              <button type="button" @click="todo()" class="text-xs font-semibold text-blue-600 hover:underline">Todo</button>
+            </div>
+            <table class="w-full text-sm">
+              <tbody>
+                <?php foreach ($lineas as $l): ?>
+                  <tr class="border-b border-slate-100 last:border-0">
+                    <td class="px-3 py-2">
+                      <div class="text-slate-700 leading-tight"><?= e($l['descripcion']) ?></div>
+                      <div class="text-[11px] text-slate-400">cotizadas <?= qty($l['cantidad']) ?></div>
+                    </td>
+                    <td class="px-3 py-2 w-28">
+                      <input type="number" step="0.001" min="0" max="<?= e((string) (float) $l['cantidad']) ?>"
+                             name="ret[<?= (int) $l['id'] ?>]" value="<?= e((string) (float) $l['cantidad']) ?>"
+                             data-max="<?= e((string) (float) $l['cantidad']) ?>"
+                             class="w-full px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-right">
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+
           <div>
             <label class="label">Forma de pago</label>
             <select name="metodo_pago_id" class="select">
@@ -381,7 +468,35 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
             </select>
           </div>
           <button class="btn btn-primary w-full"><?= icon('receipt', 'w-4 h-4') ?> Facturar</button>
+          <p class="text-xs text-slate-400">
+            Al facturar, la cotización se cierra. Lo que no se lleve queda registrado como no vendido.
+          </p>
         </form>
+        <script>
+          function facturarParcial() {
+            return {
+              todo() {
+                this.$root.querySelectorAll('input[name^="ret["]')
+                  .forEach(i => { i.value = i.dataset.max; });
+              },
+              confirmar(ev) {
+                const campos = [...this.$root.querySelectorAll('input[name^="ret["]')];
+                const suma = campos.reduce((s, i) => s + (Number(i.value) || 0), 0);
+                if (suma <= 0) {
+                  ev.preventDefault();
+                  alert('Marca al menos una línea con cantidad para facturar.');
+                  return false;
+                }
+                const parcial = campos.some(i => (Number(i.value) || 0) < Number(i.dataset.max));
+                const aviso = parcial
+                  ? 'El cliente NO se lleva todo lo cotizado. Se facturará solo lo marcado y la cotización se cerrará. ¿Continuar?'
+                  : 'Se generará una factura real con NCF y se descontará el stock. ¿Continuar?';
+                if (!confirm(aviso)) { ev.preventDefault(); return false; }
+                return true;
+              },
+            };
+          }
+        </script>
         <?php if (!$esBase): ?>
           <p class="text-xs text-slate-400 mt-3">
             La factura sale en pesos a la tasa de esta cotización
@@ -423,7 +538,9 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
       itbisTasa: <?= $tasaItbis ?>,
 
       esBase() { return Number(this.monedaId) === this.base; },
-      agregar() { this.lineas.push({ producto_id: null, descripcion: '', cantidad: 1, precio_unitario: 0, itbis_aplica: 1 }); },
+      hayServicio: <?= $hayServicio ? 'true' : 'false' ?>,
+
+      agregar() { this.lineas.push({ producto_id: null, descripcion: '', cantidad: 1, precio_unitario: 0, descuento_pct: 0, itbis_aplica: 1, es_servicio: 0 }); },
       quitar(i) { this.lineas.splice(i, 1); },
 
       // Al escribir/elegir un nombre del catálogo se enlaza el producto y se
@@ -431,8 +548,15 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
       alElegirProducto(i, ev) {
         const op = [...document.querySelectorAll('#catalogoProd option')]
           .find(o => o.value === ev.target.value);
-        if (!op) { this.lineas[i].producto_id = null; return; }
+        if (!op) {
+          // Sin producto del catálogo es un concepto libre: se factura como
+          // servicio y sigue el ITBIS del producto de servicio configurado.
+          this.lineas[i].producto_id = null;
+          this.lineas[i].es_servicio = 1;
+          return;
+        }
         this.lineas[i].producto_id = Number(op.dataset.id);
+        this.lineas[i].es_servicio = 0;
         this.lineas[i].itbis_aplica = Number(op.dataset.itbis) ? 1 : 0;
         if (!this.lineas[i].precio_unitario) {
           const precio = Number(op.dataset.precio) || 0;
@@ -450,10 +574,21 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
         this.simbolo = op.dataset.simbolo || 'RD$';
       },
 
-      subtotal() { return this.lineas.reduce((s, l) => s + (Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0), 0); },
+      // Importe de la línea ya rebajado. Es lo que suma al subtotal y sobre lo
+      // que se calcula el ITBIS: se tributa sobre lo que se cobra.
+      netoLinea(l) {
+        const base = (Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0);
+        const pct  = Math.min(100, Math.max(0, Number(l.descuento_pct) || 0));
+        return Math.round((base - base * pct / 100) * 100) / 100;
+      },
+      descuentoLineas() {
+        return this.lineas.reduce((s, l) =>
+          s + ((Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0) - this.netoLinea(l)), 0);
+      },
+      subtotal() { return this.lineas.reduce((s, l) => s + this.netoLinea(l), 0); },
       itbis() {
         const bruto = this.lineas.reduce((s, l) =>
-          s + (l.itbis_aplica ? (Number(l.cantidad) || 0) * (Number(l.precio_unitario) || 0) * this.itbisTasa / 100 : 0), 0);
+          s + (l.itbis_aplica ? this.netoLinea(l) * this.itbisTasa / 100 : 0), 0);
         const st = this.subtotal();
         const factor = st > 0 ? (st - Math.min(this.descuento || 0, st)) / st : 1;
         return bruto * factor;

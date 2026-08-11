@@ -40,6 +40,12 @@ function cot_estados(): array
         'aceptada'  => ['Aceptada',  'emerald'],
         'rechazada' => ['Rechazada', 'rose'],
         'vencida'   => ['Vencida',   'amber'],
+        // El flujo actual cierra la cotización al facturar, así que «parcial» no
+        // se asigna hoy. Está en el ENUM y aquí porque el día que se quiera
+        // dejar el resto pendiente no haga falta ni migración ni parche en la
+        // pantalla — y porque una fila con un estado sin etiqueta rompería la
+        // lista en vez de mostrarla.
+        'parcial'   => ['Parcial',   'cyan'],
         'facturada' => ['Facturada', 'indigo'],
     ];
 }
@@ -57,6 +63,110 @@ function cot_estadoVisible(array $c): string
     return $c['estado'];
 }
 
+/* ============================================================
+ *  CONFIGURACIÓN DEL COTIZADOR
+ * ============================================================ */
+
+/**
+ * La fila única de `cotizacion_config`, con valores por defecto si la migración
+ * P16 todavía no se aplicó.
+ *
+ * Se cachea en memoria: la leen el editor, el PDF y el correo dentro de la
+ * misma petición, y es una fila que no cambia a mitad de camino.
+ */
+function cot_config(bool $recargar = false): array
+{
+    static $cfg = null;
+    if ($cfg !== null && !$recargar) return $cfg;
+
+    $base = [
+        'validez_dias' => 15, 'condiciones' => null, 'pie' => null,
+        'mensaje_cierre' => null, 'prefijo' => 'COT',
+        'mostrar_itbis' => 1, 'mostrar_sku' => 1, 'mostrar_descuento' => 1,
+        'producto_servicio_id' => null, 'campos' => null,
+    ];
+    try {
+        $fila = qOne("SELECT * FROM cotizacion_config WHERE id = 1");
+    } catch (Throwable $e) {
+        $fila = null;                       // sin migración: valores de fábrica
+    }
+    return $cfg = array_merge($base, $fila ?: []);
+}
+
+/** Guarda la configuración y limpia la caché. */
+function cot_guardarConfig(array $d): void
+{
+    $campos = [];
+    foreach ((array) ($d['campos'] ?? []) as $c) {
+        $etiqueta = trim((string) ($c['etiqueta'] ?? ''));
+        if ($etiqueta === '') continue;
+        // La clave se deriva de la etiqueta: quien configura escribe «Orden de
+        // compra», no un identificador.
+        $clave = preg_replace('/[^a-z0-9]+/', '_', mb_strtolower(cot_sinAcentos($etiqueta)));
+        $campos[] = ['clave' => trim($clave, '_'), 'etiqueta' => mb_substr($etiqueta, 0, 60)];
+        if (count($campos) >= 8) break;     // un formulario, no una base de datos
+    }
+
+    $fila = [
+        'validez_dias'         => max(1, min(365, (int) ($d['validez_dias'] ?? 15))),
+        'condiciones'          => trim((string) ($d['condiciones'] ?? '')) ?: null,
+        'pie'                  => mb_substr(trim((string) ($d['pie'] ?? '')), 0, 500) ?: null,
+        'mensaje_cierre'       => mb_substr(trim((string) ($d['mensaje_cierre'] ?? '')), 0, 255) ?: null,
+        'prefijo'              => strtoupper(preg_replace('/[^A-Za-z0-9\-]/', '', (string) ($d['prefijo'] ?? 'COT'))) ?: 'COT',
+        'mostrar_itbis'        => !empty($d['mostrar_itbis']) ? 1 : 0,
+        'mostrar_sku'          => !empty($d['mostrar_sku']) ? 1 : 0,
+        'mostrar_descuento'    => !empty($d['mostrar_descuento']) ? 1 : 0,
+        'producto_servicio_id' => (int) ($d['producto_servicio_id'] ?? 0) ?: null,
+        'campos'               => $campos ? json_encode($campos, JSON_UNESCAPED_UNICODE) : null,
+    ];
+
+    if (qVal("SELECT 1 FROM cotizacion_config WHERE id = 1")) {
+        dbUpdate('cotizacion_config', $fila, 'id = 1', []);
+    } else {
+        $fila['id'] = 1;
+        dbInsert('cotizacion_config', $fila);
+    }
+    cot_config(true);
+}
+
+/** Quita acentos para derivar la clave de un campo propio. */
+function cot_sinAcentos(string $s): string
+{
+    return strtr($s, [
+        'á'=>'a','é'=>'e','í'=>'i','ó'=>'o','ú'=>'u','ü'=>'u','ñ'=>'n',
+        'Á'=>'A','É'=>'E','Í'=>'I','Ó'=>'O','Ú'=>'U','Ü'=>'U','Ñ'=>'N',
+    ]);
+}
+
+/** Definición de los campos propios: [['clave','etiqueta'], …]. */
+function cot_campos(): array
+{
+    $j = cot_config()['campos'] ?? null;
+    if (!$j) return [];
+    $c = json_decode((string) $j, true);
+    return is_array($c) ? $c : [];
+}
+
+/** Valores de los campos propios de una cotización: ['clave' => 'valor']. */
+function cot_camposValores(array $c): array
+{
+    $j = $c['campos_extra'] ?? null;
+    if (!$j) return [];
+    $v = json_decode((string) $j, true);
+    return is_array($v) ? $v : [];
+}
+
+/**
+ * El producto de servicio al que se enlazan las líneas libres al facturar.
+ * Devuelve null si no está configurado o si el que hay ya no sirve.
+ */
+function cot_productoServicio(): ?array
+{
+    $id = (int) (cot_config()['producto_servicio_id'] ?? 0);
+    if (!$id) return null;
+    return qOne("SELECT id, nombre, tipo, activo FROM productos WHERE id = ? AND activo = 1 AND tipo = 'servicio'", [$id]);
+}
+
 /** ¿Se puede seguir editando? Una vez facturada, no. */
 function cot_editable(array $c): bool
 {
@@ -66,17 +176,31 @@ function cot_editable(array $c): bool
 /**
  * Recalcula los totales a partir de las líneas.
  *
- * El ITBIS se calcula línea a línea (cada producto decide si aplica) y el
- * descuento global se reparte proporcionalmente, igual que en el POS: si no,
- * la factura que sale de la cotización no cuadraría con ella.
+ * Hay DOS niveles de descuento y el orden importa:
  *
- * @param array $lineas [['producto_id','descripcion','cantidad','precio_unitario','itbis_aplica'], ...]
- * @return array ['subtotal','descuento','itbis','total','lineas']
+ *   1. El de la línea, que es lo que se negoció de ese renglón. Se guarda como
+ *      porcentaje Y como monto: el porcentaje es lo pactado, el monto es lo
+ *      aplicado, y con redondeo a dos decimales uno no siempre se deduce del
+ *      otro. `cotizacion_detalles.subtotal` queda YA NETO de este descuento.
+ *   2. El global, que se aplica encima del subtotal y se reparte
+ *      proporcionalmente, igual que en el POS.
+ *
+ * El ITBIS se calcula sobre la línea YA rebajada —se tributa sobre lo que se
+ * cobra, no sobre el precio de lista— y después se ajusta por el descuento
+ * global con el mismo factor que usa la venta. Si no coincidieran, la factura
+ * que sale de la cotización no cuadraría con ella.
+ *
+ * @param array $lineas [['producto_id','descripcion','cantidad','precio_unitario',
+ *                        'itbis_aplica','descuento_pct','descuento_monto','es_servicio'], ...]
+ * @param float $descuento Descuento GLOBAL, encima de los de línea.
+ * @return array ['subtotal','descuento','descuento_lineas','bruto','itbis','total','lineas']
  */
 function cot_totales(array $lineas, float $descuento = 0.0): array
 {
     $tasa = (float) setting('itbis_tasa', DEFAULT_ITBIS);
-    $subtotal = 0.0;
+    $bruto = 0.0;            // suma a precio de lista, antes de rebajar nada
+    $subtotal = 0.0;         // suma ya neta de los descuentos de línea
+    $descLineas = 0.0;
     $itbisBruto = 0.0;
     $out = [];
 
@@ -85,10 +209,22 @@ function cot_totales(array $lineas, float $descuento = 0.0): array
         $precio = max(0, round((float) ($l['precio_unitario'] ?? 0), 2));
         if ($cant <= 0) continue;
 
-        $base  = round($precio * $cant, 2);
-        $itbis = !empty($l['itbis_aplica']) ? round($base * $tasa / 100, 2) : 0.0;
+        $base = round($precio * $cant, 2);
 
-        $subtotal   += $base;
+        // El porcentaje manda si viene; si no, se toma el monto tal cual. Nunca
+        // puede rebajar más que la propia línea.
+        $pct = min(100.0, max(0.0, round((float) ($l['descuento_pct'] ?? 0), 2)));
+        $dm  = $pct > 0
+            ? round($base * $pct / 100, 2)
+            : min($base, max(0.0, round((float) ($l['descuento_monto'] ?? 0), 2)));
+        $dm  = min($dm, $base);
+
+        $neto  = round($base - $dm, 2);
+        $itbis = !empty($l['itbis_aplica']) ? round($neto * $tasa / 100, 2) : 0.0;
+
+        $bruto      += $base;
+        $descLineas += $dm;
+        $subtotal   += $neto;
         $itbisBruto += $itbis;
 
         $out[] = [
@@ -96,8 +232,11 @@ function cot_totales(array $lineas, float $descuento = 0.0): array
             'descripcion'     => mb_substr(trim((string) ($l['descripcion'] ?? '')), 0, 255),
             'cantidad'        => $cant,
             'precio_unitario' => $precio,
+            'descuento_pct'   => $pct,
+            'descuento_monto' => $dm,
             'itbis'           => $itbis,
-            'subtotal'        => $base,
+            'subtotal'        => $neto,
+            'es_servicio'     => !empty($l['es_servicio']) ? 1 : 0,
             'orden'           => $i,
         ];
     }
@@ -107,12 +246,60 @@ function cot_totales(array $lineas, float $descuento = 0.0): array
     $itbis     = round($itbisBruto * $factor, 2);
 
     return [
-        'subtotal'  => round($subtotal, 2),
-        'descuento' => $descuento,
-        'itbis'     => $itbis,
-        'total'     => round(($subtotal - $descuento) + $itbis, 2),
-        'lineas'    => $out,
+        'bruto'            => round($bruto, 2),
+        'descuento_lineas' => round($descLineas, 2),
+        'subtotal'         => round($subtotal, 2),
+        'descuento'        => $descuento,
+        'itbis'            => $itbis,
+        'total'            => round(($subtotal - $descuento) + $itbis, 2),
+        'lineas'           => $out,
     ];
+}
+
+/**
+ * Resuelve si cada línea lleva ITBIS mirando el CATÁLOGO, no lo que llegue del
+ * navegador.
+ *
+ * El editor tenía una casilla de ITBIS por línea, y eso permitía cotizar sin
+ * impuesto un producto gravado. La factura no respeta esa casilla —
+ * `registrarVentaPOS()` lee el impuesto del producto, como debe— así que el
+ * cliente recibía un total distinto del que se le prometió.
+ *
+ * Que un artículo tribute no es materia de negociación: lo decide el producto y
+ * la ley. El precio sí se pacta; el impuesto, no. Resolviéndolo aquí, el total
+ * de la cotización y el de la factura no pueden separarse.
+ *
+ * Las líneas libres siguen al producto de servicio, que es sobre el que se
+ * facturarán.
+ */
+function cot_resolverItbis(array $lineas): array
+{
+    $ids = [];
+    foreach ($lineas as $l) {
+        $pid = (int) ($l['producto_id'] ?? 0);
+        if ($pid > 0) $ids[$pid] = true;
+    }
+
+    $mapa = [];
+    if ($ids) {
+        $marcas = implode(',', array_fill(0, count($ids), '?'));
+        foreach (qAll("SELECT id, itbis_aplica FROM productos WHERE id IN ($marcas)", array_keys($ids)) as $p) {
+            $mapa[(int) $p['id']] = (int) $p['itbis_aplica'];
+        }
+    }
+    $servicio = cot_productoServicio();
+    $itbisServicio = $servicio
+        ? (int) qVal("SELECT itbis_aplica FROM productos WHERE id = ?", [(int) $servicio['id']])
+        : null;
+
+    foreach ($lineas as $i => $l) {
+        $pid = (int) ($l['producto_id'] ?? 0);
+        if ($pid > 0 && isset($mapa[$pid]))      $lineas[$i]['itbis_aplica'] = $mapa[$pid];
+        elseif ($pid <= 0 && $itbisServicio !== null) $lineas[$i]['itbis_aplica'] = $itbisServicio;
+        // Si no se puede resolver (producto borrado, servicio sin configurar) se
+        // deja lo que venía: es mejor guardar la cotización que perderla.
+    }
+    return $lineas;
 }
 
 /**
@@ -122,6 +309,8 @@ function cot_totales(array $lineas, float $descuento = 0.0): array
 function cot_guardar(array $datos, array $lineas): int
 {
     if (!cot_disponible()) throw new RuntimeException('Falta aplicar la migración de cotizaciones.');
+
+    $lineas = cot_resolverItbis($lineas);
 
     $id        = (int) ($datos['id'] ?? 0);
     $clienteId = (int) ($datos['cliente_id'] ?? 0);
@@ -134,7 +323,8 @@ function cot_guardar(array $datos, array $lineas): int
 
     $monedaId = (int) ($datos['moneda_id'] ?? 0) ?: (int) monedaBase()['id'];
     $tasa     = max(0.000001, (float) ($datos['tasa_cambio'] ?? mon_tasa($monedaId)));
-    $validez  = max(1, min(365, (int) ($datos['validez_dias'] ?? 15)));
+    $cfg      = cot_config();
+    $validez  = max(1, min(365, (int) ($datos['validez_dias'] ?? $cfg['validez_dias'])));
     $fecha    = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($datos['fecha'] ?? '')) ? $datos['fecha'] : date('Y-m-d');
 
     $sid = (int) ($datos['sucursal_id'] ?? 0) ?: (int) (current_sucursal_id() ?? 0);
@@ -153,12 +343,13 @@ function cot_guardar(array $datos, array $lineas): int
         'itbis'        => $t['itbis'],
         'total'        => $t['total'],
         'total_base'   => mon_aBase($t['total'], $tasa),
-        'condiciones'  => trim((string) ($datos['condiciones'] ?? '')) ?: null,
+        'condiciones'  => trim((string) ($datos['condiciones'] ?? '')) ?: ($cfg['condiciones'] ?: null),
+        'campos_extra' => cot_camposExtraJson($datos['campos_extra'] ?? []),
         'notas'        => mb_substr(trim((string) ($datos['notas'] ?? '')), 0, 500) ?: null,
         'updated_at'   => date('Y-m-d H:i:s'),
     ];
 
-    return tx(function () use ($id, $fila, $t) {
+    return tx(function () use ($id, $fila, $t, $cfg) {
         if ($id > 0) {
             $actual = qOne("SELECT estado FROM cotizaciones WHERE id = ?", [$id]);
             if (!$actual) throw new RuntimeException('Cotización no encontrada.');
@@ -166,7 +357,7 @@ function cot_guardar(array $datos, array $lineas): int
             dbUpdate('cotizaciones', $fila, 'id = ?', [$id]);
             q("DELETE FROM cotizacion_detalles WHERE cotizacion_id = ?", [$id]);
         } else {
-            $fila['numero']     = nextNumero('cotizaciones', 'numero', 'COT');
+            $fila['numero']     = nextNumero('cotizaciones', 'numero', $cfg['prefijo'] ?: 'COT');
             $fila['estado']     = 'borrador';
             $fila['usuario_id'] = (int) current_user()['id'];
             $id = dbInsert('cotizaciones', $fila);
@@ -178,6 +369,26 @@ function cot_guardar(array $datos, array $lineas): int
         }
         return $id;
     });
+}
+
+/**
+ * Normaliza los valores de los campos propios contra su definición.
+ *
+ * Solo sobreviven las claves que la configuración declara: si mañana se quita
+ * el campo «Orden de compra», su valor deja de arrastrarse en las cotizaciones
+ * que se sigan editando.
+ */
+function cot_camposExtraJson($valores): ?string
+{
+    $definidos = cot_campos();
+    if (!$definidos || !is_array($valores)) return null;
+
+    $out = [];
+    foreach ($definidos as $c) {
+        $v = trim((string) ($valores[$c['clave']] ?? ''));
+        if ($v !== '') $out[$c['clave']] = mb_substr($v, 0, 180);
+    }
+    return $out ? json_encode($out, JSON_UNESCAPED_UNICODE) : null;
 }
 
 /** Cotización con su cliente y su moneda. */
@@ -200,19 +411,38 @@ function cot_obtener(int $id): ?array
 /** Líneas de una cotización. */
 function cot_lineas(int $id): array
 {
-    return qAll("SELECT * FROM cotizacion_detalles WHERE cotizacion_id = ? ORDER BY orden, id", [$id]);
+    return qAll(
+        "SELECT cd.*, p.codigo AS sku
+           FROM cotizacion_detalles cd
+           LEFT JOIN productos p ON p.id = cd.producto_id
+          WHERE cd.cotizacion_id = ?
+          ORDER BY cd.orden, cd.id", [$id]);
 }
 
 /**
- * Convierte una cotización aceptada en factura.
+ * Convierte una cotización en factura, con lo que el cliente se lleve.
  *
  * No duplica ni una línea de la lógica de ventas: arma el carrito y llama a
- * `registrarVentaPOS()`, que es lo que ya asigna NCF, mueve stock, cuadra caja y
- * calcula comisiones. La diferencia es que los precios vienen de la cotización.
+ * `registrarVentaPOS()`, que es lo que ya asigna NCF, mueve stock, cuadra caja,
+ * calcula comisiones y emite el e-CF. Lo que aporta esta función son tres cosas
+ * que la venta no puede saber:
  *
+ * · QUÉ SE LLEVA EL CLIENTE. Rara vez es todo. `$seleccion` dice cuánto de cada
+ *   línea entra en la factura; lo que queda fuera NO se factura y se guarda
+ *   como descartado. La cotización se cierra igual: deja por escrito qué se
+ *   ofreció y qué no se vendió, que es información de negocio.
+ *
+ * · EL PRECIO PACTADO. Si el de lista subió, manda el de la cotización. Se pasa
+ *   el precio ya NETO del descuento de esa línea, porque la venta solo entiende
+ *   un descuento global.
+ *
+ * · EL DESCUENTO GLOBAL, A PRORRATA. Si se factura la mitad de la cotización,
+ *   aplicar el descuento global entero regalaría el doble de lo pactado.
+ *
+ * @param array|null $seleccion [cotizacion_detalle_id => cantidad]. null = todo.
  * @return array resultado de registrarVentaPOS
  */
-function cot_facturar(int $id, int $metodoPagoId): array
+function cot_facturar(int $id, int $metodoPagoId, ?array $seleccion = null): array
 {
     $c = cot_obtener($id);
     if (!$c) throw new RuntimeException('Cotización no encontrada.');
@@ -221,22 +451,62 @@ function cot_facturar(int $id, int $metodoPagoId): array
     $lineas = cot_lineas($id);
     if (!$lineas) throw new RuntimeException('La cotización no tiene líneas.');
 
-    $tasa = max(0.000001, (float) $c['tasa_cambio']);
+    $tasa      = max(0.000001, (float) $c['tasa_cambio']);
+    $servicio  = cot_productoServicio();
+    $cart      = [];
+    $facturado = [];        // detalle_id => cantidad, para dejar constancia
+    $netoSel   = 0.0;       // importe neto que sí entra en la factura
+    $netoTotal = 0.0;       // importe neto de la cotización completa
 
-    // El carrito lleva el precio pactado. Si la cotización está en dólares, se
-    // convierte a pesos con la tasa DE LA COTIZACIÓN: es el precio que se
-    // prometió, no el de hoy.
-    $cart = [];
     foreach ($lineas as $l) {
-        if (!$l['producto_id']) {
-            throw new RuntimeException('La línea «' . $l['descripcion'] . '» no está enlazada a un producto del catálogo y no se puede facturar. Edita la cotización y elige el producto.');
+        $cotizada = (float) $l['cantidad'];
+        $neto     = (float) $l['subtotal'];       // ya descontada la línea
+        $netoTotal += $neto;
+
+        // Sin selección se factura todo; con selección, solo lo pedido.
+        $cant = $seleccion === null
+            ? $cotizada
+            : round((float) ($seleccion[(int) $l['id']] ?? 0), 3);
+
+        if ($cant <= 0) continue;
+        if ($cant > $cotizada + 0.0001) {
+            throw new RuntimeException('No se puede facturar ' . qty($cant) . ' de «' . $l['descripcion']
+                . '»: la cotización solo tiene ' . qty($cotizada) . '.');
         }
-        $cart[] = [
-            'id'     => (int) $l['producto_id'],
-            'cant'   => (float) $l['cantidad'],
-            'precio' => mon_aBase((float) $l['precio_unitario'], $tasa),
+
+        // Producto real, o el genérico de servicio para un concepto libre.
+        $pid = (int) ($l['producto_id'] ?? 0);
+        $descripcion = null;
+        if (!$pid) {
+            if (!$servicio) {
+                throw new RuntimeException('La línea «' . $l['descripcion'] . '» no tiene producto del catálogo. '
+                    . 'Para facturar conceptos libres, elige el producto de servicio en '
+                    . 'Cotizaciones → Ajustes.');
+            }
+            $pid = (int) $servicio['id'];
+            $descripcion = $l['descripcion'];     // lo que se lee en la factura
+        }
+
+        // Precio unitario NETO: lo pactado ya con su descuento de línea dentro.
+        $precioNeto = $cotizada > 0 ? round($neto / $cotizada, 4) : 0.0;
+        $netoSel   += round($precioNeto * $cant, 2);
+
+        $item = [
+            'id'     => $pid,
+            'cant'   => $cant,
+            'precio' => mon_aBase($precioNeto, $tasa),
         ];
+        if ($descripcion !== null) $item['descripcion'] = $descripcion;
+        $cart[] = $item;
+
+        $facturado[(int) $l['id']] = $cant;
     }
+
+    if (!$cart) throw new RuntimeException('Marca al menos una línea con cantidad para facturar.');
+
+    // El descuento global se reparte según la porción que se factura.
+    $proporcion = $netoTotal > 0 ? min(1.0, $netoSel / $netoTotal) : 1.0;
+    $descuento  = round((float) $c['descuento'] * $proporcion, 2);
 
     $sid    = (int) $c['sucursal_id'];
     $uid    = (int) current_user()['id'];
@@ -244,7 +514,7 @@ function cot_facturar(int $id, int $metodoPagoId): array
 
     $r = registrarVentaPOS([
         'cart'           => $cart,
-        'descuento'      => mon_aBase((float) $c['descuento'], $tasa),
+        'descuento'      => mon_aBase($descuento, $tasa),
         'cliente_id'     => (int) $c['cliente_id'],
         'comprobante'    => !empty($c['rnc_cedula']) ? 'credito_fiscal' : 'consumidor',
         'metodo_pago_id' => $metodoPagoId,
@@ -255,16 +525,27 @@ function cot_facturar(int $id, int $metodoPagoId): array
         'precios_pactados' => true,     // ← autorizado aquí, con precios leídos de la base
     ]);
 
+    // Se registra QUÉ se facturó de cada línea. Las que quedaron en cero son lo
+    // que el cliente no se llevó, y así se puede leer meses después.
+    foreach ($lineas as $l) {
+        dbUpdate('cotizacion_detalles',
+                 ['cantidad_facturada' => $facturado[(int) $l['id']] ?? 0],
+                 'id = ?', [(int) $l['id']]);
+    }
+
     dbUpdate('cotizaciones', [
         'estado'     => 'facturada',
         'venta_id'   => (int) $r['id'],
         'updated_at' => date('Y-m-d H:i:s'),
     ], 'id = ?', [$id]);
 
-    audit('cotizaciones', 'editar', "Cotización {$c['numero']} facturada como {$r['numero']}",
+    $parcial = count($facturado) < count($lineas)
+        || abs($netoSel - $netoTotal) > 0.01;
+    audit('cotizaciones', 'editar',
+          "Cotización {$c['numero']} facturada como {$r['numero']}" . ($parcial ? ' (parcial)' : ''),
           ['tabla' => 'cotizaciones', 'registro_id' => $id]);
 
-    return $r;
+    return $r + ['parcial' => $parcial];
 }
 
 /* ============================================================
@@ -277,71 +558,128 @@ function cot_facturar(int $id, int $metodoPagoId): array
  */
 function cot_pdf_html(array $c, array $lineas): string
 {
+    $cfg     = cot_config();
     $esBase  = (int) ($c['moneda_es_base'] ?? 1) === 1;
     $moneda  = fn(float $v) => $esBase ? money($v) : ($c['moneda_simbolo'] . ' ' . number_format($v, 2, '.', ','));
+    // En las celdas de la tabla el símbolo sobra: se repite en cada fila, parte
+    // los números en dos líneas y no aporta nada que los totales no digan ya.
+    $celda   = fn(float $v) => $esBase ? money($v, false) : number_format($v, 2, '.', ',');
     $vencida = cot_estadoVisible($c) === 'vencida';
+    $esc     = fn($x) => htmlspecialchars((string) $x);
+    $color   = marca_app();
+
+    // Columnas opcionales. Un negocio que vende a consumidor final no quiere el
+    // ITBIS desglosado, y la columna de descuento solo estorba si nadie la usa:
+    // por eso además de estar activada tiene que haber algún descuento real.
+    $verItbis = !empty($cfg['mostrar_itbis']);
+    $verSku   = !empty($cfg['mostrar_sku']);
+    $verDesc  = !empty($cfg['mostrar_descuento'])
+                && array_sum(array_map(fn($l) => (float) ($l['descuento_monto'] ?? 0), $lineas)) > 0.001;
 
     $h = pdf_brand_header('COTIZACIÓN', $c['numero']);
 
-    // Cliente y datos del documento.
-    $h .= '<table style="width:100%; margin-bottom:8px;"><tr>'
-        . '<td style="vertical-align:top; width:55%;"><div class="box">'
-        . '<strong>Cliente:</strong> ' . htmlspecialchars($c['cliente'])
-        . (!empty($c['rnc_cedula'])       ? '<br><strong>RNC/Cédula:</strong> ' . htmlspecialchars($c['rnc_cedula']) : '')
-        . (!empty($c['cliente_telefono']) ? '<br><strong>Teléfono:</strong> ' . htmlspecialchars($c['cliente_telefono']) : '')
-        . (!empty($c['cliente_direccion'])? '<br>' . htmlspecialchars($c['cliente_direccion']) : '')
+    // Los campos propios del negocio se listan con los datos del documento.
+    $extra = '';
+    $vals  = cot_camposValores($c);
+    foreach (cot_campos() as $cp) {
+        $v = $vals[$cp['clave']] ?? '';
+        if ($v === '') continue;
+        $extra .= '<tr><td class="dato" style="color:#8A93A5;">' . $esc($cp['etiqueta']) . '</td>'
+                . '<td class="dato num"><strong>' . $esc($v) . '</strong></td></tr>';
+    }
+
+    // Cliente y documento, en celdas de una misma fila para que midan igual
+    // aunque uno tenga más renglones que el otro.
+    $h .= '<table style="width:100%; margin-bottom:12px; border-spacing:0;"><tr>'
+        . '<td class="box box-acento" style="border-left-color:' . $color . '; width:50%;">'
+        . '<div class="box-tit">Cotizado a</div>'
+        . '<div class="nombre-fuerte">' . $esc($c['cliente']) . '</div>'
+        . '<div class="dato">'
+        . (!empty($c['rnc_cedula'])        ? 'RNC/Cédula ' . $esc($c['rnc_cedula']) . '<br>' : '')
+        . (!empty($c['cliente_direccion']) ? $esc($c['cliente_direccion']) . '<br>' : '')
+        . (!empty($c['cliente_telefono'])  ? $esc($c['cliente_telefono']) : '')
         . '</div></td>'
-        . '<td style="vertical-align:top; padding-left:8px;"><div class="box">'
-        . '<strong>Cotización:</strong> ' . htmlspecialchars($c['numero'])
-        . '<br><strong>Fecha:</strong> ' . fechaCorta($c['fecha'])
-        . '<br><strong>Válida hasta:</strong> ' . fechaCorta($c['vence'])
-        . ($vencida ? ' <span class="badge" style="background:#fef3c7;color:#b45309;">VENCIDA</span>' : '')
-        . '<br><strong>Sucursal:</strong> ' . htmlspecialchars($c['sucursal'])
-        . (!$esBase ? '<br><strong>Moneda:</strong> ' . htmlspecialchars($c['moneda_codigo'])
-                    . ' (tasa ' . rtrim(rtrim(number_format((float) $c['tasa_cambio'], 4, '.', ','), '0'), '.') . ')' : '')
-        . '</div></td></tr></table>';
+        . '<td style="width:3%; border:0;"></td>'
+        . '<td class="box" style="width:47%;">'
+        . '<div class="box-tit">Documento</div>'
+        . '<div class="qr-encf">' . $esc($c['numero']) . '</div>'
+        . '<table style="width:100%; margin-top:6px;">'
+        . '<tr><td class="dato" style="color:#8A93A5;">Fecha</td><td class="dato num"><strong>' . fechaCorta($c['fecha']) . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Válida hasta</td><td class="dato num"><strong>' . fechaCorta($c['vence'])
+        . ($vencida ? ' <span style="color:#B45309;">(vencida)</span>' : '') . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Sucursal</td><td class="dato num"><strong>' . $esc($c['sucursal']) . '</strong></td></tr>'
+        . (!$esBase ? '<tr><td class="dato" style="color:#8A93A5;">Moneda</td><td class="dato num"><strong>'
+            . $esc($c['moneda_codigo']) . ' · tasa '
+            . rtrim(rtrim(number_format((float) $c['tasa_cambio'], 4, '.', ','), '0'), '.') . '</strong></td></tr>' : '')
+        . $extra
+        . '</table></td></tr></table>';
 
     // Líneas.
+    $anchoDesc = $verDesc ? ($verItbis ? '36%' : '44%') : ($verItbis ? '44%' : '52%');
     $h .= '<table class="tbl"><thead><tr>'
-        . '<th>Descripción</th><th class="num">Cant.</th><th class="num">Precio</th>'
-        . '<th class="num">ITBIS</th><th class="num">Importe</th></tr></thead><tbody>';
+        . '<th style="background:' . $color . '; width:' . $anchoDesc . ';">Descripción</th>'
+        . '<th style="background:' . $color . '; width:9%;" class="num">Cant.</th>'
+        . '<th style="background:' . $color . '; width:16%;" class="num">Precio</th>'
+        . ($verDesc  ? '<th style="background:' . $color . '; width:11%;" class="num">Desc.</th>' : '')
+        . ($verItbis ? '<th style="background:' . $color . '; width:13%;" class="num">ITBIS</th>' : '')
+        . '<th style="background:' . $color . '; width:18%;" class="num">Importe</th>'
+        . '</tr></thead><tbody>';
     foreach ($lineas as $l) {
-        $h .= '<tr><td>' . htmlspecialchars($l['descripcion']) . '</td>'
+        $dm  = (float) ($l['descuento_monto'] ?? 0);
+        $pct = (float) ($l['descuento_pct'] ?? 0);
+        $h .= '<tr><td><strong>' . $esc($l['descripcion']) . '</strong>'
+            . ($verSku && !empty($l['sku']) ? '<br><span class="sku">' . $esc($l['sku']) . '</span>' : '')
+            . (empty($l['producto_id']) ? '<br><span class="sku">servicio</span>' : '')
+            . '</td>'
             . '<td class="num">' . qty($l['cantidad']) . '</td>'
-            . '<td class="num">' . $moneda((float) $l['precio_unitario']) . '</td>'
-            . '<td class="num">' . $moneda((float) $l['itbis']) . '</td>'
-            . '<td class="num">' . $moneda((float) $l['subtotal']) . '</td></tr>';
+            . '<td class="num">' . $celda((float) $l['precio_unitario']) . '</td>'
+            . ($verDesc ? '<td class="num">' . ($dm > 0
+                    ? '−' . $celda($dm)
+                      . ($pct > 0 ? '<br><span class="sku">' . rtrim(rtrim(number_format($pct, 2), '0'), '.') . '%</span>' : '')
+                    : '—') . '</td>' : '')
+            . ($verItbis ? '<td class="num">' . $celda((float) $l['itbis']) . '</td>' : '')
+            . '<td class="num"><strong>' . $celda((float) $l['subtotal']) . '</strong></td></tr>';
     }
     $h .= '</tbody></table>';
 
-    // Totales.
-    $h .= '<table style="width:48%; margin-left:52%; margin-top:12px;" class="totales">'
-        . '<tr><td class="lbl">Subtotal</td><td class="val">' . $moneda((float) $c['subtotal']) . '</td></tr>'
-        . ((float) $c['descuento'] > 0 ? '<tr><td class="lbl">Descuento</td><td class="val">-' . $moneda((float) $c['descuento']) . '</td></tr>' : '')
-        . '<tr><td class="lbl">ITBIS</td><td class="val">' . $moneda((float) $c['itbis']) . '</td></tr>'
-        . '<tr><td class="lbl total-final">TOTAL</td><td class="val total-final">' . $moneda((float) $c['total']) . '</td></tr>';
-    if (!$esBase) {
-        $h .= '<tr><td class="lbl" style="font-size:9px;">Equivalente</td>'
-            . '<td class="val" style="font-size:9px;font-weight:normal;">' . money((float) $c['total_base']) . '</td></tr>';
-    }
-    $h .= '</table>';
-
-    if (!empty($c['condiciones'])) {
-        $h .= '<h3>Condiciones</h3><div class="box" style="font-size:10px;white-space:pre-wrap;">'
-            . htmlspecialchars($c['condiciones']) . '</div>';
+    // Cierre: condiciones a la izquierda, totales a la derecha.
+    $izq = '';
+    $condiciones = $c['condiciones'] ?: $cfg['condiciones'];
+    if ($condiciones) {
+        $izq .= '<div class="box"><div class="box-tit">Condiciones</div>'
+              . '<div class="qr-nota">' . nl2br($esc($condiciones)) . '</div></div>';
     }
     if (!empty($c['notas'])) {
-        $h .= '<p class="meta" style="font-size:10px;color:#374151;margin-top:10px;">' . htmlspecialchars($c['notas']) . '</p>';
+        $izq .= '<div class="box" style="margin-top:8px;"><div class="box-tit">Notas</div>'
+              . '<div class="qr-nota">' . $esc($c['notas']) . '</div></div>';
     }
 
-    $h .= '<p class="meta" style="margin-top:18px;">Esta cotización tiene validez hasta el '
-        . fechaCorta($c['vence']) . '. Los precios pueden variar después de esa fecha.'
+    $der = '<table class="tot">'
+        . '<tr><td class="lbl">Subtotal</td><td class="val">' . $moneda((float) $c['subtotal']) . '</td></tr>'
+        . ((float) $c['descuento'] > 0 ? '<tr><td class="lbl">Descuento</td><td class="val" style="color:#BE123C;">−' . $moneda((float) $c['descuento']) . '</td></tr>' : '')
+        . ($verItbis ? '<tr><td class="lbl">ITBIS</td><td class="val">' . $moneda((float) $c['itbis']) . '</td></tr>' : '')
+        . '</table>'
+        . '<div class="total-bloque" style="background:' . $color . ';"><table style="width:100%"><tr>'
+        . '<td class="lbl">TOTAL</td><td class="val">' . $moneda((float) $c['total']) . '</td>'
+        . '</tr></table></div>';
+    if (!$esBase) {
+        $der .= '<p class="qr-nota" style="text-align:right; margin-top:5px;">Equivalente: ' . money((float) $c['total_base']) . '</p>';
+    }
+
+    $h .= '<table style="width:100%; margin-top:14px;"><tr>'
+        . '<td style="width:56%; vertical-align:top;">' . $izq . '</td>'
+        . '<td style="width:44%; vertical-align:top; padding-left:10px;">' . $der . '</td>'
+        . '</tr></table>';
+
+    if ($cfg['mensaje_cierre']) {
+        $h .= '<p style="text-align:center; margin-top:16px; font-size:11px; color:#4B5563;">'
+            . $esc($cfg['mensaje_cierre']) . '</p>';
+    }
+
+    $h .= pdf_pie('Válida hasta el ' . fechaCorta($c['vence'])
+        . '. Los precios pueden variar después de esa fecha.'
         . (!$esBase ? ' El importe en pesos se calculará a la tasa vigente el día de la facturación.' : '')
-        . '</p>';
-
-    if (!empty($c['vendedor'])) {
-        $h .= '<p class="meta">Preparada por ' . htmlspecialchars(trim($c['vendedor'] . ' ' . $c['vendedor_ape'])) . '</p>';
-    }
+        . ($cfg['pie'] ? '<br>' . $esc($cfg['pie']) : ''));
 
     return $h;
 }
