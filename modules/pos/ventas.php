@@ -44,10 +44,11 @@ if (isPost()) {
                 }
                 dbUpdate('ventas', ['estado' => 'anulada'], 'id = ?', [$id]);
 
-                // Formato 608: solo se reportan comprobantes fiscales realmente
-                // emitidos. Ver ncfEsReportable() — un número con secuencia
-                // cero nunca lo autorizó la DGII y no puede subir al 608.
-                if (!empty($v['ncf']) && ncfEsReportable((string) $v['ncf'])) {
+                // Formato 608: solo se reportan comprobantes realmente EMITIDOS.
+                // Ver ncfComprobanteEmitido() — un número con secuencia cero, o
+                // un e-CF que la DGII rechazó, no son comprobantes suyos y no
+                // pueden subir al 608.
+                if (ncfComprobanteEmitido($v)) {
                     dbInsert('comprobantes_anulados', [
                         'ncf'               => $v['ncf'],
                         'fecha_comprobante' => substr($v['fecha'], 0, 10),

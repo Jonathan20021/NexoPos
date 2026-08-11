@@ -63,6 +63,32 @@ function ncfEsReportable(string $ncf): bool
 }
 
 /**
+ * ¿El comprobante de esta venta llegó a EMITIRSE de verdad?
+ *
+ * Dos formas de que un número exista en `ventas.ncf` sin ser un comprobante:
+ *
+ *  · La secuencia es cero — nunca la autorizó nadie. Ver ncfEsReportable().
+ *  · Es un e-NCF cuyo e-CF la DGII **rechazó**. El número se consumió y por eso
+ *    se conserva, pero el comprobante no existe para la DGII: anularlo en el 608
+ *    sería declarar que se deja sin efecto algo que nunca aceptó.
+ *
+ * Un e-CF que todavía está en cola (`pendiente`/`enviado`) tampoco cuenta: aún
+ * no hay acuse. Si más tarde lo aceptan y hay que anularlo, se anula entonces.
+ */
+function ncfComprobanteEmitido(array $venta): bool
+{
+    $ncf = (string) ($venta['ncf'] ?? '');
+    if ($ncf === '' || !ncfEsReportable($ncf)) return false;
+
+    // Preimpreso: si tiene número válido, se emitió.
+    if (!function_exists('ecfENCFValido') || !ecfENCFValido($ncf)) return true;
+
+    $estado = qVal("SELECT estado FROM ecf_documentos WHERE origen = 'venta' AND origen_id = ?",
+                   [(int) ($venta['id'] ?? 0)]);
+    return $estado === 'aceptado';
+}
+
+/**
  * Registra/actualiza un terminal por su token de dispositivo (generado en el
  * navegador y guardado en localStorage). Devuelve la fila del terminal.
  */
