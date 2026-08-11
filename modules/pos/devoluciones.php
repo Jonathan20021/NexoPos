@@ -140,6 +140,11 @@ if (isPost()) {
             flash($avisoEcf ? 'warning' : 'success',
                   'Devolución registrada y stock actualizado.'
                   . ($devNcf ? ' Nota de crédito ' . $devNcf . ' emitida.' : '') . $avisoEcf);
+
+            // Se termina en el comprobante, igual que una venta termina en su
+            // ticket: la nota de crédito es un documento fiscal que el cliente
+            // se lleva, no un apunte interno.
+            redirect('modules/pos/nota_credito.php?id=' . (int) $devId . '&print=1');
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -235,7 +240,7 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Devolución</th><th>Nota de crédito</th><th>Venta</th><th>Sucursal</th><th>Motivo</th><th>Usuario</th><th>Fecha</th><th class="text-right">Total</th></tr></thead>
+        <thead><tr><th>Devolución</th><th>Nota de crédito</th><th>Venta</th><th>Sucursal</th><th>Motivo</th><th>Usuario</th><th>Fecha</th><th class="text-right">Total</th><th></th></tr></thead>
         <tbody>
           <?php foreach ($devs as $d): ?>
             <tr>
@@ -247,6 +252,11 @@ layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones
               <td class="text-slate-500"><?= e($d['usuario'] ?: '—') ?></td>
               <td class="text-slate-500"><?= fechaHora($d['created_at']) ?></td>
               <td class="text-right font-bold text-rose-600"><?= money($d['total']) ?></td>
+              <td class="text-right whitespace-nowrap">
+                <a href="<?= e(url('modules/pos/nota_credito.php?id=' . (int) $d['id'])) ?>" target="_blank"
+                   class="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                   title="Nota de crédito"><?= icon('print', 'w-4 h-4') ?></a>
+              </td>
             </tr>
           <?php endforeach; ?>
         </tbody>

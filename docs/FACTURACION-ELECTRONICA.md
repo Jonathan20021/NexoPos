@@ -54,6 +54,7 @@ Las 147 tramas del Excel están extraídas en
 | [`includes/ecf_trama.php`](../includes/ecf_trama.php) | Layouts por tipo, construcción y validación de la trama |
 | [`includes/ecf_api.php`](../includes/ecf_api.php) | Cliente HTTP: login, envío, consulta, descargas |
 | [`includes/ecf.php`](../includes/ecf.php) | Traducción venta/devolución → e-CF, emisión y cola |
+| [`modules/pos/nota_credito.php`](../modules/pos/nota_credito.php) | Comprobante de la devolución: térmico y PDF, con el QR |
 | [`modules/finanzas/ecf.php`](../modules/finanzas/ecf.php) | Pantalla: configuración, diagnóstico y consola |
 | [`modules/finanzas/ecf_cron.php`](../modules/finanzas/ecf_cron.php) | Punto de entrada del cron para la cola |
 | [`database/migracion_ecf_p15.sql`](../database/migracion_ecf_p15.sql) | Esquema |
@@ -173,20 +174,36 @@ la *consulta* salió bien, no el comprobante. Por eso `ecfInterpretarEstado()` l
 `data.status` (`Aceptado` / `ACCEPTED`) y no el código de arriba — leer el
 equivocado sería dar por bueno lo que la DGII rechazó.
 
-### El acuse tarda de 2 a 4 segundos
+### El acuse tarda: 2-4 s una venta, hasta un minuto una nota de crédito
 
 El envío es inmediato, pero el documento **no queda «Aceptado» al instante**:
-pasa por un estado intermedio `Pendiente` y tarda entre dos y cuatro segundos en
-resolverse. Medido contra el ambiente real.
+pasa por un estado intermedio `Pendiente`. Medido contra el ambiente real:
+
+| Documento | Tiempo hasta la firma |
+|---|---|
+| Venta (E31/E32) | 2-4 s |
+| Nota de crédito (E34) | hasta ~54 s |
+
+La nota de crédito tarda mucho más porque el proveedor no solo la valida a ella:
+además tiene que localizar y comprobar el e-CF al que hace referencia, y eso pasa
+por la DGII.
 
 Eso importa porque el QR solo existe una vez firmado. Consultar el estado justo
 después del envío llega demasiado pronto y el ticket sale sin QR — que fue
 exactamente lo que ocurrió en la primera prueba en producción.
 
-Por eso `ecfResolverComprobante()` consulta hasta tres veces (inmediato, a 1,5 s
-y a 2 s) antes de imprimir. Coste medido en el servidor: **~3,7 s** de los que
-2,2 s son del proveedor y el resto espera. A cambio, el cliente se lleva un
-comprobante completo en la primera impresión.
+Por eso `ecfResolverComprobante()` insiste antes de imprimir, con una escalera
+distinta según el documento:
+
+- `ECF_ESPERAS_ACUSE` — venta: inmediato, 1,5 s, 2 s y 3 s (**hasta 6,5 s**).
+  Coste medido: ~3,7 s, de los que 2,2 s son del proveedor.
+- `ECF_ESPERAS_ACUSE_NC` — nota de crédito: dos escalones más, **hasta 14 s**.
+
+La escalera de la nota de crédito se corta a los 14 s **a propósito**, aun
+sabiendo que a veces no llegará. Esperar el minuto entero dejaría al cajero
+mirando una pantalla congelada con el cliente delante, y la devolución ya está
+hecha y transmitida: lo único pendiente es el acuse. Lo que cubre ese hueco es la
+cadencia de reconsulta de la cola, que a partir de ahí repregunta cada 15 s.
 
 Si en algún momento pesa más la velocidad en el mostrador que la impresión
 completa, basta dejar `ECF_ESPERAS_ACUSE = [0]`: el ticket sale sin QR y la cola
@@ -361,6 +378,31 @@ devolución parcial borraría del registro una venta que sigue viva por el resto
 del importe. Los ejemplos oficiales del proveedor lo confirman: sus casos de
 «Anulación e-NCF» usan 1 y los de «Corrección Monto» usan 3.
 
+### La nota de crédito se imprime con lo declarado, no con lo reembolsado
+
+`modules/pos/nota_credito.php` es el comprobante de la devolución: térmico de
+80 mm y PDF A4, con la marca de la venta original y el QR de la DGII. La
+devolución termina ahí, igual que una venta termina en su ticket.
+
+Dos datos NO se recalculan al imprimir: se leen de la trama enviada, vía
+`ecfDeclaradoDeDevolucion()`.
+
+**El código de modificación.** `ecfCodigoModificacionDevolucion()` mira cuántas
+devoluciones tiene la venta *hoy*. Si después de emitir esta nota se hizo otra,
+recalcular daría un número distinto del que la DGII tiene guardado, y la
+representación impresa dejaría de representar nada.
+
+**Los importes por línea.** En `devolucion_detalles` el subtotal es lo que se
+reembolsó, **con el ITBIS dentro** —es el dinero que salió de la caja—. La trama
+declara la base sin impuesto, reconstruida con el mismo reparto y redondeo que
+hizo la venta. Imprimir el reembolso bajo una columna que suma hacia un total
+etiquetado «base acreditada» daría un papel que se contradice: líneas por
+RD$ 2,891.00 sobre una base de RD$ 2,450.00.
+
+Cuando la nota es en papel (B04 preimpreso, sin e-CF) no hay trama que leer: se
+imprimen las líneas de la base de datos y la columna se rotula «Importe» en vez
+de «Base», que es lo que realmente son.
+
 ### El corte hay que hacerlo con los terminales drenados
 
 Con el modo offline, un terminal puede tener reservados números B02 que todavía
@@ -387,12 +429,32 @@ normal y deja la cola casi siempre vacía.
 **2. Tick oportunista.** `ecfTickSiToca()` se dispara al pintar la barra
 superior, con el mismo enganche que las notificaciones y el motor de marketing.
 Solo entra si el e-CF está encendido **y hay trabajo real**; un turno cada
-`ECF_TICK_MINUTOS` (5) entre todos los usuarios, reclamado de forma atómica en
+`ECF_TICK_SEGUNDOS` (20) entre todos los usuarios, reclamado de forma atómica en
 `sistema_estado` para que diez cajas abiertas no lancen diez pasadas contra el
 proveedor a la vez. Lote de 3 documentos y espera corta.
 
 Se comprueba si hay trabajo **antes** de reclamar el turno: quemarlo en balde
-dejaría la cola parada otros cinco minutos justo cuando entre trabajo de verdad.
+dejaría la cola parada otro intervalo entero justo cuando entre trabajo de
+verdad. Por eso veinte segundos no salen caros — con la cola vacía, que es lo
+normal, el tick no llega ni a reclamar turno.
+
+**Cada cuánto se repregunta por un comprobante ya enviado.** No es un número
+fijo, sino `ECF_RECONSULTA`, que se aprieta o se afloja según lo que lleve
+transmitido:
+
+| Enviado hace | Se vuelve a consultar cada |
+|---|---|
+| menos de 2 min | 15 s |
+| menos de 30 min | 2 min |
+| más | 10 min |
+
+El motivo es que el proveedor no tarda lo mismo en todo: una venta queda firmada
+en 2-4 s, pero una nota de crédito puede tardar cerca de un minuto porque además
+valida el e-CF al que hace referencia. Con el intervalo plano de diez minutos que
+había antes, un comprobante que ya estaba aceptado se pasaba un cuarto de hora
+sin QR por pura espera administrativa. Insistir sirve cuando la respuesta está
+por llegar; cuando el documento se atascó de verdad, insistir no arregla nada y
+solo gasta llamadas, y por eso el último tramo afloja.
 
 **3. Cron real** — `modules/finanzas/ecf_cron.php`. Es el único que funciona con
 la tienda cerrada, y con el e-CF encendido **conviene ponerlo**: un comprobante

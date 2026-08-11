@@ -534,16 +534,33 @@ function ecfEmitirDevolucion(int $devolucionId, array $opciones = []): array
 const ECF_ESPERAS_ACUSE = [0, 1500000, 2000000, 3000000];
 
 /**
+ * La misma escalera, alargada, para las notas de crédito.
+ *
+ * Medido contra el ambiente real: una venta queda firmada en 2-4 s, pero una
+ * nota de crédito tardó 54 s (envío 19:51:29, firma 19:52:23). El proveedor no
+ * solo valida la nota: además tiene que localizar y comprobar el e-CF al que
+ * hace referencia, y eso pasa por la DGII.
+ *
+ * Se estira hasta ~14 s y ahí se corta a propósito. Esperar el minuto entero
+ * dejaría al cajero mirando una pantalla congelada con el cliente delante, y la
+ * devolución YA está hecha y transmitida: lo único pendiente es el acuse, que
+ * la cola recoge a los pocos segundos. Cuando el proveedor va rápido —o cuando
+ * la nota es de las que resuelven pronto— se gana el QR en el mismo viaje; y
+ * cuando no, no se pierde nada más que unos segundos.
+ */
+const ECF_ESPERAS_ACUSE_NC = [0, 1500000, 2000000, 3000000, 3500000, 4000000];
+
+/**
  * Intenta dejar el comprobante resuelto (aceptado y con QR) antes de imprimir.
  *
  * Nunca lanza y nunca es obligatorio: si el proveedor tarda más de la cuenta,
  * el comprobante ya está transmitido y la cola lo termina. Lo único que se
  * pierde es el QR en esa primera impresión, y aparece al reimprimir.
  */
-function ecfResolverComprobante(int $documentoId): void
+function ecfResolverComprobante(int $documentoId, array $esperas = ECF_ESPERAS_ACUSE): void
 {
     try {
-        foreach (ECF_ESPERAS_ACUSE as $espera) {
+        foreach ($esperas as $espera) {
             if ($espera > 0) usleep($espera);
 
             $r = ecfActualizarEstado($documentoId, ['timeout' => ECF_TIMEOUT_POS]);
@@ -609,7 +626,10 @@ function ecfEmitirSeguro(string $origen, int $origenId): array
         // Con el tope corto del POS y sin poder lanzar: si algo no responde, el
         // comprobante ya está enviado y la cola lo termina de resolver.
         if (!empty($r['ok']) && !empty($r['documento_id']) && !empty($r['track_id'])) {
-            ecfResolverComprobante((int) $r['documento_id']);
+            ecfResolverComprobante(
+                (int) $r['documento_id'],
+                $origen === 'devolucion' ? ECF_ESPERAS_ACUSE_NC : ECF_ESPERAS_ACUSE
+            );
         }
         return $r;
     } catch (Throwable $e) {
@@ -1021,6 +1041,93 @@ function ecfQrDeVenta(int $ventaId): ?string
     return $id ? ecfQrDataUri((int) $id) : null;
 }
 
+/** Lo mismo para la nota de crédito de una devolución. */
+function ecfQrDeDevolucion(int $devolucionId): ?string
+{
+    $id = qVal("SELECT id FROM ecf_documentos WHERE origen = 'devolucion' AND origen_id = ?", [$devolucionId]);
+    return $id ? ecfQrDataUri((int) $id) : null;
+}
+
+/**
+ * Lo que REALMENTE se declaró de una devolución, leído de la trama enviada.
+ *
+ * La representación impresa de un e-CF tiene que decir lo mismo que recibió la
+ * DGII, así que no se recalcula nada: se lee. Importa en dos sitios concretos:
+ *
+ *  · El código de modificación. ecfCodigoModificacionDevolucion() mira cuántas
+ *    devoluciones tiene la venta HOY; si después de emitir esta nota se hizo
+ *    otra, el número saldría distinto del que el proveedor tiene guardado.
+ *  · Los importes por línea. En `devolucion_detalles` el subtotal es lo que se
+ *    reembolsó —con el ITBIS dentro—, mientras que la trama declara la base sin
+ *    impuesto, reconstruida con el mismo reparto y redondeo que hizo la venta.
+ *    Imprimir el reembolso junto a un total etiquetado «base» daría un papel que
+ *    se contradice a sí mismo.
+ *
+ * Devuelve null si la devolución no tiene documento electrónico (nota en papel)
+ * o si la trama no se puede interpretar.
+ */
+function ecfDeclaradoDeDevolucion(int $devolucionId): ?array
+{
+    $trama = qVal("SELECT trama FROM ecf_documentos WHERE origen = 'devolucion' AND origen_id = ?", [$devolucionId]);
+    if (!$trama) return null;
+
+    try {
+        return ecfParsearTrama((string) $trama);
+    } catch (Throwable $e) {
+        return null;   // el papel sale igual, con los datos de la base
+    }
+}
+
+/**
+ * El código de modificación en palabras, para la representación impresa.
+ *
+ * Sale del catálogo oficial (Tabla 18) para que el papel diga exactamente lo
+ * mismo que la DGII entiende del número declarado.
+ */
+function ecfTextoModificacion(?int $codigo): string
+{
+    return ecfCodigosModificacion()[$codigo] ?? 'Modificación de comprobante fiscal';
+}
+
+/**
+ * Cada cuánto se vuelve a preguntar por un comprobante ya transmitido, según lo
+ * que lleve enviado. Pares [antigüedad máxima en segundos, espera en segundos];
+ * el tramo con `null` es el resto.
+ *
+ * Diez minutos planos era demasiado para lo recién enviado. El proveedor firma
+ * una venta en 2-4 s y una nota de crédito en menos de un minuto, así que un
+ * comprobante que ya estaba listo se pasaba un cuarto de hora sin QR por pura
+ * espera administrativa. Ahora se insiste mientras la respuesta está por llegar
+ * y se afloja cuando ya está claro que el documento se atascó de verdad —que es
+ * cuando insistir no arregla nada y solo gasta llamadas.
+ */
+const ECF_RECONSULTA = [
+    [120,  15],    // en los dos primeros minutos desde el envío, cada 15 s
+    [1800, 120],   // hasta la media hora, cada 2 min
+    [null, 600],   // de ahí en adelante, cada 10 min
+];
+
+/**
+ * Fragmento SQL que decide si un documento `enviado` toca reconsultar.
+ *
+ * Vive en una función porque la usan la cola y el sondeo de trabajo: cuando el
+ * criterio estaba copiado en las dos, bastaba tocar una para que dejaran de
+ * coincidir y el tick se despertara para no hacer nada.
+ */
+function ecfCondicionReconsulta(): string
+{
+    $casos = '';
+    foreach (ECF_RECONSULTA as [$edad, $espera]) {
+        $casos .= $edad === null
+            ? ' ELSE ' . (int) $espera
+            : ' WHEN TIMESTAMPDIFF(SECOND, COALESCE(enviado_at, created_at), NOW()) <= '
+              . (int) $edad . ' THEN ' . (int) $espera;
+    }
+
+    return "(consultado_at IS NULL
+             OR consultado_at < DATE_SUB(NOW(), INTERVAL (CASE$casos END) SECOND))";
+}
+
 /** Consulta el estado en el proveedor y lo refleja en `ecf_documentos`. */
 function ecfActualizarEstado(int $documentoId, array $opciones = []): array
 {
@@ -1070,12 +1177,13 @@ function ecfProcesarCola(int $limite = 25, array $opciones = []): array
         $r['ok'] ? $resumen['enviados']++ : $resumen['fallidos']++;
     }
 
-    // Los enviados se vuelven a consultar hasta que resuelvan. Se espacia 10
-    // minutos para no preguntar lo mismo cada vez que alguien abre una página.
+    // Los enviados se vuelven a consultar hasta que resuelvan, con la cadencia
+    // de ECF_RECONSULTA: apretada al principio, holgada cuando ya se atascó.
+    $reconsultar = ecfCondicionReconsulta();
     $enviados = qAll(
         "SELECT id FROM ecf_documentos
           WHERE estado = 'enviado' AND track_id IS NOT NULL
-            AND (consultado_at IS NULL OR consultado_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+            AND $reconsultar
           ORDER BY id LIMIT $limite"
     );
     foreach ($enviados as $e) {
@@ -1089,8 +1197,19 @@ function ecfProcesarCola(int $limite = 25, array $opciones = []): array
  *  TAREA PROGRAMADA
  * ============================================================ */
 
-/** Minutos mínimos entre dos pasadas oportunistas de la cola. */
-const ECF_TICK_MINUTOS = 5;
+/**
+ * Segundos mínimos entre dos pasadas oportunistas de la cola.
+ *
+ * Bajó de cinco minutos a veinte segundos para que la cadencia de
+ * ECF_RECONSULTA sirva de algo: de nada vale querer repreguntar a los 15 s si
+ * el turno solo se reparte cada cinco minutos.
+ *
+ * Bajarlo no multiplica las llamadas al proveedor, porque el turno solo se
+ * reclama DESPUÉS de comprobar que hay trabajo de verdad (ecfHayTrabajoEnCola),
+ * y esa comprobación son dos consultas por índice. Con la cola vacía —el caso
+ * normal, porque cada venta transmite la suya— este número no cuesta nada.
+ */
+const ECF_TICK_SEGUNDOS = 20;
 
 /** Documentos por pasada oportunista. Ver ecfTickSiToca() para el porqué. */
 const ECF_TICK_LOTE = 3;
@@ -1110,22 +1229,22 @@ function ecfDisponible(): bool
 
 /**
  * Reclama el turno de la cola de forma atómica. Devuelve true UNA sola vez cada
- * ECF_TICK_MINUTOS aunque entren diez peticiones en el mismo segundo.
+ * ECF_TICK_SEGUNDOS aunque entren diez peticiones en el mismo segundo.
  *
  * Es el mismo mecanismo que usan el barrido de notificaciones y el motor de
  * marketing: un UPDATE condicional sobre `sistema_estado` cuyo rowCount decide
  * quién se lleva el turno. Sin él, diez cajas abiertas a la vez lanzarían diez
  * pasadas simultáneas contra el proveedor.
  */
-function ecfReclamarTurno(int $minutos = ECF_TICK_MINUTOS): bool
+function ecfReclamarTurno(int $segundos = ECF_TICK_SEGUNDOS): bool
 {
     $st = q(
         "INSERT INTO sistema_estado (clave, valor, updated_at)
          VALUES ('ecf_cola_tick', UNIX_TIMESTAMP(), NOW())
          ON DUPLICATE KEY UPDATE
-            valor      = IF(updated_at < (NOW() - INTERVAL ? MINUTE), UNIX_TIMESTAMP(), valor),
-            updated_at = IF(updated_at < (NOW() - INTERVAL ? MINUTE), NOW(), updated_at)",
-        [$minutos, $minutos]
+            valor      = IF(updated_at < (NOW() - INTERVAL ? SECOND), UNIX_TIMESTAMP(), valor),
+            updated_at = IF(updated_at < (NOW() - INTERVAL ? SECOND), NOW(), updated_at)",
+        [$segundos, $segundos]
     );
     return $st->rowCount() > 0;
 }
@@ -1134,7 +1253,7 @@ function ecfReclamarTurno(int $minutos = ECF_TICK_MINUTOS): bool
  * ¿Hay algo que hacer? Dos consultas baratas por índice.
  *
  * Se comprueba ANTES de reclamar el turno para no quemarlo en balde: si no hay
- * trabajo, quemar el turno dejaría la cola parada otros cinco minutos.
+ * trabajo, quemar el turno dejaría la cola parada otro intervalo entero.
  */
 function ecfHayTrabajoEnCola(): bool
 {
@@ -1146,10 +1265,11 @@ function ecfHayTrabajoEnCola(): bool
     );
     if ($pendiente) return true;
 
+    $reconsultar = ecfCondicionReconsulta();
     return (bool) qVal(
         "SELECT 1 FROM ecf_documentos
           WHERE estado = 'enviado' AND track_id IS NOT NULL
-            AND (consultado_at IS NULL OR consultado_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+            AND $reconsultar
           LIMIT 1"
     );
 }
@@ -1161,7 +1281,7 @@ function ecfHayTrabajoEnCola(): bool
  * nadie ni tumbar una página pase lo que pase:
  *
  *  · Solo entra si el e-CF está encendido y hay trabajo REAL pendiente.
- *  · Un turno cada ECF_TICK_MINUTOS entre todos los usuarios.
+ *  · Un turno cada ECF_TICK_SEGUNDOS entre todos los usuarios.
  *  · Lote pequeño (ECF_TICK_LOTE) y espera corta por documento: en el peor caso
  *    el usuario desafortunado pierde unos segundos, no minutos.
  *  · Cualquier error se traga; la página se pinta igual.

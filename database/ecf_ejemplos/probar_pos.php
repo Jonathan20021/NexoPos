@@ -317,6 +317,35 @@ ecfTickSiToca();
 afirmar('Dos ticks seguidos no procesan dos veces (freno de turno)',
     (int) qVal("SELECT intentos FROM ecf_documentos WHERE id=?", [$docQr]) === $intentosAntes);
 
+// Cadencia de reconsulta. Lo que se protege aquí es que un comprobante recién
+// transmitido no se quede diez minutos sin QR sólo porque la cola tardaba ese
+// tanto en volver a preguntar, y que uno atascado de verdad no se consulte cada
+// quince segundos para siempre.
+$enviadoHace = static function (int $edad, ?int $ultima) use ($docQr) {
+    q("UPDATE ecf_documentos SET estado = 'aceptado'");
+    q("UPDATE ecf_documentos
+          SET estado = 'enviado', track_id = 'cadencia-test',
+              enviado_at    = NOW() - INTERVAL ? SECOND,
+              consultado_at = " . ($ultima === null ? 'NULL' : 'NOW() - INTERVAL ? SECOND') . "
+        WHERE id = ?",
+        $ultima === null ? [$edad, $docQr] : [$edad, $ultima, $docQr]);
+    return ecfHayTrabajoEnCola();
+};
+
+afirmar('Recién enviado y sin consultar: toca ya',             $enviadoHace(5, null));
+afirmar('Enviado hace 30 s, consultado hace 5 s: aún no',     !$enviadoHace(30, 5));
+afirmar('Enviado hace 30 s, consultado hace 20 s: toca',       $enviadoHace(30, 20));
+afirmar('Atascado hace 2 h, consultado hace 5 min: aún no',   !$enviadoHace(7200, 300));
+afirmar('Atascado hace 2 h, consultado hace 15 min: toca',     $enviadoHace(7200, 900));
+
+// La escalera de la nota de crédito es más larga que la de la venta: el
+// proveedor tarda más en firmarla porque además valida el e-CF referenciado.
+afirmar('La escalera de la nota de crédito es más larga que la de la venta',
+    array_sum(ECF_ESPERAS_ACUSE_NC) > array_sum(ECF_ESPERAS_ACUSE));
+afirmar('Pero acotada: no deja la pantalla colgada más de 15 s',
+    array_sum(ECF_ESPERAS_ACUSE_NC) / 1000000 <= 15,
+    round(array_sum(ECF_ESPERAS_ACUSE_NC) / 1000000, 1) . ' s');
+
 afirmar('Apagado el interruptor, el tick no hace nada', (function () use ($reset, $docQr) {
     $reset();
     ecfGuardarConfig(['activo' => 0]);
