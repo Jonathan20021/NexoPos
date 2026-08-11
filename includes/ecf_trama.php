@@ -350,8 +350,15 @@ function ecfLayout(string $tipoEcf): array
             //  · El descuento NO lleva IndicadorNorma1007. La norma 10-07 regula
             //    la retención en el crédito fiscal; en un régimen especial no
             //    hay nada que retener.
+            //
+            //  · El IDOC quita `IndicadorMontoGravado` y CONSERVA la fecha de
+            //    vencimiento de la secuencia. Tiene sentido: en un exento no hay
+            //    ITBIS, así que no hay nada que indicar sobre si los montos lo
+            //    llevan dentro. Los dos campos ocupan una posición cada uno, así
+            //    que confundirlos cuadra en número y falla en la DGII — el
+            //    proveedor lo cantó con el código 3002.
             return [
-                'IDOC' => array_values(array_diff($idocLargo, ['FechaVencimientoSecuencia'])),
+                'IDOC' => array_values(array_diff($idocLargo, ['IndicadorMontoGravado'])),
                 'EMIS' => $c['EMIS'],
                 'COMP' => $c['COMP_32'],
                 'INFA' => $c['INFA'],
