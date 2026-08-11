@@ -289,7 +289,7 @@ echo rep_abrir('Panel ejecutivo', $p, ['sucursal' => true]);
 <?= rep_seccion('Tendencia de los últimos 12 meses', 'Ingresos netos contra utilidad neta, mes a mes', 'trending', 'blue') ?>
   <div class="px-5 pb-5">
     <?= lineChart([
-        ['nombre' => 'Ingresos netos', 'color' => '#2563eb', 'valores' => $serieIngresos, 'area' => true],
+        ['nombre' => 'Ingresos netos', 'color' => marca_app(), 'valores' => $serieIngresos, 'area' => true],
         ['nombre' => 'Utilidad neta', 'color' => '#10b981', 'valores' => $serieUtilidad],
     ], $labels, ['alto' => 280]) ?>
   </div>

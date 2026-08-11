@@ -129,7 +129,7 @@ echo rep_abrir('Clientes y concentración', $p, ['sucursal' => true]);
     <?= rep_seccion('Clasificación ABC', 'Regla de Pareto sobre la facturación', 'layers', 'violet') ?>
       <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
         <?= donutMulti([
-            ['label' => 'A · núcleo del negocio', 'value' => $montoABC['A'], 'color' => '#2563eb'],
+            ['label' => 'A · núcleo del negocio', 'value' => $montoABC['A'], 'color' => marca_app()],
             ['label' => 'B · complementarios', 'value' => $montoABC['B'], 'color' => '#f59e0b'],
             ['label' => 'C · marginales', 'value' => $montoABC['C'], 'color' => '#cbd5e1'],
         ], 'Total', money($totalIngresos, false)) ?>

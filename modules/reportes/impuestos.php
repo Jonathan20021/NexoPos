@@ -132,7 +132,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
         . '<tr style="background:#f1f5f9"><td><strong>Débito fiscal</strong></td><td class="num"><strong>' . money($debitoFiscal) . '</strong></td></tr>'
         . '<tr><td>(−) ITBIS adelantado en compras</td><td class="num">' . money($creditoFiscal) . '</td></tr>'
         . '<tr><td>(−) ITBIS retenido por terceros</td><td class="num">' . money($retenido) . '</td></tr>'
-        . '<tr style="background:#eff6ff"><td><strong>' . ($aPagar >= 0 ? 'ITBIS A PAGAR' : 'SALDO A FAVOR') . '</strong></td>'
+        . '<tr style="background:#F4F5FB"><td><strong>' . ($aPagar >= 0 ? 'ITBIS A PAGAR' : 'SALDO A FAVOR') . '</strong></td>'
         . '<td class="num"><strong>' . money(abs($aPagar)) . '</strong></td></tr>'
         . '</tbody></table>';
     $H .= '<h3>Histórico mensual</h3><table class="tbl"><thead><tr><th>Periodo</th><th class="num">Base</th><th class="num">Débito</th><th class="num">Crédito</th><th class="num">A pagar</th></tr></thead><tbody>';
@@ -254,7 +254,7 @@ echo rep_abrir('ITBIS y retenciones', $p, ['sucursal' => true]);
 <?= rep_seccion('Histórico de ITBIS, 12 meses', 'Débito contra crédito fiscal mes a mes', 'trending', 'amber') ?>
   <div class="px-5 pb-5">
     <?= lineChart([
-        ['nombre' => 'Débito fiscal (ventas)', 'color' => '#2563eb', 'valores' => $sDeb, 'area' => true],
+        ['nombre' => 'Débito fiscal (ventas)', 'color' => marca_app(), 'valores' => $sDeb, 'area' => true],
         ['nombre' => 'Crédito fiscal (compras)', 'color' => '#10b981', 'valores' => $sCre],
     ], $labels, ['alto' => 260]) ?>
   </div>

@@ -467,14 +467,14 @@ $mensajes = get_flashes();
           <legend class="block text-sm font-semibold mb-2">¿Cómo prefieres pagar?</legend>
           <div class="space-y-2">
             <label class="flex items-start gap-3 border border-emerald-200 rounded-xl p-3 cursor-pointer hover:bg-marca-muy transition-colors duration-200 has-[:checked]:border-marca has-[:checked]:bg-marca-muy">
-              <input type="radio" name="metodo_pago" value="pickup" checked class="mt-1 accent-[#15803D]">
+              <input type="radio" name="metodo_pago" value="pickup" checked class="mt-1 accent-[#3B4A83]">
               <span>
                 <span class="font-semibold block">Pagar al retirar</span>
                 <span class="text-sm text-emerald-900/60">Pagas en efectivo o tarjeta cuando recojas el pedido.</span>
               </span>
             </label>
             <label class="flex items-start gap-3 border border-emerald-200 rounded-xl p-3 cursor-pointer hover:bg-marca-muy transition-colors duration-200 has-[:checked]:border-marca has-[:checked]:bg-marca-muy">
-              <input type="radio" name="metodo_pago" value="link_pago" class="mt-1 accent-[#15803D]">
+              <input type="radio" name="metodo_pago" value="link_pago" class="mt-1 accent-[#3B4A83]">
               <span>
                 <span class="font-semibold block">Recibir link de pago</span>
                 <span class="text-sm text-emerald-900/60">Te lo enviamos por WhatsApp para que pagues desde casa.</span>

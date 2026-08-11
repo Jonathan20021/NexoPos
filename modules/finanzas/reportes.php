@@ -172,7 +172,7 @@ $porVendedor = qAll(
     $pVentas
 );
 
-$catColors = ['blue'=>'#2563eb','emerald'=>'#10b981','amber'=>'#f59e0b','rose'=>'#f43f5e','indigo'=>'#6366f1','cyan'=>'#06b6d4','sky'=>'#0ea5e9','pink'=>'#ec4899','slate'=>'#64748b','violet'=>'#8b5cf6'];
+$catColors = ['blue'=>marca_app(),'emerald'=>'#10b981','amber'=>'#f59e0b','rose'=>'#f43f5e','indigo'=>'#6366f1','cyan'=>'#06b6d4','sky'=>'#0ea5e9','pink'=>'#ec4899','slate'=>'#64748b','violet'=>'#8b5cf6'];
 
 /* ============================================================
  *  Exportación a PDF gerencial profesional (Dompdf con marca)
@@ -186,7 +186,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
         . '<tr><td>(−) Costo de ventas</td><td class="num">' . money($costoVentas) . '</td></tr>'
         . '<tr style="background:#f1f5f9;"><td><strong>Utilidad bruta</strong></td><td class="num"><strong>' . money($utilidadBruta) . '</strong></td></tr>'
         . '<tr><td>(−) Otros gastos</td><td class="num">' . money($otrosGastos) . '</td></tr>'
-        . '<tr style="background:#eff6ff;"><td><strong>Utilidad neta</strong></td><td class="num"><strong>' . money($utilidadNeta) . '</strong></td></tr>'
+        . '<tr style="background:#F4F5FB;"><td><strong>Utilidad neta</strong></td><td class="num"><strong>' . money($utilidadNeta) . '</strong></td></tr>'
         . '</tbody></table>';
 
     $H .= '<h3>Top 10 productos por unidades</h3><table class="tbl"><thead><tr><th>#</th><th>Producto</th><th>Categoría</th><th class="num">Unidades</th><th class="num">Total</th></tr></thead><tbody>';

@@ -169,7 +169,7 @@ echo rep_kpis($kpis);
         $valB[] = $serieB[$m]['ingresos'];
     }
     echo lineChart([
-        ['nombre' => (string) $anioA, 'color' => '#2563eb', 'valores' => $valA],
+        ['nombre' => (string) $anioA, 'color' => marca_app(), 'valores' => $valA],
         ['nombre' => (string) $anioB, 'color' => '#cbd5e1', 'valores' => $valB],
     ], $labels, ['alto' => 280]);
     ?>

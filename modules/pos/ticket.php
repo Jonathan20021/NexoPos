@@ -36,7 +36,7 @@ $autoPrint = get('print') === '1';
 
 // ---- Identidad impresa ----
 $marca   = tienda_marca_de_venta($v);
-$color   = preg_match('/^#[0-9A-Fa-f]{6}$/', (string) $marca['color']) ? $marca['color'] : '#2563eb';
+$color   = preg_match('/^#[0-9A-Fa-f]{6}$/', (string) $marca['color']) ? $marca['color'] : marca_app();
 $logoUrl = tienda_logo_url($marca);
 
 // Comprobante Fiscal Electrónico. El rótulo cambia («e-NCF» en vez de «NCF»)

@@ -257,13 +257,13 @@ function editor_visual_assets(): string
   .ed-area p  { margin: 0 0 .7em; }
   .ed-area ul { list-style: disc;   padding-left: 1.4em; margin: 0 0 .7em; }
   .ed-area ol { list-style: decimal;padding-left: 1.4em; margin: 0 0 .7em; }
-  .ed-area a  { color:#2563eb; text-decoration: underline; }
+  .ed-area a  { color:#3B4A83; text-decoration: underline; }
   .ed-var-chip {
     display:inline-block; padding:.05em .5em; margin:0 .1em; border-radius:.5rem;
-    background:#dbeafe; color:#1d4ed8; font-size:.85em; font-weight:600;
+    background:#E7EAF6; color:#2F3D6F; font-size:.85em; font-weight:600;
     white-space:nowrap; user-select:all; cursor:default;
   }
-  .ed-btn.activo { background:#fff; color:#2563eb; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .ed-btn.activo { background:#fff; color:#3B4A83; box-shadow:0 1px 2px rgba(0,0,0,.06); }
   textarea.ed-fuente { display:none !important; }
 </style>
 <script>

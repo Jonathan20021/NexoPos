@@ -12,7 +12,7 @@ $page_actions  = $GLOBALS['page_actions'] ?? '';
 <title><?= e($page_title) ?> · <?= e(APP_NAME) ?></title>
 <link rel="icon" href="<?= e(asset('favicon.svg')) ?>" type="image/svg+xml">
 <link rel="manifest" href="<?= e(url('manifest.php')) ?>">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="<?= e(marca_app()) ?>">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="NexoPOS">
@@ -28,7 +28,11 @@ tailwind.config = {
     extend: {
       fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
       colors: {
-        brand: { 50:'#eff5ff',100:'#dbe8fe',200:'#bfd7fe',300:'#93bbfd',400:'#609afa',500:'#3b82f6',600:'#2563eb',700:'#1d4fd8',800:'#1e40af',900:'#1e3a8a' },
+        // Se PISA la paleta `blue` de Tailwind con la de la marca: así las 568
+        // clases blue-* repartidas por la app se recolorean de una vez. Ver
+        // includes/marca_app.php.
+        blue:  <?= marca_app_tailwind() ?>,
+        brand: <?= marca_app_tailwind() ?>,
       },
       boxShadow: {
         card: '0 1px 2px 0 rgba(15,23,42,.04), 0 1px 3px 0 rgba(15,23,42,.06)',
@@ -157,6 +161,10 @@ tailwind.config = {
     .sidebar-is-collapsed .app-sidebar { width: 80px; }
     .sidebar-is-collapsed .app-shell { padding-left: 80px; }
     .sidebar-is-collapsed .sidebar-brand { justify-content: center; padding-inline: 12px; }
+    /* La marca tiene dos formas: el logotipo apaisado con la barra desplegada y
+       la inicial cuando se pliega a 80 px, donde el logotipo no cabría. */
+    .sidebar-brand-mini { display: none; }
+    .sidebar-is-collapsed .sidebar-brand-mini { display: flex; }
     .sidebar-is-collapsed .sidebar-brand-name,
     .sidebar-is-collapsed .sidebar-section-label,
     .sidebar-is-collapsed .sidebar-link-label,

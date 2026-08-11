@@ -84,7 +84,7 @@ if (($_REQUEST['vista'] ?? '') === 'hoja') {
         .barra { position: sticky; top: 0; z-index: 10; background: #1e293b; color: #fff; padding: .75rem 1rem;
                  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
         .barra p { margin: 0; font-size: .875rem; flex: 1; min-width: 200px; }
-        .barra button, .barra a { background: #2563eb; color: #fff; border: 0; border-radius: .6rem; padding: .55rem 1rem;
+        .barra button, .barra a { background: #3B4A83; color: #fff; border: 0; border-radius: .6rem; padding: .55rem 1rem;
                  font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer; text-decoration: none; }
         .barra a { background: rgba(255,255,255,.15); }
         .hoja { display: flex; flex-wrap: wrap; gap: 0; }

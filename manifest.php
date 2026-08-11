@@ -18,7 +18,7 @@ echo json_encode([
     'display'          => 'standalone',
     'orientation'      => 'any',
     'background_color' => '#f1f5f9',
-    'theme_color'      => '#2563eb',
+    'theme_color'      => marca_app(),
     'lang'             => 'es',
     'icons'            => [
         ['src' => asset('icon-192.png'), 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any'],

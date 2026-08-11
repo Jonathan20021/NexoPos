@@ -196,7 +196,7 @@ echo rep_abrir('Análisis de gastos', $p, ['sucursal' => true]);
 <?= rep_seccion('Ingresos contra gastos, 12 meses', 'La distancia entre las dos líneas es la utilidad operativa', 'trending', 'blue') ?>
   <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
     <?= lineChart([
-        ['nombre' => 'Ingresos netos', 'color' => '#2563eb', 'valores' => $sIngreso, 'area' => true],
+        ['nombre' => 'Ingresos netos', 'color' => marca_app(), 'valores' => $sIngreso, 'area' => true],
         ['nombre' => 'Gastos operativos', 'color' => '#f59e0b', 'valores' => $sGasto],
     ], $labels, ['alto' => 280]) ?>
   </div>

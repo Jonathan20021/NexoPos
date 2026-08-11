@@ -182,8 +182,12 @@ function tienda_marca(?int $tiendaId = null): array
         'whatsapp'     => $tomar('whatsapp'),
         'email'        => $tomar('email', $e['email'] ?? null),
         'sitio_web'    => $tomar('sitio_web'),
-        'logo'         => $tomar('logo', $e['logo'] ?? null),
-        'color'        => $tomar('color', '#2563eb'),
+        // Cadena de respaldo: logo de la marca → logo de la empresa → el de la
+        // aplicación. Antes se quedaba en null y el comprobante salía con un
+        // cuadrito de iniciales; ahora una factura sin marca sale con la
+        // identidad de la casa en vez de con un marcador de posición.
+        'logo'         => $tomar('logo', $e['logo'] ?? marca_app_logo()),
+        'color'        => $tomar('color', marca_app()),
         'encabezado'   => $tomar('encabezado'),
         'mensaje'      => $tomar('mensaje_ticket', $e['mensaje_ticket'] ?? '¡Gracias por su compra!'),
         'politica'     => $tomar('politica_devolucion'),

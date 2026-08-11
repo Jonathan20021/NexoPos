@@ -125,7 +125,7 @@ layout_start('Panel de Dirección', 'Cómo va el negocio · ' . rep_alcance_sucu
             $sCos[] = $mapa[$ym]['costo'] ?? 0;
         }
         echo lineChart([
-            ['nombre' => 'Ingresos', 'color' => '#2563eb', 'valores' => $sIng],
+            ['nombre' => 'Ingresos', 'color' => marca_app(), 'valores' => $sIng],
             ['nombre' => 'Costo',    'color' => '#f59e0b', 'valores' => $sCos],
         ], $labels, ['alto' => 300]);
         ?>

@@ -284,7 +284,7 @@ $alertas = array_slice(array_filter(
     fn($n) => in_array($n['prioridad'], ['critica', 'alta'], true)
 ), 0, 3);
 
-$catColors = ['blue'=>'#2563eb','emerald'=>'#10b981','amber'=>'#f59e0b','rose'=>'#f43f5e','indigo'=>'#6366f1',
+$catColors = ['blue'=>marca_app(),'emerald'=>'#10b981','amber'=>'#f59e0b','rose'=>'#f43f5e','indigo'=>'#6366f1',
               'cyan'=>'#06b6d4','sky'=>'#0ea5e9','pink'=>'#ec4899','slate'=>'#64748b','violet'=>'#8b5cf6'];
 
 $saludo = (int) date('G') < 12 ? 'Buenos días' : ((int) date('G') < 19 ? 'Buenas tardes' : 'Buenas noches');
@@ -564,7 +564,7 @@ layout_start(
     </div>
     <div class="flex-1">
       <?= lineChart([
-          ['nombre' => 'Este mes', 'color' => '#2563eb', 'valores' => $acumAct, 'area' => true],
+          ['nombre' => 'Este mes', 'color' => marca_app(), 'valores' => $acumAct, 'area' => true],
           ['nombre' => 'Mes anterior', 'color' => '#cbd5e1', 'valores' => $acumPre, 'punteada' => true],
       ], $labels, ['alto' => 250]) ?>
     </div>

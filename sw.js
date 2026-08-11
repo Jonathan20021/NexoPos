@@ -140,7 +140,7 @@ function avisoSinConexion() {
     '<div style="width:3.5rem;height:3.5rem;border-radius:1rem;background:#fef3c7;color:#d97706;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;font-size:1.5rem;font-weight:700">!</div>' +
     '<h1 style="font-size:1.25rem;margin:0 0 .5rem;color:#0f172a">Sin conexión</h1>' +
     '<p style="font-size:.9rem;line-height:1.6;margin:0 0 1.5rem">Esta pantalla necesita internet para mostrar información actualizada. Solo el <b>Punto de Venta</b> funciona sin conexión.</p>' +
-    '<button onclick="location.reload()" style="background:#2563eb;color:#fff;border:0;font-weight:600;padding:.7rem 1.4rem;border-radius:.75rem;cursor:pointer">Reintentar</button>' +
+    '<button onclick="location.reload()" style="background:#3B4A83;color:#fff;border:0;font-weight:600;padding:.7rem 1.4rem;border-radius:.75rem;cursor:pointer">Reintentar</button>' +
     '</div></div></body></html>',
     { headers: { 'Content-Type': 'text/html; charset=utf-8' }, status: 503 }
   );

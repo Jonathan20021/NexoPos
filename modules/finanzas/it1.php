@@ -58,7 +58,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
             ['(+) ITBIS retenido a proveedores', money($it1['retenido_a_proveedores'])],
         ]) . '</tbody></table>';
     $H .= '<h3>' . ($esAFavor ? 'Saldo a favor' : 'ITBIS a pagar') . '</h3>'
-        . '<table class="tbl"><tbody><tr style="background:#eff6ff;"><td><strong>'
+        . '<table class="tbl"><tbody><tr style="background:#F4F5FB;"><td><strong>'
         . ($esAFavor ? 'Saldo a favor del período' : 'Total ITBIS a pagar')
         . '</strong></td><td class="num"><strong>' . money(abs($aPagar)) . '</strong></td></tr></tbody></table>';
     $H .= '<p class="meta">Derivado de ' . $it1['ventas_registros'] . ' venta(s) del 607 y '

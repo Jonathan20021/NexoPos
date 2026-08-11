@@ -157,7 +157,7 @@ layout_start('Panel de Marketing', 'Últimos ' . $dias . ' días', $acciones);
             can('campanas.crear') ? '<a href="' . e(url('modules/marketing/campanas.php?nueva=1')) . '" class="btn btn-primary">' . icon('plus', 'w-4 h-4') . ' Crear campaña</a>' : '') ?>
       <?php else: ?>
         <?= lineChart([
-            ['nombre' => 'Enviados',  'color' => '#3B82F6', 'valores' => $vEnv, 'area' => true],
+            ['nombre' => 'Enviados',  'color' => '#47599E', 'valores' => $vEnv, 'area' => true],
             ['nombre' => 'Aperturas', 'color' => '#10B981', 'valores' => $vAp],
             ['nombre' => 'Clics',     'color' => '#6366F1', 'valores' => $vCl],
         ], $labels, ['alto' => 260, 'formato' => 'num', 'leyenda' => true]) ?>

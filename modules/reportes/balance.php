@@ -132,7 +132,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
     $H .= '<tr style="background:#f1f5f9"><td><strong>Total pasivo</strong></td><td class="num"><strong>' . money($pasivoTotal) . '</strong></td></tr></tbody></table>';
     $H .= '<h3>Patrimonio</h3><table class="tbl"><tbody>'
         . '<tr><td>Capital y resultados acumulados</td><td class="num">' . money($patrimonio) . '</td></tr>'
-        . '<tr style="background:#eff6ff"><td><strong>Total pasivo + patrimonio</strong></td><td class="num"><strong>' . money($pasivoTotal + $patrimonio) . '</strong></td></tr>'
+        . '<tr style="background:#F4F5FB"><td><strong>Total pasivo + patrimonio</strong></td><td class="num"><strong>' . money($pasivoTotal + $patrimonio) . '</strong></td></tr>'
         . '</tbody></table>';
     pdf_render($H, 'balance_general_' . $corte, 'portrait');
 }

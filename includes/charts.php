@@ -1,8 +1,9 @@
 <?php
 /** Mini-gráficos en SVG puro (sin dependencias). */
 
-function sparkline(array $vals, string $color = '#2563eb', int $w = 120, int $h = 38): string
+function sparkline(array $vals, string $color = '', int $w = 120, int $h = 38): string
 {
+    $color = $color ?: marca_app();   // el azul de la marca por defecto
     $vals = array_values(array_map('floatval', $vals));
     if (count($vals) < 2) $vals = array_pad($vals, 2, 0);
     $max = max($vals); $min = min($vals);
@@ -63,7 +64,7 @@ function numAbrev($v): string
 /**
  * Gráfico de líneas / área en SVG puro, con rejilla y eje de valores.
  *
- * @param array $series [['nombre'=>'Ventas','color'=>'#2563eb','valores'=>[1,2,3],'area'=>true], ...]
+ * @param array $series [['nombre'=>'Ventas','color'=>marca_app(),'valores'=>[1,2,3],'area'=>true], ...]
  * @param array $labels etiquetas del eje X (misma longitud que los valores)
  * @param array $opts   alto (px del viewBox), formato ('money'|'num'), leyenda (bool)
  */
@@ -168,8 +169,9 @@ function lineChart(array $series, array $labels, array $opts = []): string
  * Barras verticales comparando dos series (actual vs. anterior).
  * @param array $data [['label'=>, 'a'=>float, 'b'=>float], ...]
  */
-function barChartComparado(array $data, string $nombreA = 'Actual', string $nombreB = 'Anterior', string $colorA = '#2563eb', string $colorB = '#cbd5e1'): string
+function barChartComparado(array $data, string $nombreA = 'Actual', string $nombreB = 'Anterior', string $colorA = '', string $colorB = '#cbd5e1'): string
 {
+    $colorA = $colorA ?: marca_app();
     $max = 0.0;
     foreach ($data as $d) $max = max($max, (float) $d['a'], (float) ($d['b'] ?? 0));
     $max = $max ?: 1;
@@ -267,8 +269,9 @@ function barraApilada(array $items): string
 }
 
 /** Anillo de progreso (donut simple de un valor). */
-function donut(float $pct, string $color = '#2563eb', int $size = 84): string
+function donut(float $pct, string $color = '', int $size = 84): string
 {
+    $color = $color ?: marca_app();
     $r = 32; $c = 2 * M_PI * $r;
     $off = $c * (1 - max(0, min(100, $pct)) / 100);
     return '<svg width="' . $size . '" height="' . $size . '" viewBox="0 0 80 80" class="-rotate-90">'

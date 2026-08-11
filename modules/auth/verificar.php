@@ -84,7 +84,7 @@ if ($info && (int) $info['enviado'] !== 1 && !$aviso && !$error) {
 }
 
 $flashes   = get_flashes();
-$logo      = setting('logo');
+$logo      = setting('logo') ?: marca_app_logo();
 $tieneLogo = $logo && is_file(dirname(__DIR__, 2) . '/' . $logo);
 $empresa   = setting('nombre', APP_NAME);
 ?>
@@ -104,6 +104,7 @@ $empresa   = setting('nombre', APP_NAME);
 <script>
 tailwind.config = { theme: { extend: {
   fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+  colors: { blue: <?= marca_app_tailwind() ?>, brand: <?= marca_app_tailwind() ?> },
   keyframes: {
     entrar: { '0%': { opacity: 0, transform: 'translateY(14px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
     brillo: { '0%,100%': { opacity: .35 }, '50%': { opacity: .6 } },
@@ -135,8 +136,8 @@ tailwind.config = { theme: { extend: {
     -moz-appearance:textfield;
   }
   .digito::-webkit-outer-spin-button,.digito::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-  .digito:focus{border-color:#3b82f6; box-shadow:0 0 0 4px rgba(59,130,246,.14)}
-  .digito.lleno{border-color:#93c5fd; background:#f8fbff}
+  .digito:focus{border-color:#47599E; box-shadow:0 0 0 4px rgba(71,89,158,.14)}
+  .digito.lleno{border-color:#B0BADD; background:#f8fbff}
   .digito.malo{border-color:#fda4af; background:#fff5f6; animation:sacudir .4s}
   @keyframes sacudir{10%,90%{transform:translateX(-2px)}30%,70%{transform:translateX(3px)}50%{transform:translateX(-3px)}}
   @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
@@ -154,7 +155,12 @@ tailwind.config = { theme: { extend: {
 
     <div class="relative flex items-center gap-3 animate-entrar">
       <?php if ($tieneLogo): ?>
-        <img src="<?= e(url($logo)) ?>" alt="" class="w-11 h-11 rounded-2xl object-contain bg-white p-1">
+        <div>
+          <span class="inline-flex items-center rounded-2xl bg-white px-3.5 py-2 shadow-lg shadow-blue-950/30">
+            <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-6 max-w-[172px] object-contain">
+          </span>
+          <span class="block mt-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-blue-200/70"><?= e(APP_NAME) ?></span>
+        </div>
       <?php else: ?>
         <div class="w-11 h-11 rounded-2xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-900/40">N</div>
       <?php endif; ?>

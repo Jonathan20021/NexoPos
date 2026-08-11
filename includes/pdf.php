@@ -26,17 +26,17 @@ function pdf_css(): string
     return '<style>
         * { font-family: "DejaVu Sans", sans-serif; }
         body { color: #1f2937; font-size: 11px; margin: 0; }
-        .brand { width: 100%; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 14px; }
+        .brand { width: 100%; border-bottom: 2px solid ' . marca_app() . '; padding-bottom: 10px; margin-bottom: 14px; }
         .brand td { vertical-align: middle; }
         .brand .logo { width: 64px; }
         .brand .logo img { max-width: 60px; max-height: 60px; }
         .brand .empresa { font-size: 15px; font-weight: bold; color: #111827; }
         .brand .sub { color: #6b7280; font-size: 10px; }
         .brand .doc { text-align: right; }
-        .brand .doc .titulo { font-size: 16px; font-weight: bold; color: #2563eb; }
+        .brand .doc .titulo { font-size: 16px; font-weight: bold; color: ' . marca_app() . '; }
         .brand .doc .fecha { color: #6b7280; font-size: 10px; }
         table.tbl { width: 100%; border-collapse: collapse; margin-top: 6px; }
-        table.tbl th { background: #2563eb; color: #fff; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; }
+        table.tbl th { background: ' . marca_app() . '; color: #fff; text-align: left; padding: 7px 8px; font-size: 10px; text-transform: uppercase; }
         table.tbl td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; font-size: 10.5px; }
         table.tbl tr:nth-child(even) td { background: #f8fafc; }
         .num { text-align: right; }
@@ -70,7 +70,7 @@ function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $mar
         $telefono  = $marca['telefono'] ?? null;
         $email     = $marca['email'] ?? null;
         $extra     = $marca['encabezado'] ?? null;
-        $color     = preg_match('/^#[0-9A-Fa-f]{6}$/', (string) ($marca['color'] ?? '')) ? $marca['color'] : '#2563eb';
+        $color     = preg_match('/^#[0-9A-Fa-f]{6}$/', (string) ($marca['color'] ?? '')) ? $marca['color'] : marca_app();
         $logo      = function_exists('tienda_logo_datauri') ? tienda_logo_datauri($marca) : null;
     } else {
         $nombre    = $e['nombre'] ?? APP_NAME;
@@ -79,7 +79,7 @@ function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $mar
         $telefono  = $e['telefono'] ?? null;
         $email     = $e['email'] ?? null;
         $extra     = null;
-        $color     = '#2563eb';
+        $color     = marca_app();
         $logo      = pdf_logo_datauri();
     }
 

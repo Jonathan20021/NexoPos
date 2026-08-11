@@ -339,8 +339,9 @@ function rep_tabla(array $headers, array $filas, array $opts = []): string
 }
 
 /** Barra horizontal con etiqueta, valor y porcentaje. */
-function rep_barra(string $label, string $valor, float $pct, string $colorHex = '#2563eb', string $sub = ''): string
+function rep_barra(string $label, string $valor, float $pct, string $colorHex = '', string $sub = ''): string
 {
+    $colorHex = $colorHex ?: marca_app();
     $pct = max(0, min(100, $pct));
     return '<div class="mb-3.5">'
         . '<div class="flex items-baseline justify-between gap-3 text-sm mb-1.5">'
@@ -356,14 +357,14 @@ function rep_barra(string $label, string $valor, float $pct, string $colorHex = 
 /** Paleta estable para categorías/series. */
 function rep_color(int $i): string
 {
-    $p = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#06b6d4', '#6366f1', '#ec4899', '#84cc16', '#0ea5e9', '#f97316', '#64748b'];
+    $p = [marca_app(), '#10b981', '#f59e0b', '#8b5cf6', '#f43f5e', '#06b6d4', '#6366f1', '#ec4899', '#84cc16', '#0ea5e9', '#f97316', '#64748b'];
     return $p[$i % count($p)];
 }
 
 /** Mapea el color nombrado de una categoría a hexadecimal. */
 function rep_color_nombre(?string $nombre): string
 {
-    $m = ['blue' => '#2563eb', 'emerald' => '#10b981', 'amber' => '#f59e0b', 'rose' => '#f43f5e',
+    $m = ['blue' => marca_app(), 'emerald' => '#10b981', 'amber' => '#f59e0b', 'rose' => '#f43f5e',
           'indigo' => '#6366f1', 'cyan' => '#06b6d4', 'sky' => '#0ea5e9', 'pink' => '#ec4899',
           'slate' => '#64748b', 'violet' => '#8b5cf6'];
     return $m[$nombre ?? ''] ?? '#64748b';

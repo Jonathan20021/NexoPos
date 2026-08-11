@@ -140,7 +140,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
         'Del ' . fechaCorta($p['desde']) . ' al ' . fechaCorta($p['hasta']) . ' · ' . rep_alcance_sucursal());
     $H .= '<table class="tbl"><thead><tr><th>Concepto</th><th class="num">Periodo actual</th><th class="num">%</th><th class="num">Periodo anterior</th><th class="num">%</th></tr></thead><tbody>';
     foreach ($filasER as [$lbl, $a, $b, $pa, $pb, $est]) {
-        $bg = $est === 'final' ? ' style="background:#eff6ff;font-weight:bold"'
+        $bg = $est === 'final' ? ' style="background:#F4F5FB;font-weight:bold"'
             : ($est === 'total' ? ' style="background:#f1f5f9;font-weight:bold"' : '');
         $H .= '<tr' . $bg . '><td>' . htmlspecialchars(trim($lbl)) . '</td>'
             . '<td class="num">' . money($a) . '</td><td class="num">' . number_format($pa, 1) . '%</td>'
@@ -228,7 +228,7 @@ echo rep_abrir('Estado de resultados', $p, ['sucursal' => true]);
 <?= rep_seccion('Evolución de 12 meses', 'Ingresos, utilidad bruta y utilidad neta mes a mes', 'trending', 'violet') ?>
   <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
     <?= lineChart([
-        ['nombre' => 'Ingresos netos', 'color' => '#2563eb', 'valores' => $sIng, 'area' => true],
+        ['nombre' => 'Ingresos netos', 'color' => marca_app(), 'valores' => $sIng, 'area' => true],
         ['nombre' => 'Utilidad bruta', 'color' => '#10b981', 'valores' => $sBruta],
         ['nombre' => 'Utilidad neta', 'color' => '#8b5cf6', 'valores' => $sNeta],
     ], $labels, ['alto' => 290]) ?>

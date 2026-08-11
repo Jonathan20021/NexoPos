@@ -267,7 +267,7 @@ echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
     <?= rep_seccion('Evolución de la nómina', 'Bruto contra neto en 12 meses', 'trending', 'blue') ?>
       <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
         <?= lineChart([
-            ['nombre' => 'Nómina bruta', 'color' => '#2563eb', 'valores' => $sBruto, 'area' => true],
+            ['nombre' => 'Nómina bruta', 'color' => marca_app(), 'valores' => $sBruto, 'area' => true],
             ['nombre' => 'Neto pagado', 'color' => '#10b981', 'valores' => $sNeto],
         ], $labels, ['alto' => 260]) ?>
       </div>

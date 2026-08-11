@@ -15,13 +15,29 @@ $lowStock = (int) qVal(
 
   <!-- Marca -->
   <div class="sidebar-brand h-16 flex items-center gap-2.5 px-5 border-b border-slate-100 shrink-0">
-    <?php $brandLogo = setting('logo'); ?>
-    <?php if ($brandLogo && is_file(dirname(__DIR__, 2) . '/' . $brandLogo)): ?>
-      <img src="<?= e(url($brandLogo)) ?>" alt="Logo" class="w-9 h-9 rounded-xl object-contain bg-white border border-slate-100">
+    <?php
+      // Misma cadena de respaldo que en los comprobantes: logo de la empresa y,
+      // si no hay ninguno cargado, el de la aplicación.
+      $brandLogo = setting('logo') ?: marca_app_logo();
+      $hayLogo   = $brandLogo && is_file(dirname(__DIR__, 2) . '/' . $brandLogo);
+      $inicial   = mb_strtoupper(mb_substr((string) setting('nombre', APP_NAME), 0, 1));
+    ?>
+    <?php if ($hayLogo): ?>
+      <?php /* Desplegada: manda el logotipo. El nombre del sistema va debajo en
+                pequeño porque el logotipo ya trae el del negocio, y repetirlo en
+                grande competiría con él. */ ?>
+      <div class="sidebar-brand-name min-w-0">
+        <img src="<?= e(url($brandLogo)) ?>" alt="<?= e(setting('nombre', APP_NAME)) ?>"
+             class="h-7 max-w-[168px] object-contain object-left">
+        <span class="block mt-1 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400 leading-none"><?= e(APP_NAME) ?></span>
+      </div>
+      <?php /* Plegada (80 px): ahí no cabe un logotipo apaisado, así que se
+                reduce a la inicial del negocio. */ ?>
+      <div class="sidebar-brand-mini w-9 h-9 rounded-xl bg-blue-600 text-white items-center justify-center font-extrabold text-lg shadow-lg shadow-blue-600/30"><?= e($inicial) ?></div>
     <?php else: ?>
       <div class="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-lg shadow-lg shadow-blue-600/30">N</div>
+      <span class="sidebar-brand-name text-xl font-extrabold text-slate-800 tracking-tight"><?= e(APP_NAME) ?></span>
     <?php endif; ?>
-    <span class="sidebar-brand-name text-xl font-extrabold text-slate-800 tracking-tight"><?= e(APP_NAME) ?></span>
     <button @click="sidebar=false" aria-label="Cerrar menú" title="Cerrar menú" class="ml-auto lg:hidden text-slate-400 hover:text-slate-700 p-2 -mr-2"><?= icon('x', 'w-5 h-5') ?></button>
   </div>
 

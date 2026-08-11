@@ -3,7 +3,8 @@
  * Shell de la tienda pública. Es independiente del layout administrativo:
  * no muestra sidebar, no exige sesión y no filtra por permisos.
  *
- * Paleta: verde de retail + azul de confianza para las llamadas a la acción.
+ * Paleta: la de la casa (includes/marca_app.php), con un tono más oscuro
+ * para las llamadas a la acción.
  * Tipografía: Rubik (títulos) + Nunito Sans (cuerpo).
  */
 
@@ -52,8 +53,12 @@ tailwind.config = {
   theme: {
     extend: {
       colors: {
-        marca:  { DEFAULT: '#15803D', claro: '#22C55E', muy: '#F0FDF4', texto: '#14532D' },
-        accion: { DEFAULT: '#0369A1', hover: '#075985' },
+        marca:  { DEFAULT: '#3B4A83', claro: '#6476B9', muy: '#F4F5FB', texto: '#1D274C' },
+        accion: { DEFAULT: '#2F3D6F', hover: '#26315C' },
+        // La tienda nació en verde y arrastra 78 clases `emerald-*` repartidas
+        // por sus plantillas. Se pisa la paleta en vez de reescribirlas una a
+        // una, igual que con `blue` en el panel. Ver includes/marca_app.php.
+        emerald: <?= marca_app_tailwind() ?>,
       },
       fontFamily: {
         sans:    ['"Nunito Sans"', 'system-ui', 'sans-serif'],
@@ -67,22 +72,22 @@ tailwind.config = {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&family=Rubik:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-  body { background: #F0FDF4; color: #14532D; }
+  body { background: #F4F5FB; color: #1D274C; }
   .btn-accion {
-    background: #0369A1; color: #fff; font-weight: 600;
+    background: #2F3D6F; color: #fff; font-weight: 600;
     transition: background-color .2s ease;
   }
-  .btn-accion:hover { background: #075985; }
+  .btn-accion:hover { background: #26315C; }
   .btn-accion:focus-visible { outline: 3px solid #7DD3FC; outline-offset: 2px; }
-  .btn-marca { background: #15803D; color: #fff; font-weight: 600; transition: background-color .2s ease; }
-  .btn-marca:hover { background: #166534; }
-  .btn-marca:focus-visible { outline: 3px solid #86EFAC; outline-offset: 2px; }
+  .btn-marca { background: #3B4A83; color: #fff; font-weight: 600; transition: background-color .2s ease; }
+  .btn-marca:hover { background: #2F3D6F; }
+  .btn-marca:focus-visible { outline: 3px solid #B0BADD; outline-offset: 2px; }
   .campo {
     width: 100%; border: 1px solid #D1D5DB; border-radius: .75rem;
-    padding: .625rem .875rem; background: #fff; color: #14532D;
+    padding: .625rem .875rem; background: #fff; color: #1D274C;
     transition: border-color .2s ease, box-shadow .2s ease;
   }
-  .campo:focus { outline: none; border-color: #15803D; box-shadow: 0 0 0 3px rgba(21,128,61,.15); }
+  .campo:focus { outline: none; border-color: #3B4A83; box-shadow: 0 0 0 3px rgba(59,74,131,.15); }
   [x-cloak] { display: none !important; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }

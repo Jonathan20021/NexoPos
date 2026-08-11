@@ -20,7 +20,7 @@ if (!tiendas_disponible()) {
     return;
 }
 
-$TIPOS_COLOR = ['#2563eb', '#0f172a', '#7c3aed', '#059669', '#b45309', '#be123c', '#0891b2', '#a16207'];
+$TIPOS_COLOR = [marca_app(), '#0f172a', '#7c3aed', '#059669', '#b45309', '#be123c', '#0891b2', '#a16207'];
 
 // ---------- Acciones ----------
 if (isPost()) {
@@ -32,7 +32,7 @@ if (isPost()) {
         $codigo = strtoupper(trim(post('codigo')));
         $nombre = trim(post('nombre'));
         $email  = trim(post('email'));
-        $color  = trim(post('color')) ?: '#2563eb';
+        $color  = trim(post('color')) ?: marca_app();
         // wa.me exige el número solo en dígitos y con código de país.
         $whatsapp = preg_replace('/\D+/', '', post('whatsapp'));
 
@@ -43,7 +43,7 @@ if (isPost()) {
         } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             flash('error', 'El correo electrónico no es válido.');
         } elseif (!preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
-            flash('error', 'El color de marca debe ser un valor hexadecimal como #2563eb.');
+            flash('error', 'El color de marca debe ser un valor hexadecimal como #3B4A83.');
         } elseif (qVal("SELECT 1 FROM tiendas WHERE codigo = ? AND id <> ?", [$codigo, $id])) {
             flash('error', 'Ya existe una tienda con ese código.');
         } elseif ($whatsapp !== '' && strlen($whatsapp) < 10) {
@@ -256,7 +256,8 @@ layout_start('Tiendas y marcas', 'La identidad con la que se imprimen facturas y
 </div>
 
 <!-- Modal crear/editar -->
-<?php $vacio = "{id:0,codigo:'',nombre:'',razon_social:'',rnc:'',direccion:'',ciudad:'',telefono:'',whatsapp:'',email:'',sitio_web:'',color:'#2563eb',encabezado:'',mensaje_ticket:'¡Gracias por su compra!',politica_devolucion:'',pie_factura:'',orden:0,activo:1,logo:''}"; ?>
+<?php $colorPorDefecto = marca_app();
+      $vacio = "{id:0,codigo:'',nombre:'',razon_social:'',rnc:'',direccion:'',ciudad:'',telefono:'',whatsapp:'',email:'',sitio_web:'',color:'$colorPorDefecto',encabezado:'',mensaje_ticket:'¡Gracias por su compra!',politica_devolucion:'',pie_factura:'',orden:0,activo:1,logo:''}"; ?>
 <div x-data="{open:false, quitar:false, previa:'', form:<?= $vacio ?>,
               iniciales() { const p = (this.form.nombre||'').trim().split(/[\s\-·]+/).filter(Boolean);
                             if (!p.length) return '?';

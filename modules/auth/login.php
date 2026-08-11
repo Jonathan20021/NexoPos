@@ -31,7 +31,7 @@ if (isPost()) {
 
 // Las credenciales de demostración solo se muestran fuera de producción.
 $mostrarDemo = APP_ENV !== 'production';
-$logo = setting('logo');
+$logo = setting('logo') ?: marca_app_logo();
 $tieneLogo = $logo && is_file(dirname(__DIR__, 2) . '/' . $logo);
 $empresa = setting('nombre', APP_NAME);
 ?>
@@ -50,6 +50,7 @@ $empresa = setting('nombre', APP_NAME);
 <script>
 tailwind.config = { theme: { extend: {
   fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+  colors: { blue: <?= marca_app_tailwind() ?>, brand: <?= marca_app_tailwind() ?> },
   keyframes: {
     flotar:  { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
     entrar:  { '0%': { opacity: 0, transform: 'translateY(14px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
@@ -78,7 +79,7 @@ tailwind.config = { theme: { extend: {
     padding:.8rem 1rem; font-size:.925rem; color:#334155; transition:all .18s ease; outline:none;
   }
   .campo::placeholder{color:#cbd5e1}
-  .campo:focus{border-color:#3b82f6; box-shadow:0 0 0 4px rgba(59,130,246,.12)}
+  .campo:focus{border-color:#47599E; box-shadow:0 0 0 4px rgba(71,89,158,.12)}
   @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
 </style>
 </head>
@@ -95,7 +96,12 @@ tailwind.config = { theme: { extend: {
     <!-- Marca -->
     <div class="relative flex items-center gap-3 animate-entrar">
       <?php if ($tieneLogo): ?>
-        <img src="<?= e(url($logo)) ?>" alt="" class="w-11 h-11 rounded-2xl object-contain bg-white p-1">
+        <div>
+          <span class="inline-flex items-center rounded-2xl bg-white px-3.5 py-2 shadow-lg shadow-blue-950/30">
+            <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-6 max-w-[172px] object-contain">
+          </span>
+          <span class="block mt-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-blue-200/70"><?= e(APP_NAME) ?></span>
+        </div>
       <?php else: ?>
         <div class="w-11 h-11 rounded-2xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-900/40">N</div>
       <?php endif; ?>
@@ -134,13 +140,13 @@ tailwind.config = { theme: { extend: {
           <svg viewBox="0 0 320 74" class="w-full h-16 mt-4" preserveAspectRatio="none" aria-hidden="true">
             <defs>
               <linearGradient id="lgLogin" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stop-color="#60a5fa" stop-opacity=".55"/>
-                <stop offset="100%" stop-color="#60a5fa" stop-opacity="0"/>
+                <stop offset="0%" stop-color="#6476B9" stop-opacity=".55"/>
+                <stop offset="100%" stop-color="#6476B9" stop-opacity="0"/>
               </linearGradient>
             </defs>
             <polygon points="0,74 0,54 40,48 80,56 120,34 160,40 200,22 240,28 280,12 320,18 320,74" fill="url(#lgLogin)"/>
             <polyline points="0,54 40,48 80,56 120,34 160,40 200,22 240,28 280,12 320,18"
-                      fill="none" stroke="#93c5fd" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      fill="none" stroke="#B0BADD" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
 
           <div class="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-white/10">
@@ -174,7 +180,10 @@ tailwind.config = { theme: { extend: {
       <!-- Marca en móvil -->
       <div class="lg:hidden flex items-center justify-center gap-3 mb-9">
         <?php if ($tieneLogo): ?>
-          <img src="<?= e(url($logo)) ?>" alt="" class="w-11 h-11 rounded-2xl object-contain bg-white border border-slate-200 p-1">
+          <div class="text-center">
+            <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-8 max-w-[200px] object-contain mx-auto">
+            <span class="block mt-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400"><?= e(APP_NAME) ?></span>
+          </div>
         <?php else: ?>
           <div class="w-11 h-11 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-600/25">N</div>
         <?php endif; ?>

@@ -104,7 +104,7 @@ echo rep_abrir('Horarios y tráfico', $p, ['sucursal' => true]);
 <?= rep_seccion('Ventas por hora del día', 'Dónde se concentra el tráfico', 'clock', 'blue') ?>
   <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
     <?= lineChart([
-        ['nombre' => 'Ingresos por hora', 'color' => '#2563eb',
+        ['nombre' => 'Ingresos por hora', 'color' => marca_app(),
          'valores' => array_column($porHora, 'ingresos'), 'area' => true],
     ], array_map(fn($h) => str_pad((string) $h, 2, '0', STR_PAD_LEFT) . 'h', array_keys($porHora)), ['alto' => 250]) ?>
   </div>
