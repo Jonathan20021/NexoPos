@@ -44,7 +44,7 @@ $logoUrl = tienda_logo_url($marca);
 // recibió: el e-CF lo puede verificar él mismo ante la DGII.
 $esElectronico = ecfENCFValido((string) $v['ncf']);
 $ecfDoc = $esElectronico
-    ? qOne("SELECT id, estado, track_id FROM ecf_documentos WHERE origen='venta' AND origen_id=?", [$id])
+    ? qOne("SELECT id, estado, track_id, qr_url FROM ecf_documentos WHERE origen='venta' AND origen_id=?", [$id])
     : null;
 $rotuloNcf = $esElectronico ? 'e-NCF' : 'NCF';
 
@@ -85,91 +85,115 @@ if (get('pdf') === '1' && function_exists('pdf_render')) {
     $cliente = $v['cliente'] ?: 'Cliente Genérico';
     $esc = fn($s) => htmlspecialchars((string) $s);
 
+    // El timbre de la DGII lleva el código de seguridad en la URL; es lo que
+    // permite cotejar el comprobante sin escanear nada.
+    $codSeguridad = '';
+    if (!empty($ecfDoc['qr_url']) && preg_match('/CodigoSeguridad=([^&]+)/', (string) $ecfDoc['qr_url'], $m)) {
+        $codSeguridad = urldecode($m[1]);
+    }
+
     $h = pdf_brand_header('FACTURA', $v['numero'], $marca);
 
-    // Emisor y receptor, uno al lado del otro. El emisor va explícito aunque la
-    // marca sea otra: es el dato que la DGII exige y el que el cliente necesita
-    // para reportar su crédito fiscal.
-    $h .= '<table style="width:100%; margin-bottom:10px;"><tr>'
-        . '<td style="vertical-align:top; width:50%;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Facturado a</div>'
-        . '<strong style="font-size:12px;">' . $esc($cliente) . '</strong>'
-        . (!empty($v['rnc_cedula']) ? '<br>RNC/Cédula: ' . $esc($v['rnc_cedula']) : '')
-        . (!empty($v['cli_dir']) ? '<br>' . $esc($v['cli_dir']) : '')
-        . (!empty($v['cli_tel']) ? '<br>Tel: ' . $esc($v['cli_tel']) : '')
+    // Receptor y datos del comprobante, uno al lado del otro. El e-NCF va
+    // destacado y no perdido en una lista: es el dato por el que se busca esta
+    // factura, tanto en la DGII como en la contabilidad del cliente.
+    $h .= '<table style="width:100%; margin-bottom:14px; border-spacing:0;"><tr>'
+        . '<td class="box box-acento" style="border-left-color:' . $color . '; width:50%;">'
+        . '<div class="box-tit">Facturado a</div>'
+        . '<div class="nombre-fuerte">' . $esc($cliente) . '</div>'
+        . '<div class="dato">'
+        . (!empty($v['rnc_cedula']) ? 'RNC/Cédula ' . $esc($v['rnc_cedula']) . '<br>' : '')
+        . (!empty($v['cli_dir']) ? $esc($v['cli_dir']) . '<br>' : '')
+        . (!empty($v['cli_tel']) ? $esc($v['cli_tel']) : '')
         . '</div></td>'
-        . '<td style="vertical-align:top; width:50%; padding-left:8px;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Comprobante</div>'
-        . '<strong>Factura:</strong> ' . $esc($v['numero'])
-        . ($v['ncf'] ? '<br><strong>' . $rotuloNcf . ':</strong> ' . $esc($v['ncf']) : '')
-        . '<br><strong>Fecha:</strong> ' . fechaHora($v['fecha'])
-        . '<br><strong>Sucursal:</strong> ' . $esc($v['sucursal'])
-        . '<br><strong>Atendió:</strong> ' . $esc($v['vendedor'] . ' ' . $v['vend_ape'])
-        . '</div></td></tr></table>';
+        . '<td style="width:3%; border:0;"></td>'
+        . '<td class="box" style="width:47%;">'
+        . '<div class="box-tit">' . ($v['ncf'] ? $rotuloNcf : 'Comprobante') . '</div>'
+        . ($v['ncf'] ? '<div class="qr-encf">' . $esc($v['ncf']) . '</div>' : '<div class="nombre-fuerte">' . $esc($v['numero']) . '</div>')
+        . '<table style="width:100%; margin-top:6px;">'
+        . '<tr><td class="dato" style="color:#8A93A5;">Fecha</td><td class="dato num"><strong>' . fechaHora($v['fecha']) . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Sucursal</td><td class="dato num"><strong>' . $esc($v['sucursal']) . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Atendió</td><td class="dato num"><strong>' . $esc($v['vendedor'] . ' ' . $v['vend_ape']) . '</strong></td></tr>'
+        . '</table></td></tr></table>';
 
+    // El código va bajo la descripción y no en su propia columna: gana ancho
+    // para el nombre del producto, que es lo que el cliente lee.
     $h .= '<table class="tbl"><thead><tr>'
-        . '<th style="background:' . $color . ';">Código</th>'
-        . '<th style="background:' . $color . ';">Descripción</th>'
-        . '<th style="background:' . $color . ';" class="num">Cant.</th>'
-        . '<th style="background:' . $color . ';" class="num">Precio</th>'
-        . '<th style="background:' . $color . ';" class="num">ITBIS</th>'
-        . '<th style="background:' . $color . ';" class="num">Importe</th>'
+        . '<th style="background:' . $color . '; width:43%;">Descripción</th>'
+        . '<th style="background:' . $color . '; width:9%;" class="num">Cant.</th>'
+        . '<th style="background:' . $color . '; width:16%;" class="num">Precio</th>'
+        . '<th style="background:' . $color . '; width:14%;" class="num">ITBIS</th>'
+        . '<th style="background:' . $color . '; width:18%;" class="num">Importe</th>'
         . '</tr></thead><tbody>';
     foreach ($det as $d) {
-        $etq = !empty($d['es_muestra']) ? ' <strong>[MUESTRA]</strong>' : '';
-        $h .= '<tr><td style="font-family:monospace; font-size:9.5px;">' . $esc($d['sku'] ?: '—') . '</td>'
-            . '<td>' . $esc($d['descripcion']) . $etq . '</td>'
+        $etq = !empty($d['es_muestra'])
+            ? ' <span style="color:#B45309; font-weight:bold; font-size:8.5px;">[MUESTRA]</span>' : '';
+        $h .= '<tr><td><strong>' . $esc($d['descripcion']) . '</strong>' . $etq
+            . ($d['sku'] ? '<br><span class="sku">' . $esc($d['sku']) . '</span>' : '') . '</td>'
             . '<td class="num">' . qty($d['cantidad']) . '</td>'
             . '<td class="num">' . money($d['precio_unitario'], false) . '</td>'
             . '<td class="num">' . money($d['itbis'], false) . '</td>'
-            . '<td class="num">' . money($d['subtotal'], false) . '</td></tr>';
+            . '<td class="num"><strong>' . money($d['subtotal'], false) . '</strong></td></tr>';
     }
     $h .= '</tbody></table>';
 
-    // Desglose fiscal a la izquierda, totales a la derecha.
-    $h .= '<table style="width:100%; margin-top:12px;"><tr>'
-        . '<td style="width:50%; vertical-align:top;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Desglose de impuestos</div>'
-        . '<table style="width:100%; font-size:10px;">'
-        . '<tr><td style="color:#6b7280;">Base gravada (' . $tasaItbis . '%)</td><td class="num">' . money($baseGravada, false) . '</td></tr>'
-        . ($baseExenta > 0 ? '<tr><td style="color:#6b7280;">Base exenta</td><td class="num">' . money($baseExenta, false) . '</td></tr>' : '')
-        . '<tr><td style="color:#6b7280;">ITBIS</td><td class="num">' . money($v['itbis'], false) . '</td></tr>'
-        . '</table></div></td>'
-        . '<td style="width:50%; vertical-align:top; padding-left:8px;">'
-        . '<table style="width:100%;" class="totales">'
-        . '<tr><td class="lbl">Subtotal</td><td class="val">' . money($v['subtotal']) . '</td></tr>'
-        . ($v['descuento'] > 0 ? '<tr><td class="lbl">Descuento</td><td class="val">-' . money($v['descuento']) . '</td></tr>' : '')
-        . '<tr><td class="lbl">ITBIS (' . $tasaItbis . '%)</td><td class="val">' . money($v['itbis']) . '</td></tr>'
-        . '<tr><td class="lbl total-final" style="border-top:2px solid ' . $color . ';">TOTAL</td>'
-        . '<td class="val total-final" style="border-top:2px solid ' . $color . '; color:' . $color . ';">' . money($v['total']) . '</td></tr>'
-        . '</table></td></tr></table>';
-
-    $h .= '<div style="margin-top:12px;">';
-    foreach ($pagos as $p) {
-        $h .= '<span class="badge" style="background:#f1f5f9;color:#334155;">' . $esc($p['metodo']) . ': ' . money($p['monto']) . '</span> ';
-    }
-    $h .= '</div>';
-
-    // El QR va como data URI: Dompdf lo incrusta sin salir a la red.
+    /* -----------------------------------------------------------------------
+     *  Bloque de cierre: a la izquierda lo fiscal (QR, desglose y pago), a la
+     *  derecha los totales. El QR pasa de flotar suelto en medio de la hoja a
+     *  ir junto al timbre que representa, a un tamaño que se escanea igual.
+     * -------------------------------------------------------------------- */
+    $izq = '';
     if ($ecfQr) {
-        $h .= '<div style="text-align:center; margin-top:20px;">'
-            . '<img src="' . $ecfQr . '" alt="Código QR" style="width:110px; height:110px;">'
-            . '<p style="font-size:9px; color:#6b7280; margin-top:4px;">'
-            . 'Comprobante Fiscal Electrónico · Verifique este documento ante la DGII</p></div>';
+        $izq .= '<div class="qr-caja" style="margin-bottom:8px;"><table style="width:100%"><tr>'
+            . '<td width="90"><img src="' . $ecfQr . '" alt="Código QR"></td>'
+            . '<td style="vertical-align:middle; padding-left:4px;">'
+            . '<div class="box-tit" style="margin-bottom:3px;">Comprobante fiscal electrónico</div>'
+            . ($codSeguridad ? '<div class="qr-encf">Código de seguridad ' . $esc($codSeguridad) . '</div>' : '')
+            . '<div class="qr-nota" style="margin-top:3px;">Escanee el código para verificar<br>este documento ante la DGII.</div>'
+            . '</td></tr></table></div>';
     }
+    // Forma de pago: una fila legible, no una etiqueta suelta al margen.
+    if ($pagos) {
+        $izq .= '<div class="box"><div class="box-tit">Forma de pago</div><table style="width:100%;">';
+        foreach ($pagos as $p) {
+            $izq .= '<tr><td class="dato"><strong>' . $esc($p['metodo']) . '</strong></td>'
+                 . '<td class="dato num">' . money($p['monto']) . '</td></tr>';
+        }
+        $izq .= '</table></div>';
+    }
+
+    $der = '<table class="tot">'
+        . '<tr><td class="lbl">Subtotal</td><td class="val">' . money($v['subtotal']) . '</td></tr>'
+        . ($v['descuento'] > 0 ? '<tr><td class="lbl">Descuento</td><td class="val" style="color:#BE123C;">−' . money($v['descuento']) . '</td></tr>' : '')
+        . '<tr><td class="lbl">ITBIS (' . $tasaItbis . '%)</td><td class="val">' . money($v['itbis']) . '</td></tr>'
+        . '</table>'
+        . '<div class="total-bloque" style="background:' . $color . ';"><table style="width:100%"><tr>'
+        . '<td class="lbl">TOTAL A PAGAR</td><td class="val">' . money($v['total']) . '</td>'
+        . '</tr></table></div>'
+        . '<div class="box" style="margin-top:8px;"><div class="box-tit">Desglose de impuestos</div>'
+        . '<table style="width:100%;">'
+        . '<tr><td class="dato" style="color:#8A93A5;">Base gravada (' . $tasaItbis . '%)</td><td class="dato num">' . money($baseGravada, false) . '</td></tr>'
+        . ($baseExenta > 0 ? '<tr><td class="dato" style="color:#8A93A5;">Base exenta</td><td class="dato num">' . money($baseExenta, false) . '</td></tr>' : '')
+        . '<tr><td class="dato" style="color:#8A93A5;">ITBIS</td><td class="dato num">' . money($v['itbis'], false) . '</td></tr>'
+        . '</table></div>';
+
+    $h .= '<table style="width:100%; margin-top:14px;"><tr>'
+        . '<td style="width:56%; vertical-align:top;">' . $izq . '</td>'
+        . '<td style="width:44%; vertical-align:top; padding-left:10px;">' . $der . '</td>'
+        . '</tr></table>';
 
     if (!empty($marca['politica'])) {
-        $h .= '<div style="margin-top:18px; border-top:1px solid #e5e7eb; padding-top:8px;">'
-            . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Política de devoluciones</div>'
-            . '<div style="font-size:9.5px; color:#374151; line-height:1.45;">' . nl2br($esc($marca['politica'])) . '</div></div>';
+        $h .= '<div class="box" style="margin-top:12px;"><div class="box-tit">Política de devoluciones</div>'
+            . '<div class="qr-nota">' . nl2br($esc($marca['politica'])) . '</div></div>';
     }
 
-    $h .= '<p style="text-align:center; margin-top:18px; font-size:11px; color:#374151;">' . $esc($marca['mensaje']) . '</p>';
-    // El emisor legal, en letra pequeña: la marca es comercial, la factura la
+    $h .= '<p style="text-align:center; margin-top:16px; font-size:11px; color:#4B5563;">' . $esc($marca['mensaje']) . '</p>';
+
+    // El emisor legal cierra la página. La marca es comercial; la factura la
     // emite la empresa y eso tiene que estar escrito en el papel.
-    $h .= '<p class="meta" style="text-align:center;">Emitido por ' . $esc($emp['nombre'] ?? APP_NAME)
-        . (!empty($emp['rnc']) ? ' · RNC ' . $esc($emp['rnc']) : '')
-        . (!empty($marca['pie']) ? '<br>' . $esc($marca['pie']) : '') . '</p>';
+    $h .= pdf_pie('Emitido por ' . $esc($emp['nombre'] ?? APP_NAME)
+        . (!empty($emp['rnc']) ? '  ·  RNC ' . $esc($emp['rnc']) : '')
+        . (!empty($marca['pie']) ? '<br>' . $esc($marca['pie']) : ''));
 
     pdf_render($h, 'factura_' . $v['numero'], 'portrait', 'inline');
 }

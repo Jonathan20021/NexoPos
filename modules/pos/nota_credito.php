@@ -120,77 +120,89 @@ if (get('pdf') === '1' && function_exists('pdf_render')) {
     $cliente = ($v['cliente'] ?? '') ?: 'Cliente Genérico';
     $esc = fn($s) => htmlspecialchars((string) $s);
 
+    // El timbre lleva el código de seguridad en la URL; se pinta junto al QR.
+    $codSeguridad = '';
+    if (!empty($doc0 = qOne("SELECT qr_url FROM ecf_documentos WHERE origen='devolucion' AND origen_id=?", [$id]))
+        && preg_match('/CodigoSeguridad=([^&]+)/', (string) $doc0['qr_url'], $m)) {
+        $codSeguridad = urldecode($m[1]);
+    }
+
     $h = pdf_brand_header('NOTA DE CRÉDITO', $d['numero'], $marca);
 
-    $h .= '<table style="width:100%; margin-bottom:10px;"><tr>'
-        . '<td style="vertical-align:top; width:50%;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Acreditado a</div>'
-        . '<strong style="font-size:12px;">' . $esc($cliente) . '</strong>'
-        . (!empty($v['rnc_cedula']) ? '<br>RNC/Cédula: ' . $esc($v['rnc_cedula']) : '')
-        . (!empty($v['cli_dir']) ? '<br>' . $esc($v['cli_dir']) : '')
-        . (!empty($v['cli_tel']) ? '<br>Tel: ' . $esc($v['cli_tel']) : '')
+    // Receptor y comprobante, en celdas de una misma fila para que midan igual.
+    $h .= '<table style="width:100%; margin-bottom:12px; border-spacing:0;"><tr>'
+        . '<td class="box box-acento" style="border-left-color:' . $color . '; width:50%;">'
+        . '<div class="box-tit">Acreditado a</div>'
+        . '<div class="nombre-fuerte">' . $esc($cliente) . '</div>'
+        . '<div class="dato">'
+        . (!empty($v['rnc_cedula']) ? 'RNC/Cédula ' . $esc($v['rnc_cedula']) . '<br>' : '')
+        . (!empty($v['cli_dir']) ? $esc($v['cli_dir']) . '<br>' : '')
+        . (!empty($v['cli_tel']) ? $esc($v['cli_tel']) : '')
         . '</div></td>'
-        . '<td style="vertical-align:top; width:50%; padding-left:8px;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Comprobante</div>'
-        . '<strong>Nota de crédito:</strong> ' . $esc($d['numero'])
-        . ($d['ncf'] ? '<br><strong>' . $rotuloNcf . ':</strong> ' . $esc($d['ncf']) : '')
-        . '<br><strong>Fecha:</strong> ' . fechaHora($d['created_at'])
-        . '<br><strong>Sucursal:</strong> ' . $esc($d['sucursal'])
-        . '<br><strong>Registró:</strong> ' . $esc(trim($d['usuario'] . ' ' . $d['usuario_ape']) ?: '—')
-        . '</div></td></tr></table>';
+        . '<td style="width:3%; border:0;"></td>'
+        . '<td class="box" style="width:47%;">'
+        . '<div class="box-tit">' . ($d['ncf'] ? $rotuloNcf : 'Comprobante') . '</div>'
+        . ($d['ncf'] ? '<div class="qr-encf">' . $esc($d['ncf']) . '</div>' : '<div class="nombre-fuerte">' . $esc($d['numero']) . '</div>')
+        . '<table style="width:100%; margin-top:6px;">'
+        . '<tr><td class="dato" style="color:#8A93A5;">Fecha</td><td class="dato num"><strong>' . fechaHora($d['created_at']) . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Sucursal</td><td class="dato num"><strong>' . $esc($d['sucursal']) . '</strong></td></tr>'
+        . '<tr><td class="dato" style="color:#8A93A5;">Registró</td><td class="dato num"><strong>' . $esc(trim($d['usuario'] . ' ' . $d['usuario_ape']) ?: '—') . '</strong></td></tr>'
+        . '</table></td></tr></table>';
 
     // El bloque que da sentido al documento: qué comprobante corrige y por qué.
     // Sin esto, una nota de crédito es un papel con un monto y nada más.
-    $h .= '<div class="box" style="margin-bottom:10px; border-left:3px solid ' . $color . ';">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Modifica el comprobante</div>'
-        . '<strong style="font-size:12px;">' . $esc($d['ncf_modificado'] ?: ($v['ncf'] ?? '—')) . '</strong>'
-        . ' <span style="color:#6b7280;">· factura ' . $esc($v['numero'] ?? '—') . '</span>'
-        . ($textoModif ? '<br><span style="color:#374151;">Motivo fiscal: ' . $esc($textoModif)
-                       . ' (código ' . (int) $codModif . ')</span>' : '')
-        . ($d['motivo'] ? '<br><span style="color:#6b7280;">' . $esc($d['motivo']) . '</span>' : '')
+    $h .= '<div class="box box-acento" style="border-left-color:' . $color . '; margin-bottom:4px;">'
+        . '<div class="box-tit">Modifica el comprobante</div>'
+        . '<table style="width:100%;"><tr>'
+        . '<td><span class="qr-encf" style="font-size:11px;">' . $esc($d['ncf_modificado'] ?: ($v['ncf'] ?? '—')) . '</span>'
+        . '<span class="dato" style="color:#8A93A5;">  ·  factura ' . $esc($v['numero'] ?? '—') . '</span></td>'
+        . '<td class="dato num">' . ($textoModif ? '<strong>' . $esc($textoModif) . '</strong> <span style="color:#8A93A5;">(código ' . (int) $codModif . ')</span>' : '') . '</td>'
+        . '</tr></table>'
+        . ($d['motivo'] ? '<div class="qr-nota" style="margin-top:4px;">' . $esc($d['motivo']) . '</div>' : '')
         . '</div>';
 
     $h .= '<table class="tbl"><thead><tr>'
-        . '<th style="background:' . $color . ';">Código</th>'
-        . '<th style="background:' . $color . ';">Descripción</th>'
-        . '<th style="background:' . $color . ';" class="num">Cant.</th>'
-        . '<th style="background:' . $color . ';" class="num">Precio</th>'
-        . '<th style="background:' . $color . ';" class="num">' . $rotuloImporte . '</th>'
+        . '<th style="background:' . $color . '; width:52%;">Descripción</th>'
+        . '<th style="background:' . $color . '; width:10%;" class="num">Cant.</th>'
+        . '<th style="background:' . $color . '; width:18%;" class="num">Precio</th>'
+        . '<th style="background:' . $color . '; width:20%;" class="num">' . $rotuloImporte . '</th>'
         . '</tr></thead><tbody>';
     foreach ($lineas as $l) {
-        $h .= '<tr><td style="font-family:monospace; font-size:9.5px;">' . $esc($l['sku'] ?: '—') . '</td>'
-            . '<td>' . $esc($l['descripcion']) . '</td>'
+        $h .= '<tr><td><strong>' . $esc($l['descripcion']) . '</strong>'
+            . ($l['sku'] ? '<br><span class="sku">' . $esc($l['sku']) . '</span>' : '') . '</td>'
             . '<td class="num">' . qty($l['cantidad']) . '</td>'
             . '<td class="num">' . money($l['precio'], false) . '</td>'
-            . '<td class="num">' . money($l['importe'], false) . '</td></tr>';
+            . '<td class="num"><strong>' . money($l['importe'], false) . '</strong></td></tr>';
     }
     $h .= '</tbody></table>';
 
-    $h .= '<table style="width:100%; margin-top:12px;"><tr>'
-        . '<td style="width:50%; vertical-align:top;"><div class="box">'
-        . '<div style="font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Desglose de impuestos</div>'
-        . '<table style="width:100%; font-size:10px;">'
-        . '<tr><td style="color:#6b7280;">Base acreditada</td><td class="num">' . money($d['subtotal'], false) . '</td></tr>'
-        . '<tr><td style="color:#6b7280;">ITBIS (' . $tasaItbis . '%)</td><td class="num">' . money($d['itbis'], false) . '</td></tr>'
-        . '</table></div></td>'
-        . '<td style="width:50%; vertical-align:top; padding-left:8px;">'
-        . '<table style="width:100%;" class="totales">'
-        . '<tr><td class="lbl">Base</td><td class="val">' . money($d['subtotal']) . '</td></tr>'
-        . '<tr><td class="lbl">ITBIS (' . $tasaItbis . '%)</td><td class="val">' . money($d['itbis']) . '</td></tr>'
-        . '<tr><td class="lbl total-final" style="border-top:2px solid ' . $color . ';">TOTAL ACREDITADO</td>'
-        . '<td class="val total-final" style="border-top:2px solid ' . $color . '; color:' . $color . ';">' . money($d['total']) . '</td></tr>'
-        . '</table></td></tr></table>';
-
+    $izq = '';
     if ($ecfQr) {
-        $h .= '<div style="text-align:center; margin-top:20px;">'
-            . '<img src="' . $ecfQr . '" alt="Código QR" style="width:110px; height:110px;">'
-            . '<p style="font-size:9px; color:#6b7280; margin-top:4px;">'
-            . 'Comprobante Fiscal Electrónico · Verifique este documento ante la DGII</p></div>';
+        $izq .= '<div class="qr-caja"><table style="width:100%"><tr>'
+            . '<td width="90"><img src="' . $ecfQr . '" alt="Código QR"></td>'
+            . '<td style="vertical-align:middle; padding-left:4px;">'
+            . '<div class="box-tit" style="margin-bottom:3px;">Comprobante fiscal electrónico</div>'
+            . ($codSeguridad ? '<div class="qr-encf">Código de seguridad ' . $esc($codSeguridad) . '</div>' : '')
+            . '<div class="qr-nota" style="margin-top:3px;">Escanee el código para verificar<br>este documento ante la DGII.</div>'
+            . '</td></tr></table></div>';
     }
 
-    $h .= '<p class="meta" style="text-align:center; margin-top:18px;">Emitido por ' . $esc($emp['nombre'] ?? APP_NAME)
-        . (!empty($emp['rnc']) ? ' · RNC ' . $esc($emp['rnc']) : '')
-        . (!empty($marca['pie']) ? '<br>' . $esc($marca['pie']) : '') . '</p>';
+    $der = '<table class="tot">'
+        . '<tr><td class="lbl">Base acreditada</td><td class="val">' . money($d['subtotal']) . '</td></tr>'
+        . '<tr><td class="lbl">ITBIS (' . $tasaItbis . '%)</td><td class="val">' . money($d['itbis']) . '</td></tr>'
+        . '</table>'
+        . '<div class="total-bloque" style="background:' . $color . ';"><table style="width:100%"><tr>'
+        . '<td class="lbl">TOTAL ACREDITADO</td><td class="val">' . money($d['total']) . '</td>'
+        . '</tr></table></div>';
+
+    $h .= '<table style="width:100%; margin-top:14px;"><tr>'
+        . '<td style="width:56%; vertical-align:top;">' . $izq . '</td>'
+        . '<td style="width:44%; vertical-align:top; padding-left:10px;">' . $der . '</td>'
+        . '</tr></table>';
+
+    $h .= pdf_pie('Emitido por ' . $esc($emp['nombre'] ?? APP_NAME)
+        . (!empty($emp['rnc']) ? '  ·  RNC ' . $esc($emp['rnc']) : '')
+        . (!empty($marca['pie']) ? '<br>' . $esc($marca['pie']) : ''));
 
     pdf_render($h, 'nota_credito_' . $d['numero'], 'portrait', 'inline');
 }
