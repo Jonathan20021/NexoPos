@@ -100,7 +100,7 @@ function pdf_css(): string
                    font-weight: bold; color: #111827; }
 
         /* ---- Pie anclado ---- */
-        .pie-banda { position: fixed; bottom: -44px; left: 0; right: 0;
+        .pie-banda { position: fixed; bottom: -52px; left: 0; right: 0;
                      border-top: 1px solid #E5E7EB; padding-top: 7px;
                      color: #98A2B3; font-size: 8.5px; text-align: center; line-height: 1.5; }
 
@@ -123,7 +123,7 @@ function pdf_css(): string
  * usa en la factura, donde el cliente compró «en L'Occitane» y no «en la
  * importadora». Sin `$marca` el comportamiento es el de siempre.
  */
-function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $marca = null): string
+function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $marca = null, bool $compacto = false): string
 {
     $e = $GLOBALS['empresa'] ?? [];
 
@@ -167,16 +167,23 @@ function pdf_brand_header(string $titulo, string $subtituloDoc = '', ?array $mar
     if ($telefono)  $info .= '<div class="sub">' . $esc($telefono) . ($email ? '  ·  ' . $esc($email) : '') . '</div>';
     elseif ($email) $info .= '<div class="sub">' . $esc($email) . '</div>';
 
-    return '<table class="brand"><tr>'
-        . $logoCell
-        . '<td class="doc">'
+    $bloqueDoc = '<td class="doc">'
         . '<div class="doc-tipo" style="color:' . $color . ';">' . $esc($titulo) . '</div>'
         . ($subtituloDoc ? '<div class="doc-num">' . $esc($subtituloDoc) . '</div>' : '')
         . '<div class="doc-fecha">' . date('d/m/Y h:i A') . '</div>'
-        . '</td></tr>'
-        . '<tr><td colspan="2" style="padding-top:4px;">' . $info . '</td></tr>'
-        . '</table>'
-        . '<div class="regla" style="background:' . $color . ';"></div>';
+        . '</td>';
+
+    // Compacta: los datos del emisor van AL LADO del logotipo en vez de debajo.
+    // En apaisado la hoja solo tiene 595 pt de alto y una cabecera apilada se
+    // come casi la mitad; a lo ancho, en cambio, sobra sitio.
+    $tabla = $compacto
+        ? '<table class="brand"><tr>' . $logoCell
+          . '<td style="padding-left:14px; padding-right:14px;">' . $info . '</td>'
+          . $bloqueDoc . '</tr></table>'
+        : '<table class="brand"><tr>' . $logoCell . $bloqueDoc . '</tr>'
+          . '<tr><td colspan="2" style="padding-top:4px;">' . $info . '</td></tr></table>';
+
+    return $tabla . '<div class="regla" style="background:' . $color . ';"></div>';
 }
 
 /**

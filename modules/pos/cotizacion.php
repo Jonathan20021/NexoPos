@@ -27,7 +27,7 @@ $esBase   = (int) ($c['moneda_es_base'] ?? 1) === 1;
 
 /* ---------- PDF (Dompdf) ---------- */
 if (get('pdf') === '1' && function_exists('pdf_render')) {
-    pdf_render(cot_pdf_html($c, $lineas), 'cotizacion_' . $c['numero'], 'portrait',
+    pdf_render(cot_pdf_html($c, $lineas), 'cotizacion_' . $c['numero'], 'landscape',
                get('descargar') === '1' ? 'download' : 'inline');
 }
 

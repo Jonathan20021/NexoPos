@@ -556,6 +556,17 @@ function cot_facturar(int $id, int $metodoPagoId, ?array $seleccion = null): arr
  * Documento PDF de la cotización, con la marca de la empresa.
  * Usa el mismo motor (Dompdf) y la misma hoja de estilos que la factura.
  */
+/**
+ * La cotización en PDF, en HORIZONTAL.
+ *
+ * El apaisado no es capricho: una cotización se lee comparando renglones
+ * —cantidad, precio, descuento, importe— y en vertical esas columnas se
+ * estrujan mientras sobra media hoja en blanco. Con el A4 tumbado hay 766 pt
+ * de ancho útil, así que los datos de cabecera caben en tres cajas en fila en
+ * vez de apilarse, y la tabla respira.
+ *
+ * Dompdf entiende CSS 2.1: el layout va con tablas, no con flexbox.
+ */
 function cot_pdf_html(array $c, array $lineas): string
 {
     $cfg     = cot_config();
@@ -569,16 +580,20 @@ function cot_pdf_html(array $c, array $lineas): string
     $color   = marca_app();
 
     // Columnas opcionales. Un negocio que vende a consumidor final no quiere el
-    // ITBIS desglosado, y la columna de descuento solo estorba si nadie la usa:
-    // por eso además de estar activada tiene que haber algún descuento real.
+    // ITBIS desglosado, y la de descuento solo estorba si nadie la usa: además
+    // de estar activada tiene que haber algún descuento real.
     $verItbis = !empty($cfg['mostrar_itbis']);
     $verSku   = !empty($cfg['mostrar_sku']);
     $verDesc  = !empty($cfg['mostrar_descuento'])
                 && array_sum(array_map(fn($l) => (float) ($l['descuento_monto'] ?? 0), $lineas)) > 0.001;
 
-    $h = pdf_brand_header('COTIZACIÓN', $c['numero']);
+    $h = pdf_brand_header('COTIZACIÓN', $c['numero'], null, true);   // compacta: apaisado
 
-    // Los campos propios del negocio se listan con los datos del documento.
+    /* ---------------------------------------------------------------------
+     *  Fila de cabecera: cliente, documento y —si el negocio los definió— sus
+     *  campos propios. Son celdas de una misma fila para que midan igual sin
+     *  fijar alturas, que en Dompdf recortan en vez de estirar.
+     * ------------------------------------------------------------------ */
     $extra = '';
     $vals  = cot_camposValores($c);
     foreach (cot_campos() as $cp) {
@@ -588,20 +603,15 @@ function cot_pdf_html(array $c, array $lineas): string
                 . '<td class="dato num"><strong>' . $esc($v) . '</strong></td></tr>';
     }
 
-    // Cliente y documento, en celdas de una misma fila para que midan igual
-    // aunque uno tenga más renglones que el otro.
-    $h .= '<table style="width:100%; margin-bottom:12px; border-spacing:0;"><tr>'
-        . '<td class="box box-acento" style="border-left-color:' . $color . '; width:50%;">'
-        . '<div class="box-tit">Cotizado a</div>'
+    $cajaCliente = '<div class="box-tit">Cotizado a</div>'
         . '<div class="nombre-fuerte">' . $esc($c['cliente']) . '</div>'
         . '<div class="dato">'
         . (!empty($c['rnc_cedula'])        ? 'RNC/Cédula ' . $esc($c['rnc_cedula']) . '<br>' : '')
         . (!empty($c['cliente_direccion']) ? $esc($c['cliente_direccion']) . '<br>' : '')
         . (!empty($c['cliente_telefono'])  ? $esc($c['cliente_telefono']) : '')
-        . '</div></td>'
-        . '<td style="width:3%; border:0;"></td>'
-        . '<td class="box" style="width:47%;">'
-        . '<div class="box-tit">Documento</div>'
+        . '</div>';
+
+    $cajaDoc = '<div class="box-tit">Documento</div>'
         . '<div class="qr-encf">' . $esc($c['numero']) . '</div>'
         . '<table style="width:100%; margin-top:6px;">'
         . '<tr><td class="dato" style="color:#8A93A5;">Fecha</td><td class="dato num"><strong>' . fechaCorta($c['fecha']) . '</strong></td></tr>'
@@ -611,48 +621,61 @@ function cot_pdf_html(array $c, array $lineas): string
         . (!$esBase ? '<tr><td class="dato" style="color:#8A93A5;">Moneda</td><td class="dato num"><strong>'
             . $esc($c['moneda_codigo']) . ' · tasa '
             . rtrim(rtrim(number_format((float) $c['tasa_cambio'], 4, '.', ','), '0'), '.') . '</strong></td></tr>' : '')
-        . $extra
-        . '</table></td></tr></table>';
+        . '</table>';
 
-    // Líneas.
-    $anchoDesc = $verDesc ? ($verItbis ? '36%' : '44%') : ($verItbis ? '44%' : '52%');
+    $h .= '<table style="width:100%; margin-bottom:13px; border-spacing:0;"><tr>';
+    if ($extra !== '') {
+        $h .= '<td class="box box-acento" style="border-left-color:' . $color . '; width:35%;">' . $cajaCliente . '</td>'
+            . '<td style="width:2%; border:0;"></td>'
+            . '<td class="box" style="width:31%;">' . $cajaDoc . '</td>'
+            . '<td style="width:2%; border:0;"></td>'
+            . '<td class="box" style="width:30%;">'
+            . '<div class="box-tit">Referencias</div><table style="width:100%;">' . $extra . '</table></td>';
+    } else {
+        $h .= '<td class="box box-acento" style="border-left-color:' . $color . '; width:49%;">' . $cajaCliente . '</td>'
+            . '<td style="width:2%; border:0;"></td>'
+            . '<td class="box" style="width:49%;">' . $cajaDoc . '</td>';
+    }
+    $h .= '</tr></table>';
+
+    /* ------------------------------- Líneas ---------------------------- */
+    $anchoDesc = $verDesc ? ($verItbis ? '44%' : '52%') : ($verItbis ? '52%' : '60%');
     $h .= '<table class="tbl"><thead><tr>'
         . '<th style="background:' . $color . '; width:' . $anchoDesc . ';">Descripción</th>'
-        . '<th style="background:' . $color . '; width:9%;" class="num">Cant.</th>'
-        . '<th style="background:' . $color . '; width:16%;" class="num">Precio</th>'
-        . ($verDesc  ? '<th style="background:' . $color . '; width:11%;" class="num">Desc.</th>' : '')
-        . ($verItbis ? '<th style="background:' . $color . '; width:13%;" class="num">ITBIS</th>' : '')
-        . '<th style="background:' . $color . '; width:18%;" class="num">Importe</th>'
+        . '<th style="background:' . $color . '; width:8%;" class="num">Cant.</th>'
+        . '<th style="background:' . $color . '; width:14%;" class="num">Precio</th>'
+        . ($verDesc  ? '<th style="background:' . $color . '; width:10%;" class="num">Desc.</th>' : '')
+        . ($verItbis ? '<th style="background:' . $color . '; width:11%;" class="num">ITBIS</th>' : '')
+        . '<th style="background:' . $color . '; width:15%;" class="num">Importe</th>'
         . '</tr></thead><tbody>';
     foreach ($lineas as $l) {
         $dm  = (float) ($l['descuento_monto'] ?? 0);
         $pct = (float) ($l['descuento_pct'] ?? 0);
         $h .= '<tr><td><strong>' . $esc($l['descripcion']) . '</strong>'
-            . ($verSku && !empty($l['sku']) ? '<br><span class="sku">' . $esc($l['sku']) . '</span>' : '')
-            . (empty($l['producto_id']) ? '<br><span class="sku">servicio</span>' : '')
+            . ($verSku && !empty($l['sku']) ? '  <span class="sku">' . $esc($l['sku']) . '</span>' : '')
+            . (empty($l['producto_id']) ? '  <span class="sku">servicio</span>' : '')
             . '</td>'
             . '<td class="num">' . qty($l['cantidad']) . '</td>'
             . '<td class="num">' . $celda((float) $l['precio_unitario']) . '</td>'
             . ($verDesc ? '<td class="num">' . ($dm > 0
                     ? '−' . $celda($dm)
-                      . ($pct > 0 ? '<br><span class="sku">' . rtrim(rtrim(number_format($pct, 2), '0'), '.') . '%</span>' : '')
+                      . ($pct > 0 ? '  <span class="sku">' . rtrim(rtrim(number_format($pct, 2), '0'), '.') . '%</span>' : '')
                     : '—') . '</td>' : '')
             . ($verItbis ? '<td class="num">' . $celda((float) $l['itbis']) . '</td>' : '')
             . '<td class="num"><strong>' . $celda((float) $l['subtotal']) . '</strong></td></tr>';
     }
     $h .= '</tbody></table>';
 
-    // Cierre: condiciones a la izquierda, totales a la derecha.
-    $izq = '';
+    /* ------------------- Cierre: condiciones | notas | totales ---------- */
     $condiciones = $c['condiciones'] ?: $cfg['condiciones'];
-    if ($condiciones) {
-        $izq .= '<div class="box"><div class="box-tit">Condiciones</div>'
-              . '<div class="qr-nota">' . nl2br($esc($condiciones)) . '</div></div>';
-    }
-    if (!empty($c['notas'])) {
-        $izq .= '<div class="box" style="margin-top:8px;"><div class="box-tit">Notas</div>'
-              . '<div class="qr-nota">' . $esc($c['notas']) . '</div></div>';
-    }
+    $cajaCond = $condiciones
+        ? '<div class="box"><div class="box-tit">Condiciones</div>'
+          . '<div class="qr-nota">' . nl2br($esc($condiciones)) . '</div></div>'
+        : '';
+    $cajaNotas = !empty($c['notas'])
+        ? '<div class="box"><div class="box-tit">Notas</div>'
+          . '<div class="qr-nota">' . $esc($c['notas']) . '</div></div>'
+        : '';
 
     $der = '<table class="tot">'
         . '<tr><td class="lbl">Subtotal</td><td class="val">' . $moneda((float) $c['subtotal']) . '</td></tr>'
@@ -666,20 +689,26 @@ function cot_pdf_html(array $c, array $lineas): string
         $der .= '<p class="qr-nota" style="text-align:right; margin-top:5px;">Equivalente: ' . money((float) $c['total_base']) . '</p>';
     }
 
-    $h .= '<table style="width:100%; margin-top:14px;"><tr>'
-        . '<td style="width:56%; vertical-align:top;">' . $izq . '</td>'
-        . '<td style="width:44%; vertical-align:top; padding-left:10px;">' . $der . '</td>'
+    // En apaisado los tres bloques caben en una fila; el total queda a la
+    // derecha, que es donde se busca, y sin dejar una franja vacía debajo.
+    $h .= '<table style="width:100%; margin-top:13px; border-spacing:0;"><tr>'
+        . '<td style="width:40%; vertical-align:top;">' . $cajaCond . '</td>'
+        . '<td style="width:2%;"></td>'
+        . '<td style="width:29%; vertical-align:top;">' . $cajaNotas . '</td>'
+        . '<td style="width:2%;"></td>'
+        . '<td style="width:27%; vertical-align:top;">' . $der . '</td>'
         . '</tr></table>';
 
-    if ($cfg['mensaje_cierre']) {
-        $h .= '<p style="text-align:center; margin-top:16px; font-size:11px; color:#4B5563;">'
-            . $esc($cfg['mensaje_cierre']) . '</p>';
-    }
-
-    $h .= pdf_pie('Válida hasta el ' . fechaCorta($c['vence'])
+    // El mensaje de cierre va DENTRO de la banda de pie, no como párrafo suelto.
+    // Suelto empujaba la página: con seis líneas el documento se partía en dos
+    // solo para llevarse una frase de cortesía a la segunda hoja.
+    $h .= pdf_pie(
+        ($cfg['mensaje_cierre'] ? '<span style="color:#4B5563;">' . $esc($cfg['mensaje_cierre']) . '</span><br>' : '')
+        . 'Válida hasta el ' . fechaCorta($c['vence'])
         . '. Los precios pueden variar después de esa fecha.'
         . (!$esBase ? ' El importe en pesos se calculará a la tasa vigente el día de la facturación.' : '')
-        . ($cfg['pie'] ? '<br>' . $esc($cfg['pie']) : ''));
+        . ($cfg['pie'] ? '<br>' . $esc($cfg['pie']) : '')
+    );
 
     return $h;
 }
@@ -724,7 +753,7 @@ function cot_enviarCorreo(int $id): array
         try {
             $adjunto = [[
                 'filename' => 'cotizacion_' . $c['numero'] . '.pdf',
-                'content'  => base64_encode(pdf_bytes(cot_pdf_html($c, cot_lineas($id)), 'portrait')),
+                'content'  => base64_encode(pdf_bytes(cot_pdf_html($c, cot_lineas($id)), 'landscape')),
             ]];
         } catch (Throwable $e) {
             $adjunto = null;   // sin adjunto es peor, pero mejor que no enviar nada
