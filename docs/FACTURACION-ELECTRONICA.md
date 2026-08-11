@@ -12,13 +12,13 @@ JSON de dos campos**. La API es diminuta; el trabajo está en construir la trama
 
 | Pieza | Estado |
 |---|---|
-| Tipos 31, 32, 33 y 34 | Implementados y verificados contra los ejemplos oficiales |
-| Tipos 41, 43, 44, 45, 46 y 47 | **No implementados** (fixtures guardados, sin generador) |
+| Tipos 31, 32, 33, 34, 44 y 45 | Implementados y verificados contra los ejemplos oficiales |
+| Tipos 41, 43, 46 y 47 | **No implementados** — no son comprobantes de venta (compras, gastos, exportaciones, pagos al exterior). Fixtures guardados |
 | Envío en línea (API REST) | Implementado |
 | Envío en lote (S3) | **No implementado** |
 | Emisión al vender, facturar un pedido y devolver | Conectada |
 | Cola automática (tick + cron) y alertas | Implementada |
-| **Probado contra el ambiente real** | **Sí — comprobante aceptado, firmado y con QR** |
+| **Probado contra el ambiente real** | **Sí** — 32 y 34 aceptados, firmados y con QR. 31, 44 y 45 se detienen en el `145`: falta el rango autorizado. Ver «Certificación: dónde está el muro» |
 
 **El e-CF convive con el NCF preimpreso, no lo reemplaza.** Con
 `ecf_config.activo = 0` —el valor de fábrica— el POS factura exactamente como
@@ -40,7 +40,7 @@ Los cinco documentos del proveedor viven fuera del repositorio:
 | **LUG-OPE-MA-002** Catálogo de Tablas v4 | Las 18 tablas de códigos |
 | **Ejemplos básicos_Archivos TXT.xlsx** | Tramas reales por casuística. **El más útil de todos** |
 
-Las 147 tramas del Excel están extraídas en
+Las tramas del Excel están extraídas en
 [`database/ecf_ejemplos/`](../database/ecf_ejemplos/) y son la base de las pruebas.
 
 ---
@@ -70,8 +70,8 @@ php database/ecf_ejemplos/verificar.php
 ```
 
 Toma cada trama oficial, la parsea con nuestro layout, la vuelve a generar y
-compara carácter por carácter. **112 de 112** de los tipos implementados salen
-idénticas. Detecta el error más caro de todos —un campo corrido de posición—
+compara carácter por carácter. **127 de 127** de los tipos implementados salen
+idénticas (los 20 restantes son de tipos que no se implementan). Detecta el error más caro de todos —un campo corrido de posición—
 que si no solo aparecería cuando la DGII rechace el comprobante.
 
 ```bash
@@ -91,7 +91,7 @@ mysqldump -u root --single-transaction inventario_pos | mysql -u root inventario
 php database/ecf_ejemplos/probar_pos.php
 ```
 
-**72 pruebas** del enganche al POS, sobre un clon desechable: registra ventas de
+**79 pruebas** del enganche al POS, sobre un clon desechable: registra ventas de
 verdad y comprueba que apagado nada cambia, que encendido toma E32/E31 y crea su
 documento, y que **con el proveedor caído la venta se completa igual**. También
 cubre el QR (que no se pida antes de tiempo y se sirva de la caché) y la cola
@@ -99,6 +99,15 @@ cubre el QR (que no se pida antes de tiempo y se sirva de la caché) y la cola
 veces y que un comprobante atascado genere alerta), y las notas de crédito
 (que declaren la base y no el reembolso, y que distingan anulación de parcial). Se niega a correr si la base no
 termina en `_ecftest`.
+
+```bash
+php database/ecf_ejemplos/probar_cotizador.php     # sobre el mismo clon
+```
+
+**38 pruebas** del cotizador: descuento por línea y global, facturación parcial
+que no excede lo cotizado, conceptos libres que se facturan como servicio sin
+tocar inventario, precio pactado respetado, y que el total cotizado y el
+facturado no puedan separarse.
 
 ```bash
 php database/ecf_ejemplos/probar_proveedor.php     # necesita red y credenciales
