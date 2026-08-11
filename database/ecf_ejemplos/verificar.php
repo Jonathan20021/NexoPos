@@ -14,10 +14,12 @@
  * arriba, y detecta el error más caro de todos —un campo corrido de posición—
  * que de otro modo solo aparecería cuando la DGII rechace el comprobante.
  *
- * Los tipos 41, 43, 44, 45, 46 y 47 se reportan como OMITIDOS: sus fixtures
- * están guardados, pero el generador todavía no los implementa.
+ * Los tipos 41, 43, 46 y 47 se reportan como OMITIDOS: sus fixtures están
+ * guardados, pero no son comprobantes de VENTA —documentan compras, gastos,
+ * exportaciones y pagos al exterior— y el generador no los implementa.
  */
 
+require_once dirname(__DIR__, 2) . '/includes/ecf_catalogos.php';
 require_once dirname(__DIR__, 2) . '/includes/ecf_trama.php';
 
 $dir = __DIR__;
@@ -113,7 +115,8 @@ if ($normalizadas) {
 echo "\n";
 
 if ($fallos === 0) {
-    echo "  ✓ Todos los tipos implementados (31, 32, 33, 34) reproducen la trama oficial.\n\n";
+    echo "  ✓ Todos los tipos implementados (" . implode(', ', ecfTiposSoportados())
+       . ") reproducen la trama oficial.\n\n";
     exit(0);
 }
 echo "  ✗ Hay layouts que no calzan. Revisa el orden de campos en ecfLayout().\n\n";

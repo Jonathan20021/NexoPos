@@ -332,6 +332,60 @@ function ecfLayout(string $tipoEcf): array
                 'DERE' => $c['DERE'],
                 'INFR' => $c['INFR'],
             ];
+
+        case '44':  // Comprobante de Regímenes Especiales — el que NO paga ITBIS
+            //
+            // Es el comprobante de quien está exento por régimen: zonas francas,
+            // diplomáticos, instituciones sin fines de lucro. Se emite igual que
+            // una factura, pero el ítem va con IndicadorFacturacion = 4 (exento)
+            // y sin impuesto.
+            //
+            // Dos diferencias de estructura frente a los demás:
+            //
+            //  · El ítem NO lleva el bloque de referencia (cantidad y unidad de
+            //    referencia, subcantidad, grados de alcohol, precio de
+            //    referencia): son campos de bebidas alcohólicas y combustibles,
+            //    que tributan por volumen y no encajan en un exento.
+            //
+            //  · El descuento NO lleva IndicadorNorma1007. La norma 10-07 regula
+            //    la retención en el crédito fiscal; en un régimen especial no
+            //    hay nada que retener.
+            return [
+                'IDOC' => array_values(array_diff($idocLargo, ['FechaVencimientoSecuencia'])),
+                'EMIS' => $c['EMIS'],
+                'COMP' => $c['COMP_32'],
+                'INFA' => $c['INFA'],
+                'TRAN' => $c['TRAN'],
+                'OTMN' => $c['OTMN'],
+                'ITEM' => array_merge(
+                    ['NumeroLinea', 'TipoCodigoItem', 'IndicadorFacturacion', 'NombreItem',
+                     'IndicadorBienoServicio', 'DescripcionItem', 'CantidadItem', 'UnidadMedida',
+                     'FechaElaboracion', 'FechaVencimientoItem', 'PrecioUnitarioItem',
+                     'DescuentoMonto', 'SubDescuento', 'RecargoMonto', 'SubRecargo',
+                     'TipoImpuesto', 'PrecioOtraMoneda', 'DescuentoOtraMoneda',
+                     'RecargoOtraMoneda', 'MontoItemOtraMoneda', 'MontoItem']
+                ),
+                'DERE' => array_values(array_diff($c['DERE'], ['IndicadorNorma1007'])),
+                'FPAG' => $c['FPAG'],
+            ];
+
+        case '45':  // Comprobante Gubernamental — ventas al Estado
+            //
+            // Lo pide cualquier institución pública al comprar. Estructuralmente
+            // es el más parecido al crédito fiscal —mismo IDOC largo y mismo
+            // bloque de comprador, porque el Estado se identifica con su RNC—,
+            // pero el ítem va limpio: ni retenciones ni minería.
+            return [
+                'IDOC' => $idocLargo,
+                'EMIS' => $c['EMIS'],
+                'COMP' => $c['COMP_31'],
+                'INFA' => $c['INFA'],
+                'TRAN' => $c['TRAN'],
+                'OTMN' => $c['OTMN'],
+                'ITEM' => $itemBase([], []),
+                'DERE' => $c['DERE'],
+                'FPAG' => $c['FPAG'],
+            ];
     }
 
     throw new InvalidArgumentException(

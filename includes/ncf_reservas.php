@@ -156,8 +156,46 @@ function ncfReservaDeTerminal(int $terminalId, string $ncf): ?array
 function ncfTipoDeComprobante(string $comprobante): string
 {
     $electronico = function_exists('ecfActivo') && ecfActivo();
-    if ($comprobante === 'credito_fiscal') return $electronico ? 'E31' : 'B01';
+
+    // Gubernamental y régimen especial SOLO existen en electrónico en este
+    // sistema: no hay talonario preimpreso configurado para ellos. Si alguien
+    // los pide con el e-CF apagado, se cae al comprobante equivalente en vez de
+    // inventar una serie que la DGII no reconocería.
+    if ($comprobante === 'gubernamental')     return $electronico ? 'E45' : 'B01';
+    if ($comprobante === 'regimen_especial')  return $electronico ? 'E44' : 'B02';
+    if ($comprobante === 'credito_fiscal')    return $electronico ? 'E31' : 'B01';
     return $electronico ? 'E32' : 'B02';
+}
+
+/**
+ * Comprobantes que se pueden elegir AHORA MISMO al facturar.
+ *
+ * No es una lista fija: gubernamental y régimen especial requieren el e-CF
+ * encendido y una secuencia activa de su tipo. Ofrecer en pantalla algo que al
+ * cobrar va a fallar por falta de rango es peor que no ofrecerlo.
+ *
+ * @return array valor => etiqueta
+ */
+function ncfComprobantesDisponibles(): array
+{
+    $opciones = [
+        'consumidor'      => 'Consumidor Final',
+        'credito_fiscal'  => 'Crédito Fiscal',
+    ];
+    if (!function_exists('ecfActivo') || !ecfActivo()) return $opciones;
+
+    // Con e-CF encendido se añaden los que tengan secuencia viva.
+    foreach (['gubernamental' => ['E45', 'Gubernamental'],
+              'regimen_especial' => ['E44', 'Régimen Especial (exento)']] as $valor => [$tipo, $etiqueta]) {
+        $viva = qVal(
+            "SELECT 1 FROM ncf_secuencias
+              WHERE tipo = ? AND activo = 1 AND secuencia_actual <= secuencia_hasta
+                AND (vencimiento IS NULL OR vencimiento >= CURDATE())",
+            [$tipo]
+        );
+        if ($viva) $opciones[$valor] = $etiqueta;
+    }
+    return $opciones;
 }
 
 /** Secuencia de la nota de crédito: B04 preimpresa, E34 electrónica. */

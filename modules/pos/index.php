@@ -299,8 +299,9 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
             <div>
               <label class="label">Comprobante</label>
               <select name="comprobante" x-model="comprobante" class="select">
-                <option value="consumidor">Consumidor Final</option>
-                <option value="credito_fiscal">Crédito Fiscal</option>
+                <?php foreach (ncfComprobantesDisponibles() as $v => $et): ?>
+                  <option value="<?= e($v) ?>"><?= e($et) ?></option>
+                <?php endforeach; ?>
               </select>
             </div>
           </div>

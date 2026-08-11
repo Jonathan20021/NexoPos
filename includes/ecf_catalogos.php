@@ -41,13 +41,19 @@ function ecfTiposComprobante(): array
 /**
  * Tipos que este sistema sabe generar hoy.
  *
- * Los demás (41, 43, 44, 45, 46, 47) tienen secciones y órdenes de campo
- * distintos; se implementan cuando el negocio los necesite. Declararlos aquí
- * sin generador sería ofrecer algo que rompe al usarse.
+ * Los seis que cubren la venta: crédito fiscal, consumo, notas de débito y
+ * crédito, regímenes especiales (el exento) y gubernamental.
+ *
+ * Faltan a propósito 41 (compras), 43 (gastos menores), 46 (exportaciones) y
+ * 47 (pagos al exterior). No son comprobantes de venta: los emite el propio
+ * contribuyente para documentar lo que COMPRA o paga, y no salen de un punto
+ * de venta. Sus ejemplos oficiales están guardados en database/ecf_ejemplos/
+ * para el día que hagan falta; declararlos aquí sin generador sería ofrecer
+ * algo que rompe al usarse.
  */
 function ecfTiposSoportados(): array
 {
-    return ['31', '32', '33', '34'];
+    return ['31', '32', '33', '34', '44', '45'];
 }
 
 /** Tabla 2 — Indicador de Nota de Crédito (plazo de deducción del ITBIS). */

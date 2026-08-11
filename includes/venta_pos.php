@@ -30,7 +30,11 @@ function registrarVentaPOS(array $in, array $ctx): array
     $cart        = is_array($in['cart'] ?? null) ? $in['cart'] : [];
     $descuento   = max(0.0, (float) ($in['descuento'] ?? 0));
     $clienteId   = (int) ($in['cliente_id'] ?? 1) ?: 1;
-    $comprobante = ($in['comprobante'] ?? '') === 'credito_fiscal' ? 'credito_fiscal' : 'consumidor';
+    // Se valida contra los comprobantes REALMENTE disponibles: si alguien manda
+    // «gubernamental» sin secuencia E45 viva, cae a consumidor en vez de romper
+    // la venta a medias.
+    $comprobante = array_key_exists((string) ($in['comprobante'] ?? ''), ncfComprobantesDisponibles())
+        ? (string) $in['comprobante'] : 'consumidor';
     $metodoId    = (int) ($in['metodo_pago_id'] ?? 1) ?: 1;
     $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : 'Mostrador';
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
@@ -207,9 +211,11 @@ function registrarVentaPOS(array $in, array $ctx): array
             // venta. Se acepta la serie contraria equivalente y la venta entra
             // como preimpresa (no se le genera e-CF, porque su número no es un
             // e-NCF). Queda avisado en las notas para que se revise al cuadrar.
-            $serieContraria = $comprobante === 'credito_fiscal'
-                ? ($tipoNcf === 'E31' ? 'B01' : 'E31')
-                : ($tipoNcf === 'E32' ? 'B02' : 'E32');
+            // Gubernamental y régimen especial no tienen talonario preimpreso
+            // configurado, así que no hay serie contraria que aceptar: solo vale
+            // su propio tipo.
+            $pares = ['E31' => 'B01', 'B01' => 'E31', 'E32' => 'B02', 'B02' => 'E32'];
+            $serieContraria = $pares[$tipoNcf] ?? $tipoNcf;
 
             if (!$p || !in_array($p['tipo'], [$tipoNcf, $serieContraria], true)) {
                 throw new RuntimeException('El NCF offline no corresponde al tipo de comprobante.');
