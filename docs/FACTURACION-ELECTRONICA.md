@@ -527,6 +527,49 @@ categorizar** (FortiGuard, categoría *Unrated*). Dos problemas distintos:
 
 ---
 
+## Certificación: dónde está el muro
+
+Probado el 11-08-2026 contra el ambiente de pruebas, con ventas reales por el
+camino del POS. **Los seis tipos generan documentos que la DGII acepta
+estructuralmente**; los cuatro sin rango autorizado se detienen todos en el
+mismo sitio:
+
+| Tipo | Resultado |
+|---|---|
+| 31 Crédito Fiscal | RECHAZADO · **145** |
+| 44 Regímenes Especiales | RECHAZADO · **145** |
+| 45 Gubernamental | RECHAZADO · **145** |
+| 32 / 34 | **ACEPTADOS**, con QR — tienen rango autorizado |
+
+`145` es «Fecha de vencimiento de secuencia inválida»: la secuencia no está
+autorizada. **No es un problema de código y no se arregla programando.**
+
+Lo que sí se arregló para llegar hasta aquí: el tipo 44 fallaba antes con el
+código `3` del esquema XSD —`Totales` con un hijo `MontoGravadoTotal` inválido—
+porque nuestras líneas iban gravadas. Ver «El exento es el comprador».
+
+### La cadena de validación tiene tres capas
+
+Conviene saberlo para leer un rechazo:
+
+1. **El parser de LUGANIS** valida la estructura de la trama. Si falla, no hay
+   trackId y el error trae el **nombre exacto del campo** (código `3002`).
+2. **El esquema XSD de la DGII** valida el XML que arma el proveedor. Error
+   código `3`, con el elemento concreto.
+3. **La DGII** valida secuencia y contenido: `145` (secuencia no autorizada),
+   `1209` (número ya utilizado).
+
+### Lo que hay que pedirle a LUGANIS
+
+Los rangos de e-NCF autorizados en pruebas para **E31**, **E33**, **E44** y
+**E45**. Con E32 y E34 ya se emite, se acepta y se obtiene QR.
+
+> **RNC de prueba de LUGANIS: `131880681`.** Uno inventado hace que el XML salga
+> sin `RNCComprador` y el XSD lo rechace. Los tipos 31 y 45 exigen identificar al
+> comprador.
+
+---
+
 ## Pendiente
 
 ### Reportes 606/607/608
