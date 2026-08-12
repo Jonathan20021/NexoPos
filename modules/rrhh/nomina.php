@@ -6,25 +6,40 @@ require_perm('rrhh_nomina.ver');
  * Cálculo de nómina según la legislación dominicana (TSS + ISR).
  *  - AFP (pensión, empleado): 2.87%
  *  - SFS (salud, empleado):   3.04%
- *  - ISR: escala anual vigente sobre el salario neto de TSS, prorrateado al mes.
+ *  - ISR: escala anual vigente sobre el salario neto de TSS, prorrateado al período.
+ *
+ * Recibe SIEMPRE el salario mensual —que es como lo guarda `empleados`— y
+ * `$factor` dice qué parte del mes se está pagando: 1 mensual, 0.5 quincenal,
+ * 1/4.33 semanal. `$otrosIngresos` sí va en monto del período.
+ *
+ * Por qué el ISR no se calcula sobre lo que se paga en el período: la escala es
+ * anual y progresiva, así que anualizar una quincena (x12 sobre medio mes) da la
+ * mitad de la renta real y baja a casi todo el mundo de tramo — con el padrón de
+ * Importers dejaba exentos a cinco de los seis que sí tributan. Se saca el ISR
+ * del mes completo y recién ahí se prorratea, que es como lo hace la DGII y como
+ * lo calcula el contador del cliente. AFP y SFS son porcentaje plano: dan igual
+ * en cualquier orden, y se cobran sobre lo del período.
  */
-function calcNominaRD(float $salario, float $otrosIngresos = 0): array
+function calcNominaRD(float $salarioMensual, float $otrosIngresos = 0, float $factor = 1.0): array
 {
-    $afp = round($salario * 0.0287, 2);
-    $sfs = round($salario * 0.0304, 2);
-    $netoTSSmensual = $salario - $afp - $sfs;
-    $anual = $netoTSSmensual * 12;
+    $salarioPeriodo = round($salarioMensual * $factor, 2);
+    $afp = round($salarioPeriodo * 0.0287, 2);
+    $sfs = round($salarioPeriodo * 0.0304, 2);
+
+    // Base del ISR: el mes completo neto de TSS, llevado al año. Sin redondear,
+    // porque el redondeo de la retención va al final y no arrastra a la escala.
+    $anual = ($salarioMensual - $salarioMensual * 0.0287 - $salarioMensual * 0.0304) * 12;
 
     if ($anual <= 416220.00)       $isrAnual = 0;
     elseif ($anual <= 624329.00)   $isrAnual = ($anual - 416220.00) * 0.15;
     elseif ($anual <= 867123.00)   $isrAnual = 31216.00 + ($anual - 624329.00) * 0.20;
     else                            $isrAnual = 79776.00 + ($anual - 867123.00) * 0.25;
-    $isr = round($isrAnual / 12, 2);
+    $isr = round($isrAnual / 12 * $factor, 2);
 
-    $totalIngresos = $salario + $otrosIngresos;
-    $totalDeducciones = $afp + $sfs + $isr;
+    $totalIngresos = round($salarioPeriodo + $otrosIngresos, 2);
+    $totalDeducciones = round($afp + $sfs + $isr, 2);
     $neto = round($totalIngresos - $totalDeducciones, 2);
-    return compact('afp', 'sfs', 'isr', 'totalIngresos', 'totalDeducciones', 'neto');
+    return compact('salarioPeriodo', 'afp', 'sfs', 'isr', 'totalIngresos', 'totalDeducciones', 'neto');
 }
 
 if (isPost()) {
@@ -59,10 +74,11 @@ if (isPost()) {
                 $nid = dbInsert('nominas', ['sucursal_id' => $sucFiltro ?: null, 'descripcion' => $descripcion, 'tipo' => $tipo, 'fecha_desde' => $desde, 'fecha_hasta' => $hasta, 'estado' => 'procesada', 'usuario_id' => current_user()['id']]);
                 $tb = 0; $td = 0; $tn = 0;
                 foreach ($emps as $e) {
-                    $salarioPeriodo = round((float) $e['salario'] * $factor, 2);
-                    $c = calcNominaRD($salarioPeriodo);
+                    // El salario mensual entra entero: es calcNominaRD() quien lo
+                    // parte, porque el ISR necesita ver el mes completo.
+                    $c = calcNominaRD((float) $e['salario'], 0, $factor);
                     dbInsert('nomina_detalles', [
-                        'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $salarioPeriodo,
+                        'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $c['salarioPeriodo'],
                         'dias_trabajados' => $tipo === 'mensual' ? 30 : ($tipo === 'quincenal' ? 15 : 7),
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                         'otros_ingresos' => 0, 'total_ingresos' => $c['totalIngresos'],

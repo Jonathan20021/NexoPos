@@ -19,6 +19,12 @@
 respaldo_*.sql
 *.bak
 
+# --- Cargas de datos reales del cliente (PII) ---
+# Nóminas y padrones traen cédulas, salarios y cuentas bancarias de personas.
+# Se generan a mano desde los Excel del cliente y se aplican con mysql; el
+# repositorio es público en GitHub y esto no puede viajar en él.
+/database/*.local.sql
+
 # --- Bloqueo de instalación (se genera en cada servidor) ---
 /install/installed.lock
 
