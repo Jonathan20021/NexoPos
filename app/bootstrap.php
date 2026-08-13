@@ -28,6 +28,7 @@ require_once __DIR__ . '/permissions.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/audit.php';
 require_once dirname(__DIR__) . '/includes/components.php';
+require_once dirname(__DIR__) . '/includes/nomina.php';    // cálculo TSS + ISR
 require_once dirname(__DIR__) . '/includes/marca_app.php'; // identidad visual de la app (paleta y logotipo)
 require_once dirname(__DIR__) . '/includes/tiendas.php';   // marcas comerciales (identidad del comprobante)
 require_once dirname(__DIR__) . '/includes/operaciones.php';

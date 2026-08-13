@@ -2,45 +2,6 @@
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('rrhh_nomina.ver');
 
-/**
- * Cálculo de nómina según la legislación dominicana (TSS + ISR).
- *  - AFP (pensión, empleado): 2.87%
- *  - SFS (salud, empleado):   3.04%
- *  - ISR: escala anual vigente sobre el salario neto de TSS, prorrateado al período.
- *
- * Recibe SIEMPRE el salario mensual —que es como lo guarda `empleados`— y
- * `$factor` dice qué parte del mes se está pagando: 1 mensual, 0.5 quincenal,
- * 1/4.33 semanal. `$otrosIngresos` sí va en monto del período.
- *
- * Por qué el ISR no se calcula sobre lo que se paga en el período: la escala es
- * anual y progresiva, así que anualizar una quincena (x12 sobre medio mes) da la
- * mitad de la renta real y baja a casi todo el mundo de tramo — con el padrón de
- * Importers dejaba exentos a cinco de los seis que sí tributan. Se saca el ISR
- * del mes completo y recién ahí se prorratea, que es como lo hace la DGII y como
- * lo calcula el contador del cliente. AFP y SFS son porcentaje plano: dan igual
- * en cualquier orden, y se cobran sobre lo del período.
- */
-function calcNominaRD(float $salarioMensual, float $otrosIngresos = 0, float $factor = 1.0): array
-{
-    $salarioPeriodo = round($salarioMensual * $factor, 2);
-    $afp = round($salarioPeriodo * 0.0287, 2);
-    $sfs = round($salarioPeriodo * 0.0304, 2);
-
-    // Base del ISR: el mes completo neto de TSS, llevado al año. Sin redondear,
-    // porque el redondeo de la retención va al final y no arrastra a la escala.
-    $anual = ($salarioMensual - $salarioMensual * 0.0287 - $salarioMensual * 0.0304) * 12;
-
-    if ($anual <= 416220.00)       $isrAnual = 0;
-    elseif ($anual <= 624329.00)   $isrAnual = ($anual - 416220.00) * 0.15;
-    elseif ($anual <= 867123.00)   $isrAnual = 31216.00 + ($anual - 624329.00) * 0.20;
-    else                            $isrAnual = 79776.00 + ($anual - 867123.00) * 0.25;
-    $isr = round($isrAnual / 12 * $factor, 2);
-
-    $totalIngresos = round($salarioPeriodo + $otrosIngresos, 2);
-    $totalDeducciones = round($afp + $sfs + $isr, 2);
-    $neto = round($totalIngresos - $totalDeducciones, 2);
-    return compact('salarioPeriodo', 'afp', 'sfs', 'isr', 'totalIngresos', 'totalDeducciones', 'neto');
-}
 
 if (isPost()) {
     verify_csrf();
@@ -71,17 +32,25 @@ if (isPost()) {
         $factor = $tipo === 'quincenal' ? 0.5 : ($tipo === 'semanal' ? (1 / 4.33) : 1);
         try {
             $nid = tx(function () use ($descripcion, $tipo, $desde, $hasta, $sucFiltro, $emps, $factor) {
-                $nid = dbInsert('nominas', ['sucursal_id' => $sucFiltro ?: null, 'descripcion' => $descripcion, 'tipo' => $tipo, 'fecha_desde' => $desde, 'fecha_hasta' => $hasta, 'estado' => 'procesada', 'usuario_id' => current_user()['id']]);
+                $nid = dbInsert('nominas', ['sucursal_id' => $sucFiltro ?: null, 'descripcion' => $descripcion, 'tipo' => $tipo, 'fecha_desde' => $desde, 'fecha_hasta' => $hasta, 'estado' => 'borrador', 'usuario_id' => current_user()['id']]);
                 $tb = 0; $td = 0; $tn = 0;
+                $diasBase = nominaDiasBase($tipo);
                 foreach ($emps as $e) {
+                    // Arranca con la jornada completa y todos los conceptos en
+                    // cero: la nómina nace en BORRADOR y es en la pantalla donde
+                    // se capturan horas extra, comisiones, préstamos y días.
+                    //
                     // El salario mensual entra entero: es calcNominaRD() quien lo
                     // parte, porque el ISR necesita ver el mes completo.
-                    $c = calcNominaRD((float) $e['salario'], 0, $factor);
+                    $c = calcNominaRD((float) $e['salario'],
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $c['salarioPeriodo'],
-                        'dias_trabajados' => $tipo === 'mensual' ? 30 : ($tipo === 'quincenal' ? 15 : 7),
+                        'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
-                        'otros_ingresos' => 0, 'total_ingresos' => $c['totalIngresos'],
+                        'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
+                        'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
+                        'total_ingresos' => $c['totalIngresos'],
                         'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => 0,
                         'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
                     ]);
@@ -91,12 +60,74 @@ if (isPost()) {
                 return $nid;
             });
             audit('rrhh_nomina', 'procesar', "Nómina procesada: $descripcion (" . count($emps) . " empleados)", ['tabla' => 'nominas', 'registro_id' => $nid]);
-            flash('success', 'Nómina procesada para ' . count($emps) . ' empleados.');
+            flash('success', 'Nómina generada para ' . count($emps) . ' empleados. '
+                . 'Queda en BORRADOR: captura horas extra, comisiones, préstamos y días antes de confirmarla.');
             redirect('modules/rrhh/nomina.php?ver=' . $nid);
         } catch (Throwable $ex) {
             flash('error', $ex->getMessage());
             redirect('modules/rrhh/nomina.php');
         }
+    }
+
+    // Captura de conceptos y recálculo. Solo en borrador: una nómina cerrada
+    // no se toca, porque ya se declaró y se pagó con esos números.
+    if ($accion === 'guardar_conceptos') {
+        require_perm('rrhh_nomina.procesar');
+        $nid = postInt('id');
+        $n = qOne("SELECT * FROM nominas WHERE id = ?", [$nid]);
+        if (!$n)                        { flash('error', 'Nómina no encontrada.'); redirect('modules/rrhh/nomina.php'); }
+        if ($n['estado'] !== 'borrador') { flash('error', 'Solo se puede editar una nómina en borrador.'); redirect('modules/rrhh/nomina.php?ver=' . $nid); }
+        require_sucursal_access($n['sucursal_id']);
+
+        $campos = ['dias_trabajados', 'horas_extra', 'monto_horas_extra', 'prima_vacacional',
+                   'otros_ingresos', 'comisiones', 'reembolso', 'vacaciones_diferencial',
+                   'bonificaciones', 'descuento_dias', 'per_capita', 'otras_deducciones'];
+        $factor = $n['tipo'] === 'quincenal' ? 0.5 : ($n['tipo'] === 'semanal' ? (1 / 4.33) : 1);
+
+        try {
+            txReintentable(function () use ($nid, $n, $campos, $factor) {
+                $tb = 0; $td = 0; $tn = 0;
+                foreach (qAll("SELECT nd.*, e.salario FROM nomina_detalles nd JOIN empleados e ON e.id=nd.empleado_id WHERE nd.nomina_id = ?", [$nid]) as $d) {
+                    $vals = [];
+                    foreach ($campos as $k) {
+                        $v = $_POST[$k][$d['id']] ?? $d[$k];
+                        $vals[$k] = max(0.0, round((float) str_replace(',', '', (string) $v), 2));
+                    }
+                    $vals['dias_base'] = (float) $d['dias_base'] ?: nominaDiasBase($n['tipo']);
+
+                    $c = calcNominaRD((float) $d['salario'], $vals, $factor);
+                    dbUpdate('nomina_detalles', $vals + [
+                        'salario_base'      => $c['salarioPeriodo'],
+                        'total_ingresos'    => $c['totalIngresos'],
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'],
+                        'total_deducciones' => $c['totalDeducciones'],
+                        'salario_neto'      => $c['neto'],
+                    ], 'id = ?', [(int) $d['id']]);
+                    $tb += $c['totalIngresos']; $td += $c['totalDeducciones']; $tn += $c['neto'];
+                }
+                dbUpdate('nominas', ['total_bruto' => $tb, 'total_deducciones' => $td, 'total_neto' => $tn], 'id = ?', [$nid]);
+            });
+            flash('success', 'Conceptos guardados y nómina recalculada.');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/rrhh/nomina.php?ver=' . $nid);
+    }
+
+    // Cierra el borrador. A partir de aquí los números no cambian.
+    if ($accion === 'confirmar') {
+        require_perm('rrhh_nomina.procesar');
+        $nid = postInt('id');
+        $n = qOne("SELECT * FROM nominas WHERE id = ?", [$nid]);
+        if ($n && $n['estado'] === 'borrador') {
+            require_sucursal_access($n['sucursal_id']);
+            dbUpdate('nominas', ['estado' => 'procesada'], 'id = ?', [$nid]);
+            audit('rrhh_nomina', 'procesar', "Nómina confirmada: {$n['descripcion']}", ['tabla' => 'nominas', 'registro_id' => $nid]);
+            flash('success', 'Nómina confirmada. Ya no se puede editar.');
+        } else {
+            flash('error', 'Esta nómina no está en borrador.');
+        }
+        redirect('modules/rrhh/nomina.php?ver=' . $nid);
     }
 
     if ($accion === 'pagar') {
@@ -141,16 +172,32 @@ if ($verId) {
     if (!$n) { flash('error', 'Nómina no encontrada.'); redirect('modules/rrhh/nomina.php'); }
     require_sucursal_access($n['sucursal_id']);
     $det = qAll("SELECT nd.*, e.nombre, e.apellido, e.cedula, p.nombre AS puesto FROM nomina_detalles nd JOIN empleados e ON e.id=nd.empleado_id LEFT JOIN puestos p ON p.id=e.puesto_id WHERE nd.nomina_id=? ORDER BY e.nombre", [$verId]);
-    if (export_solicitado()) {
-        export_tabla('nomina_' . $n['id'], ['Empleado', 'Cédula', 'Puesto', 'Salario', 'AFP', 'SFS', 'ISR', 'Deducciones', 'Neto'],
-            array_map(fn($d) => [$d['nombre'] . ' ' . $d['apellido'], $d['cedula'], $d['puesto'], $d['salario_base'], $d['afp'], $d['sfs'], $d['isr'], $d['total_deducciones'], $d['salario_neto']], $det));
+    // Excel con el formato EXACTO de la hoja del cliente (23 columnas, agrupadas
+    // por sucursal, con su fila de totales). El PDF sigue siendo el resumen.
+    if (quiere_excel()) {
+        nominaExportarExcel($n, nominaLineasAgrupadas($verId));
+    }
+    if (quiere_pdf()) {
+        export_tabla('nomina_' . $n['id'], ['Empleado', 'Cédula', 'Puesto', 'Base cotizable', 'AFP', 'SFS', 'ISR', 'Retenciones', 'Neto'],
+            array_map(fn($d) => [$d['nombre'] . ' ' . $d['apellido'], $d['cedula'], $d['puesto'], $d['total_ingresos'], $d['afp'], $d['sfs'], $d['isr'], $d['total_deducciones'], $d['salario_neto']], $det));
+    }
+    // Archivo para subir al banco: solo quien cobra por transferencia.
+    if (($_GET['export'] ?? '') === 'banco') {
+        nominaExportarBanco($n, nominaLineasAgrupadas($verId));
     }
     $acc = '<a href="' . url('modules/rrhh/nomina.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>'
         . '<a href="?ver=' . $verId . '&export=excel" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Excel</a>'
+        . '<a href="?ver=' . $verId . '&export=banco" class="btn btn-ghost">' . icon('bank', 'w-4 h-4') . ' Archivo banco</a>'
         . '<a href="?ver=' . $verId . '&export=pdf" target="_blank" class="btn btn-ghost">' . icon('print', 'w-4 h-4') . ' PDF</a>';
+    if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
+        $acc .= '<form method="post" class="inline" onsubmit="return confirm(\'Al confirmar, la nómina deja de ser editable. ¿Continuar?\')">'
+              . csrf_field() . '<input type="hidden" name="accion" value="confirmar"><input type="hidden" name="id" value="' . $verId . '">'
+              . '<button class="btn btn-primary">' . icon('check', 'w-4 h-4') . ' Confirmar nómina</button></form>';
+    }
     if ($n['estado'] === 'procesada' && can('rrhh_nomina.pagar')) {
         $acc .= '<form method="post" class="inline" onsubmit="return confirm(\'¿Marcar esta nómina como pagada?\')">' . csrf_field() . '<input type="hidden" name="accion" value="pagar"><input type="hidden" name="id" value="' . $verId . '"><button class="btn btn-success">' . icon('check', 'w-4 h-4') . ' Marcar pagada</button></form>';
     }
+    $editable = $n['estado'] === 'borrador' && can('rrhh_nomina.procesar');
     layout_start('Nómina · ' . e($n['descripcion']), 'Periodo ' . fechaCorta($n['fecha_desde']) . ' al ' . fechaCorta($n['fecha_hasta']) . ' · ' . ucfirst($n['tipo']), $acc);
     ?>
     <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-5">
@@ -159,16 +206,73 @@ if ($verId) {
       <div class="card p-5"><p class="text-sm text-slate-400">Deducciones</p><p class="text-xl font-extrabold text-rose-600 mt-1"><?= money($n['total_deducciones']) ?></p></div>
       <div class="card p-5"><p class="text-sm text-slate-400">Total neto a pagar</p><p class="text-xl font-extrabold text-emerald-600 mt-1"><?= money($n['total_neto']) ?></p></div>
     </div>
+    <?php if ($editable): ?>
+      <div class="card p-4 mb-4 flex items-start gap-3 bg-amber-50 border-amber-200">
+        <?= icon('alert', 'w-5 h-5 text-amber-500 mt-0.5 shrink-0') ?>
+        <p class="text-sm text-amber-800">
+          <strong>Esta nómina está en borrador.</strong> Captura aquí los conceptos del período
+          —días pagados, feriados y horas extra, comisiones, incentivos, prima vacacional,
+          per-cápita y préstamos— y pulsa <em>Guardar y recalcular</em>. Al confirmarla deja de
+          ser editable.
+        </p>
+      </div>
+    <?php endif; ?>
+    <form method="post"><?= csrf_field() ?>
+    <input type="hidden" name="accion" value="guardar_conceptos">
+    <input type="hidden" name="id" value="<?= $verId ?>">
     <div class="card overflow-hidden">
       <div class="overflow-x-auto">
         <table class="data-table">
-          <thead><tr><th>Empleado</th><th>Puesto</th><th class="text-right">Salario</th><th class="text-right">AFP (2.87%)</th><th class="text-right">SFS (3.04%)</th><th class="text-right">ISR</th><th class="text-right">Deducciones</th><th class="text-right">Neto</th></tr></thead>
+          <?php /* En BORRADOR la tabla es un formulario: aquí se capturan los
+                   conceptos que el módulo antes no tenía dónde recoger. Cerrada,
+                   se muestra en solo lectura. */ ?>
+          <thead>
+            <tr>
+              <th>Empleado</th>
+              <?php if ($editable): ?>
+                <th class="text-center" title="Días pagados del período">Días</th>
+                <th class="text-center" title="Feriado y horas extra (col. H)">Feriado/H.E.</th>
+                <th class="text-center" title="Otras remuneraciones (col. I)">Otras rem.</th>
+                <th class="text-center" title="Comisiones">Comisión</th>
+                <th class="text-center" title="Incentivos (col. L)">Incentivo</th>
+                <th class="text-center" title="Prima vacacional (col. G) — se paga, no cotiza">Prima</th>
+                <th class="text-center" title="Descuento por días no trabajados (col. M)">Desc. días</th>
+                <th class="text-center" title="Per-cápita del plan de salud (col. Q)">Per-cáp.</th>
+                <th class="text-center" title="Préstamo / cuentas por cobrar (col. T)">Préstamo</th>
+              <?php else: ?>
+                <th class="text-right">Base cotizable</th>
+              <?php endif; ?>
+              <th class="text-right">AFP</th>
+              <th class="text-right">SFS</th>
+              <th class="text-right">ISR</th>
+              <th class="text-right">Retenciones</th>
+              <th class="text-right">Neto</th>
+            </tr>
+          </thead>
           <tbody>
+            <?php
+              $campoNum = function (string $campo, array $d, string $ancho = 'w-20') {
+                  return '<input type="number" step="0.01" min="0" name="' . $campo . '[' . (int) $d['id'] . ']"'
+                       . ' value="' . e(rtrim(rtrim(number_format((float) $d[$campo], 2, '.', ''), '0'), '.') ?: '0') . '"'
+                       . ' class="' . $ancho . ' px-2 py-1 rounded-lg border border-slate-200 text-sm text-right">';
+              };
+            ?>
             <?php foreach ($det as $d): ?>
               <tr>
-                <td><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?></p></div></div></td>
-                <td class="text-slate-500"><?= e($d['puesto'] ?: '—') ?></td>
-                <td class="text-right text-slate-700"><?= money($d['salario_base']) ?></td>
+                <td><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?> · <?= money($d['salario_base']) ?></p></div></div></td>
+                <?php if ($editable): ?>
+                  <td class="text-center"><?= $campoNum('dias_trabajados', $d, 'w-16') ?></td>
+                  <td class="text-center"><?= $campoNum('monto_horas_extra', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('otros_ingresos', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('comisiones', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('bonificaciones', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('prima_vacacional', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('descuento_dias', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('per_capita', $d) ?></td>
+                  <td class="text-center"><?= $campoNum('otras_deducciones', $d) ?></td>
+                <?php else: ?>
+                  <td class="text-right text-slate-700"><?= money($d['total_ingresos']) ?></td>
+                <?php endif; ?>
                 <td class="text-right text-slate-500"><?= money($d['afp']) ?></td>
                 <td class="text-right text-slate-500"><?= money($d['sfs']) ?></td>
                 <td class="text-right text-slate-500"><?= money($d['isr']) ?></td>
@@ -177,10 +281,23 @@ if ($verId) {
               </tr>
             <?php endforeach; ?>
           </tbody>
-          <tfoot><tr class="bg-slate-50 font-bold text-slate-800"><td colspan="2">TOTALES</td><td class="text-right"><?= money($n['total_bruto']) ?></td><td colspan="3"></td><td class="text-right text-rose-600"><?= money($n['total_deducciones']) ?></td><td class="text-right text-emerald-600"><?= money($n['total_neto']) ?></td></tr></tfoot>
+          <tfoot>
+            <tr class="bg-slate-50 font-bold text-slate-800">
+              <td colspan="<?= $editable ? 10 : 2 ?>">TOTALES</td>
+              <td colspan="3"></td>
+              <td class="text-right text-rose-600"><?= money($n['total_deducciones']) ?></td>
+              <td class="text-right text-emerald-600"><?= money($n['total_neto']) ?></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
+      <?php if ($editable): ?>
+        <div class="p-4 border-t border-slate-100 flex justify-end">
+          <button class="btn btn-primary"><?= icon('check', 'w-4 h-4') ?> Guardar y recalcular</button>
+        </div>
+      <?php endif; ?>
     </div>
+    </form>
     <?php layout_end(); return;
 }
 
