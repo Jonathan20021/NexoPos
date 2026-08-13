@@ -157,6 +157,18 @@ afirmar('El producto nuevo lleva la marca de su lote', (int) $nuevo['importacion
 afirmar('Y su precio de venta',  casi((float) $nuevo['precio_venta'], 450.00));
 afirmar('Y queda asociado a la categoría creada', (int) $nuevo['categoria_id'] > 0);
 
+// Sin su fila de existencia por sucursal, un producto está en el catálogo pero
+// es INVISIBLE en la pantalla de existencias, que arranca desde
+// `inventario_stock` con INNER JOIN. Es lo que hace el formulario al crear.
+$nSuc = (int) qVal("SELECT COUNT(*) FROM sucursales");
+afirmar('El producto nuevo nace con existencia en TODAS las sucursales',
+    (int) qVal("SELECT COUNT(*) FROM inventario_stock WHERE producto_id = ?", [$nuevo['id']]) === $nSuc,
+    'sucursales=' . $nSuc . ' filas=' . qVal("SELECT COUNT(*) FROM inventario_stock WHERE producto_id=?", [$nuevo['id']]));
+afirmar('Y esa existencia arranca en cero, no inventada',
+    (float) qVal("SELECT COALESCE(SUM(cantidad),0) FROM inventario_stock WHERE producto_id = ?", [$nuevo['id']]) === 0.0);
+afirmar('Un producto que ya existía no duplica sus filas de existencia',
+    (int) qVal("SELECT COUNT(*) FROM inventario_stock WHERE producto_id = ?", [$refA]) <= $nSuc);
+
 $sinBarras = qOne("SELECT codigo_barras FROM productos WHERE codigo = 'ZZ-NUEVO-2'");
 afirmar('El código de barras vacío se guarda NULL, no cadena vacía',
     $sinBarras['codigo_barras'] === null, var_export($sinBarras['codigo_barras'], true));

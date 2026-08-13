@@ -1562,6 +1562,38 @@ function imp_catalogo_id(string $tabla, string $nombre, bool $crear): ?int
     return $cache[$clave] = ($id ?: null);
 }
 
+/**
+ * Le da al producto su fila de existencia en CADA sucursal, en cero.
+ *
+ * No es un adorno: media aplicación arranca las consultas desde
+ * `inventario_stock` y hace INNER JOIN a productos —la pantalla de existencias,
+ * los totales por sucursal, los informes de valorización—. Un producto sin esas
+ * filas EXISTE en el catálogo pero es invisible en todas las sucursales, que es
+ * exactamente lo que pasó con las 301 referencias de INGLOT.
+ *
+ * El formulario de productos ya lo hacía (`modules/inventario/productos.php`,
+ * «Producto creado y agregado al inventario de todas las sucursales»); la carga
+ * masiva no, y esa diferencia entre los dos caminos era el defecto.
+ *
+ * Va en una sola sentencia por producto: con 300 referencias y 13 sucursales
+ * son 3.900 filas, y de una en una contra un MySQL remoto eso son veinte
+ * minutos de latencia.
+ */
+function imp_sembrar_stock(int $productoId): int
+{
+    static $sucursales = null;
+    // Todas, también las inactivas: es lo que hace el formulario, y una
+    // sucursal que se reactive tiene que encontrar su inventario donde estaba.
+    if ($sucursales === null) $sucursales = array_map('intval', qCol("SELECT id FROM sucursales"));
+    if (!$sucursales) return 0;
+
+    $valores = implode(',', array_fill(0, count($sucursales), '(?,?,0)'));
+    $params = [];
+    foreach ($sucursales as $s) { $params[] = $productoId; $params[] = $s; }
+    q("INSERT IGNORE INTO inventario_stock (producto_id, sucursal_id, cantidad) VALUES $valores", $params);
+    return count($sucursales);
+}
+
 /** Código libre para un producto nuevo: respeta el del archivo si no está tomado. */
 function imp_codigo_producto(string $preferido): string
 {
@@ -1619,7 +1651,7 @@ function imp_grabar_producto(array $d, int $impId, int $uid, array $opts): array
     $datos['itbis_aplica']   = $d['itbis_aplica'];
     $datos['activo']         = 1;
     $datos['importacion_id'] = $impId;
-    dbInsert('productos', $datos);
+    imp_sembrar_stock(dbInsert('productos', $datos));
     return [true, true];
 }
 
@@ -1702,6 +1734,7 @@ function imp_grabar_embarque(array $docs, int $impId, int $uid, array $opts): ar
                         'activo'         => 1,
                         'importacion_id' => $impId,
                     ]);
+                    imp_sembrar_stock($prodId);
                 }
 
                 $datos = [
