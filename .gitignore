@@ -15,6 +15,14 @@
 /assets/uploads/*
 !/assets/uploads/.gitkeep
 
+# Excepción: el catálogo de fotos de las marcas SÍ va versionado.
+# No son subidas de un usuario: son material del proveedor que acompaña al
+# catálogo y tiene que llegar al servidor con el despliegue, porque no hay otra
+# vía. Ver includes/uploads.php: estas fotos nunca se borran al reemplazarlas.
+!/assets/uploads/productos/
+/assets/uploads/productos/*
+!/assets/uploads/productos/inglot/
+
 # --- Respaldos SQL generados ---
 respaldo_*.sql
 *.bak

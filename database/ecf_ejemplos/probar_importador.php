@@ -194,6 +194,14 @@ afirmar('RECHAZA una extensión que no es imagen', imp_ruta_imagen('assets/uploa
 afirmar('RECHAZA una foto que no existe',
     imp_ruta_imagen('assets/uploads/productos/no_existe_jamas.png') === '');
 
+// Las fotos del catálogo van versionadas en git: reemplazar una desde la ficha
+// NO puede borrar el archivo, o el árbol del servidor queda con un archivo
+// eliminado que el siguiente pull vuelve a traer.
+afirmar('Una foto del catálogo de marca está protegida contra el borrado',
+    imagen_versionada('assets/uploads/productos/inglot/lipstick.jpg'));
+afirmar('Una subida normal sí se puede borrar al reemplazarla',
+    !imagen_versionada('assets/uploads/productos/productos_20260813_ab12cd.jpg'));
+
 $anFoto = imp_analizar('productos', [
     ['ZZ-FOTO-1', 'Producto con foto', $fotoRel],
     ['ZZ-FOTO-2', 'Producto con foto inventada', 'assets/uploads/productos/fantasma.png'],
