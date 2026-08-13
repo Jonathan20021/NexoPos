@@ -22,6 +22,7 @@
 !/assets/uploads/productos/
 /assets/uploads/productos/*
 !/assets/uploads/productos/inglot/
+!/assets/uploads/tiendas/
 
 # --- Respaldos SQL generados ---
 respaldo_*.sql

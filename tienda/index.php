@@ -30,6 +30,9 @@ foreach ($sucursales as $s) if ((int) $s['id'] === $sucursalId) $sucursal = $s;
 if (!$sucursal) $sucursal = $sucursales[0];
 $sucursalId = (int) $sucursal['id'];
 
+// La identidad de la página sale de la marca del local elegido.
+$marca = tienda_marca_de($sucursal);
+
 $tasaItbis = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
 // ---------------------------------------------------------------------------
@@ -169,50 +172,54 @@ $productosJs = array_map(fn($p) => [
     'stock' => (float) $p['stock'],
 ], $productos);
 
-tienda_start('Tienda en línea', 'Ordena en línea y retira en ' . $sucursal['nombre']);
+tienda_start('Tienda en línea', 'Ordena en línea y retira en ' . $sucursal['nombre'], $marca);
 $mensajes = get_flashes();
 ?>
 
 <div x-data="tienda(<?= e(json_encode($productosJs)) ?>, <?= $sucursalId ?>, <?= $tasaItbis ?>)" x-cloak>
 
-  <!-- Barra superior -->
-  <header class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-emerald-200">
-    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
-      <a href="<?= e(url('tienda/index.php')) ?>" class="flex items-center gap-2.5 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-marca rounded-lg">
-        <span class="w-9 h-9 rounded-xl bg-marca text-white grid place-items-center font-display font-bold">
-          <?= e(mb_substr($emp['nombre'], 0, 1)) ?>
-        </span>
-        <span class="font-display font-bold text-marca-texto hidden sm:block"><?= e($emp['nombre']) ?></span>
+  <!-- Barra superior: la marca del local, no la del distribuidor -->
+  <header class="sticky top-0 z-30" style="background: var(--marca); color: var(--sobre-marca)">
+    <div class="max-w-6xl mx-auto px-4 h-[4.5rem] flex items-center gap-4">
+      <a href="?sucursal=<?= $sucursalId ?>" class="shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+         aria-label="<?= e($marca['nombre']) ?> · inicio">
+        <?php if (!empty($marca['logo']) && is_file(dirname(__DIR__) . '/' . $marca['logo'])): ?>
+          <img src="<?= e(url($marca['logo'])) ?>" alt="<?= e($marca['nombre']) ?>" class="logo-marca">
+        <?php else: ?>
+          <span class="font-display font-bold text-lg tracking-wide"><?= e($marca['nombre']) ?></span>
+        <?php endif; ?>
       </a>
 
-      <form method="get" class="flex-1 max-w-md relative">
+      <form method="get" class="flex-1 max-w-md relative ml-auto">
         <input type="hidden" name="sucursal" value="<?= $sucursalId ?>">
         <label for="q" class="sr-only">Buscar productos</label>
-        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-700/50"><?= ticon('search', 'w-5 h-5') ?></span>
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><?= ticon('search', 'w-5 h-5') ?></span>
         <input id="q" name="q" value="<?= e($q) ?>" placeholder="Buscar productos..." class="campo pl-10">
       </form>
 
       <button type="button" @click="abrirCarrito = true"
-              class="relative shrink-0 rounded-xl p-2.5 text-marca-texto hover:bg-marca-muy transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-marca"
+              class="relative shrink-0 rounded-xl p-2.5 hover:bg-white/15 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               :aria-label="`Abrir carrito, ${totalItems} artículos`">
         <?= ticon('cart', 'w-6 h-6') ?>
         <span x-show="totalItems > 0"
-              class="absolute -top-0.5 -right-0.5 min-w-[20px] h-5 px-1 rounded-full bg-accion text-white text-xs font-bold grid place-items-center"
-              x-text="totalItems"></span>
+              class="absolute -top-0.5 -right-0.5 min-w-[20px] h-5 px-1 rounded-full bg-white text-xs font-bold grid place-items-center"
+              style="color: var(--marca)" x-text="totalItems"></span>
       </button>
     </div>
   </header>
 
-  <!-- Selector de sucursal -->
-  <section class="bg-marca text-white">
-    <div class="max-w-6xl mx-auto px-4 py-5 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+  <!-- Dónde se retira y con qué marca -->
+  <section class="bg-white border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
       <div class="flex items-start gap-3 min-w-0">
-        <span class="shrink-0 mt-0.5"><?= ticon('pin', 'w-5 h-5') ?></span>
+        <span class="shrink-0 mt-0.5 text-marca"><?= ticon('pin', 'w-5 h-5') ?></span>
         <div class="min-w-0">
-          <p class="font-display font-semibold leading-tight">Retiras en <?= e($sucursal['nombre']) ?></p>
-          <p class="text-sm text-emerald-100 truncate"><?= e($sucursal['direccion'] ?: '') ?></p>
+          <p class="font-display font-semibold leading-tight text-slate-800">Retiras en <?= e($sucursal['nombre']) ?></p>
+          <?php if (!empty($sucursal['direccion'])): ?>
+            <p class="text-sm text-slate-500 truncate"><?= e($sucursal['direccion']) ?></p>
+          <?php endif; ?>
           <?php if (!empty($sucursal['horario'])): ?>
-            <p class="text-sm text-emerald-100 flex items-center gap-1.5 mt-0.5"><?= ticon('clock', 'w-4 h-4') ?> <?= e($sucursal['horario']) ?></p>
+            <p class="text-sm text-slate-500 flex items-center gap-1.5 mt-0.5"><?= ticon('clock', 'w-4 h-4') ?> <?= e($sucursal['horario']) ?></p>
           <?php endif; ?>
         </div>
       </div>
@@ -220,9 +227,22 @@ $mensajes = get_flashes();
         <form method="get" class="shrink-0">
           <label for="sucursal" class="sr-only">Cambiar de sucursal</label>
           <select id="sucursal" name="sucursal" onchange="this.form.submit()"
-                  class="campo cursor-pointer text-marca-texto min-w-[220px]">
-            <?php foreach ($sucursales as $s): ?>
-              <option value="<?= (int) $s['id'] ?>" <?= (int) $s['id'] === $sucursalId ? 'selected' : '' ?>><?= e($s['nombre']) ?></option>
+                  class="campo cursor-pointer min-w-[240px]">
+            <?php
+            // Agrupadas por marca: quien busca INGLOT no tiene que leer trece
+            // nombres para encontrar sus dos locales.
+            $porMarca = [];
+            foreach ($sucursales as $s) {
+                $m = tienda_marca_de($s);
+                $porMarca[$m['nombre']][] = $s;
+            }
+            ksort($porMarca);
+            foreach ($porMarca as $nombreMarca => $lista): ?>
+              <optgroup label="<?= e($nombreMarca) ?>">
+                <?php foreach ($lista as $s): ?>
+                  <option value="<?= (int) $s['id'] ?>" <?= (int) $s['id'] === $sucursalId ? 'selected' : '' ?>><?= e($s['nombre']) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
             <?php endforeach; ?>
           </select>
           <noscript><button class="btn-marca rounded-xl px-4 py-2 mt-2">Cambiar</button></noscript>
@@ -232,22 +252,22 @@ $mensajes = get_flashes();
   </section>
 
   <!-- Cómo funciona: responde las tres dudas del cliente antes de que las tenga -->
-  <section aria-label="Cómo funciona" class="bg-white border-b border-emerald-100">
+  <section aria-label="Cómo funciona" class="bg-marca-muy border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
       <div class="flex items-center gap-2.5">
-        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('cart', 'w-4 h-4') ?></span>
-        <p><span class="font-semibold block leading-tight">Ordena en línea</span>
-           <span class="text-emerald-900/60">Sin registrarte</span></p>
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-white text-marca grid place-items-center"><?= ticon('cart', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight text-slate-800">Ordena en línea</span>
+           <span class="text-slate-500">Sin registrarte</span></p>
       </div>
       <div class="flex items-center gap-2.5">
-        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('store', 'w-4 h-4') ?></span>
-        <p><span class="font-semibold block leading-tight">Retira en la sucursal</span>
-           <span class="text-emerald-900/60">Sin costo de envío</span></p>
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-white text-marca grid place-items-center"><?= ticon('store', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight text-slate-800">Retira en la sucursal</span>
+           <span class="text-slate-500">Sin costo de envío</span></p>
       </div>
       <div class="flex items-center gap-2.5">
-        <span class="shrink-0 w-9 h-9 rounded-xl bg-marca-muy text-marca grid place-items-center"><?= ticon('check', 'w-4 h-4') ?></span>
-        <p><span class="font-semibold block leading-tight">Paga como prefieras</span>
-           <span class="text-emerald-900/60">Al retirar o por link</span></p>
+        <span class="shrink-0 w-9 h-9 rounded-xl bg-white text-marca grid place-items-center"><?= ticon('check', 'w-4 h-4') ?></span>
+        <p><span class="font-semibold block leading-tight text-slate-800">Paga como prefieras</span>
+           <span class="text-slate-500">Al retirar o por link</span></p>
       </div>
     </div>
   </section>
@@ -292,12 +312,13 @@ $mensajes = get_flashes();
 
       <ul class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <?php foreach ($productos as $p): $pid = (int) $p['id']; $pocas = (float) $p['stock'] <= 5; ?>
-          <li class="group bg-white rounded-2xl border border-emerald-100 overflow-hidden flex flex-col
-                     transition-shadow duration-200 hover:shadow-lg hover:shadow-emerald-900/5">
-            <div class="relative aspect-square bg-marca-muy grid place-items-center overflow-hidden">
+          <li class="tarjeta-producto group bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col">
+            <div class="relative aspect-square bg-white grid place-items-center overflow-hidden">
               <?php if (!empty($p['imagen']) && is_file(dirname(__DIR__) . '/' . $p['imagen'])): ?>
+                <!-- `contain` y no `cover`: la foto del catálogo ya viene
+                     cuadrada y con su aire; recortarla corta el producto. -->
                 <img src="<?= e(url($p['imagen'])) ?>" alt="<?= e($p['nombre']) ?>" loading="lazy" decoding="async"
-                     class="w-full h-full object-cover">
+                     class="w-full h-full object-contain p-2 transition-transform duration-300 group-hover:scale-[1.04]">
               <?php else: ?>
                 <span class="text-emerald-700/25" aria-hidden="true"><?= ticon('box', 'w-12 h-12') ?></span>
               <?php endif; ?>
@@ -563,4 +584,4 @@ function tienda(catalogo, sucursalId, tasaItbis) {
 }
 </script>
 
-<?php tienda_end(); ?>
+<?php tienda_end($marca); ?>

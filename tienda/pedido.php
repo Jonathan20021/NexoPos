@@ -7,7 +7,7 @@ require_once __DIR__ . '/_shell.php';
 
 $token = (string) get('token');
 $pedido = preg_match('/^[a-f0-9]{32}$/', $token)
-    ? qOne("SELECT p.*, s.nombre AS sucursal, s.direccion, s.whatsapp, s.horario
+    ? qOne("SELECT p.*, s.nombre AS sucursal, s.direccion, s.whatsapp, s.horario, s.tienda_id
               FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id
              WHERE p.token = ?", [$token])
     : null;
@@ -26,6 +26,8 @@ if (!$pedido) {
 
 $detalles = qAll("SELECT * FROM pedido_detalles WHERE pedido_id = ? ORDER BY id", [$pedido['id']]);
 $emp = tienda_empresa();
+// Quien pidió en INGLOT tiene que ver INGLOT también al confirmar.
+$marca = tienda_marca_de($pedido);
 
 $estados = [
     'pendiente'  => ['Pendiente de confirmación', 'bg-amber-100 text-amber-800 border-amber-300'],
@@ -42,15 +44,19 @@ $mensajeTienda = "Hola {$emp['nombre']}, acabo de hacer el pedido {$pedido['nume
     . ($pedido['metodo_pago'] === 'link_pago' ? 'Quisiera recibir el link de pago.' : 'Pagaré al retirar.');
 $linkWhatsapp = wa_link($pedido['whatsapp'], $mensajeTienda);
 
-tienda_start('Pedido ' . $pedido['numero']);
+tienda_start('Pedido ' . $pedido['numero'], '', $marca);
 ?>
 
-<header class="bg-white border-b border-emerald-200">
-  <div class="max-w-3xl mx-auto px-4 h-16 flex items-center gap-3">
+<header style="background: var(--marca); color: var(--sobre-marca)">
+  <div class="max-w-3xl mx-auto px-4 h-[4.5rem] flex items-center gap-3">
     <a href="<?= e(url('tienda/index.php?sucursal=' . (int) $pedido['sucursal_id'])) ?>"
-       class="p-2 -ml-2 rounded-lg text-emerald-900/60 hover:bg-marca-muy transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-marca"
+       class="p-2 -ml-2 rounded-lg hover:bg-white/15 transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
        aria-label="Volver a la tienda"><?= ticon('arrow-left', 'w-5 h-5') ?></a>
-    <span class="font-display font-bold text-marca-texto"><?= e($emp['nombre']) ?></span>
+    <?php if (!empty($marca['logo']) && is_file(dirname(__DIR__) . '/' . $marca['logo'])): ?>
+      <img src="<?= e(url($marca['logo'])) ?>" alt="<?= e($marca['nombre']) ?>" class="logo-marca">
+    <?php else: ?>
+      <span class="font-display font-bold tracking-wide"><?= e($marca['nombre']) ?></span>
+    <?php endif; ?>
   </div>
 </header>
 
@@ -198,4 +204,4 @@ tienda_start('Pedido ' . $pedido['numero']);
   </p>
 </main>
 
-<?php tienda_end(); ?>
+<?php tienda_end($marca); ?>

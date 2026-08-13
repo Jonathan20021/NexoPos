@@ -16,7 +16,7 @@
  */
 function imagen_versionada(string $rel): bool
 {
-    foreach (['assets/uploads/productos/inglot/'] as $carpeta) {
+    foreach (['assets/uploads/productos/inglot/', 'assets/uploads/tiendas/'] as $carpeta) {
         if (str_starts_with(str_replace('\\', '/', $rel), $carpeta)) return true;
     }
     return false;

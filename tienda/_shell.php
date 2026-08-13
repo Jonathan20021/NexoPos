@@ -3,8 +3,20 @@
  * Shell de la tienda pública. Es independiente del layout administrativo:
  * no muestra sidebar, no exige sesión y no filtra por permisos.
  *
- * Paleta: la de la casa (includes/marca_app.php), con un tono más oscuro
- * para las llamadas a la acción.
+ * LA IDENTIDAD LA PONE LA SUCURSAL, NO LA CASA
+ *
+ * Importers distribuye varias marcas y cada local es el escaparate de una:
+ * quien entra a «Inglot Punta Cana» viene buscando INGLOT, no a su
+ * distribuidor. Por eso el color, el logotipo y el nombre salen de la marca de
+ * la sucursal elegida —`sucursales.tienda_id`, migración P20— y toda la paleta
+ * se deriva de ese color en variables CSS.
+ *
+ * El emisor fiscal sigue siendo la empresa, y eso se dice en el pie: la marca
+ * pone la cara, no la declaración.
+ *
+ * Una oficina sin marca asignada cae a la identidad de Importers, que es el
+ * comportamiento que había antes de todo esto.
+ *
  * Tipografía: Rubik (títulos) + Nunito Sans (cuerpo).
  */
 
@@ -16,10 +28,82 @@ function tienda_empresa(): array
 /** Sucursales que el cliente puede ver en la tienda. */
 function tienda_sucursales(): array
 {
-    return qAll("SELECT id, nombre, direccion, telefono, whatsapp, horario
+    return qAll("SELECT id, nombre, direccion, telefono, whatsapp, horario, tienda_id
                    FROM sucursales
                   WHERE activo = 1 AND tienda_activa = 1
                   ORDER BY nombre");
+}
+
+/**
+ * La marca con la que se presenta una sucursal.
+ *
+ * Devuelve siempre algo utilizable: si el local no tiene marca asignada, si el
+ * módulo de tiendas no está, o si la migración P20 aún no se ha aplicado, cae a
+ * la identidad de la empresa. Una tienda pública no puede quedarse sin cabecera
+ * porque falte un dato de configuración.
+ */
+function tienda_marca_de(?array $sucursal): array
+{
+    $emp = tienda_empresa();
+    $porDefecto = [
+        'id'         => null,
+        'nombre'     => $emp['nombre'] ?? APP_NAME,
+        'color'      => marca_app(),
+        'logo'       => $emp['logo'] ?? null,
+        'encabezado' => null,
+        'es_empresa' => true,
+    ];
+
+    $tid = (int) ($sucursal['tienda_id'] ?? 0);
+    if (!$tid || !function_exists('tienda') || !tiendas_disponible()) return $porDefecto;
+
+    $t = tienda($tid);
+    if (!$t) return $porDefecto;
+
+    return [
+        'id'         => (int) $t['id'],
+        'nombre'     => $t['nombre'],
+        'color'      => preg_match('/^#[0-9A-Fa-f]{6}$/', (string) $t['color']) ? $t['color'] : marca_app(),
+        'logo'       => $t['logo'] ?: null,
+        'encabezado' => $t['encabezado'] ?: null,
+        'es_empresa' => false,
+    ];
+}
+
+/**
+ * Paleta completa a partir del color de la marca.
+ *
+ * Se deriva en vez de pedirle seis colores a quien da de alta una marca: nadie
+ * quiere elegir un «hover» y un «muy claro» a mano, y elegidos a ojo salen
+ * combinaciones que no contrastan. Con un solo color de marca, el resto sale
+ * por construcción y el contraste está garantizado.
+ */
+function tienda_paleta(string $hex): array
+{
+    [$r, $g, $b] = [hexdec(substr($hex, 1, 2)), hexdec(substr($hex, 3, 2)), hexdec(substr($hex, 5, 2))];
+    $mezcla = function (float $f) use ($r, $g, $b) {
+        // f > 0 aclara hacia el blanco, f < 0 oscurece hacia el negro.
+        $m = fn($c) => (int) round($f >= 0 ? $c + (255 - $c) * $f : $c * (1 + $f));
+        return sprintf('#%02X%02X%02X', $m($r), $m($g), $m($b));
+    };
+    // Luminancia relativa: decide si el texto sobre la marca va blanco o negro.
+    $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
+
+    return [
+        'marca'    => $hex,
+        'oscuro'   => $mezcla(-0.22),      // hover de los botones
+        'claro'    => $mezcla(0.55),
+        'suave'    => $mezcla(0.93),       // fondos de realce
+        'borde'    => $mezcla(0.80),
+        'sobre'    => $lum > 0.62 ? '#1A1A1A' : '#FFFFFF',
+        'texto'    => $mezcla(-0.55),
+        'escala'   => [
+            50 => $mezcla(0.95), 100 => $mezcla(0.88), 200 => $mezcla(0.74),
+            300 => $mezcla(0.55), 400 => $mezcla(0.28), 500 => $mezcla(0.12),
+            600 => $hex, 700 => $mezcla(-0.18), 800 => $mezcla(-0.34),
+            900 => $mezcla(-0.50), 950 => $mezcla(-0.66),
+        ],
+    ];
 }
 
 /** Número de WhatsApp en formato wa.me (solo dígitos). */
@@ -36,15 +120,18 @@ function wa_link(?string $telefono, string $mensaje): string
     return 'https://wa.me/' . $n . '?text=' . rawurlencode($mensaje);
 }
 
-function tienda_start(string $titulo, string $descripcion = ''): void
+function tienda_start(string $titulo, string $descripcion = '', ?array $marca = null): void
 {
     $emp = tienda_empresa();
+    $marca = $marca ?: tienda_marca_de(null);
+    $pal = tienda_paleta($marca['color']);
     ?><!doctype html>
 <html lang="es" class="h-full">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title><?= e($titulo) ?> · <?= e($emp['nombre']) ?></title>
+<title><?= e($titulo) ?> · <?= e($marca['nombre']) ?></title>
+<meta name="theme-color" content="<?= e($pal['marca']) ?>">
 <?php if ($descripcion): ?><meta name="description" content="<?= e($descripcion) ?>"><?php endif; ?>
 <link rel="icon" href="<?= e(url('assets/favicon.svg')) ?>">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -53,12 +140,18 @@ tailwind.config = {
   theme: {
     extend: {
       colors: {
-        marca:  { DEFAULT: '#3B4A83', claro: '#6476B9', muy: '#F4F5FB', texto: '#1D274C' },
-        accion: { DEFAULT: '#2F3D6F', hover: '#26315C' },
+        // Todo cuelga de la variable CSS: cambiar de sucursal cambia la marca
+        // sin volver a generar clases.
+        marca:  { DEFAULT: 'var(--marca)', claro: 'var(--marca-claro)',
+                  muy: 'var(--marca-suave)', texto: 'var(--marca-texto)',
+                  borde: 'var(--marca-borde)', sobre: 'var(--sobre-marca)' },
+        accion: { DEFAULT: 'var(--marca-oscuro)', hover: 'var(--marca)' },
         // La tienda nació en verde y arrastra 78 clases `emerald-*` repartidas
         // por sus plantillas. Se pisa la paleta en vez de reescribirlas una a
-        // una, igual que con `blue` en el panel. Ver includes/marca_app.php.
-        emerald: <?= marca_app_tailwind() ?>,
+        // una, igual que con `blue` en el panel. Antes se pisaba con la paleta
+        // fija de la casa; ahora con la escala derivada de la MARCA del local,
+        // que es lo que hace que la tienda entera cambie de identidad.
+        emerald: <?= json_encode($pal['escala'], JSON_UNESCAPED_SLASHES) ?>,
       },
       fontFamily: {
         sans:    ['"Nunito Sans"', 'system-ui', 'sans-serif'],
@@ -72,22 +165,43 @@ tailwind.config = {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700&family=Rubik:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-  body { background: #F4F5FB; color: #1D274C; }
-  .btn-accion {
-    background: #2F3D6F; color: #fff; font-weight: 600;
-    transition: background-color .2s ease;
+  :root {
+    --marca:        <?= e($pal['marca']) ?>;
+    --marca-oscuro: <?= e($pal['oscuro']) ?>;
+    --marca-claro:  <?= e($pal['claro']) ?>;
+    --marca-suave:  <?= e($pal['suave']) ?>;
+    --marca-borde:  <?= e($pal['borde']) ?>;
+    --marca-texto:  <?= e($pal['texto']) ?>;
+    --sobre-marca:  <?= e($pal['sobre']) ?>;
   }
-  .btn-accion:hover { background: #26315C; }
-  .btn-accion:focus-visible { outline: 3px solid #7DD3FC; outline-offset: 2px; }
-  .btn-marca { background: #3B4A83; color: #fff; font-weight: 600; transition: background-color .2s ease; }
-  .btn-marca:hover { background: #2F3D6F; }
-  .btn-marca:focus-visible { outline: 3px solid #B0BADD; outline-offset: 2px; }
+  body { background: #FAFAFB; color: #23252B; }
+  .btn-accion {
+    background: var(--marca); color: var(--sobre-marca); font-weight: 600;
+    transition: background-color .2s ease, transform .12s ease;
+  }
+  .btn-accion:hover { background: var(--marca-oscuro); }
+  .btn-accion:active { transform: scale(.98); }
+  .btn-accion:focus-visible { outline: 3px solid var(--marca-claro); outline-offset: 2px; }
+  .btn-marca { background: var(--marca); color: var(--sobre-marca); font-weight: 600; transition: background-color .2s ease; }
+  .btn-marca:hover { background: var(--marca-oscuro); }
+  .btn-marca:focus-visible { outline: 3px solid var(--marca-claro); outline-offset: 2px; }
   .campo {
-    width: 100%; border: 1px solid #D1D5DB; border-radius: .75rem;
-    padding: .625rem .875rem; background: #fff; color: #1D274C;
+    width: 100%; border: 1px solid #DDDEE3; border-radius: .75rem;
+    padding: .625rem .875rem; background: #fff; color: #23252B;
     transition: border-color .2s ease, box-shadow .2s ease;
   }
-  .campo:focus { outline: none; border-color: #3B4A83; box-shadow: 0 0 0 3px rgba(59,74,131,.15); }
+  .campo:focus { outline: none; border-color: var(--marca); box-shadow: 0 0 0 3px var(--marca-borde); }
+
+  /* El logotipo de cada marca es un wordmark BLANCO: va sobre la banda de
+     color, nunca sobre fondo claro. El ancho máximo evita que un wordmark de
+     una sola línea (INGLOT) se vea el doble de grande que uno de dos
+     (L'OCCITANE EN PROVENCE) al igualarlos solo por altura. */
+  .logo-marca { height: 30px; max-width: 190px; object-fit: contain; object-position: left center; display: block; }
+  @media (min-width: 640px) { .logo-marca { height: 34px; max-width: 230px; } }
+
+  .tarjeta-producto { transition: box-shadow .2s ease, border-color .2s ease; }
+  .tarjeta-producto:hover { box-shadow: 0 8px 24px rgba(20,22,30,.09); border-color: var(--marca-borde); }
+
   [x-cloak] { display: none !important; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
@@ -99,15 +213,23 @@ tailwind.config = {
 <?php
 }
 
-function tienda_end(): void
+function tienda_end(?array $marca = null): void
 {
     $emp = tienda_empresa();
     ?>
-<footer class="mt-16 border-t border-emerald-200 bg-white">
-  <div class="max-w-6xl mx-auto px-4 py-8 text-sm text-emerald-900/70">
-    <p class="font-display font-semibold text-marca-texto text-base"><?= e($emp['nombre']) ?></p>
+<footer class="mt-20 border-t border-slate-200 bg-white">
+  <div class="max-w-6xl mx-auto px-4 py-10 text-sm text-slate-500">
+    <?php if ($marca && empty($marca['es_empresa'])): ?>
+      <p class="font-display font-semibold text-slate-800 text-base"><?= e($marca['nombre']) ?></p>
+      <!-- Quien compra ve la marca; quien recibe la factura tiene que saber
+           quién factura. Un solo RNC para todas las marcas. -->
+      <p class="mt-1">Distribuido por <?= e($emp['nombre']) ?><?= !empty($emp['rnc']) ? ' · RNC ' . e($emp['rnc']) : '' ?></p>
+    <?php else: ?>
+      <p class="font-display font-semibold text-slate-800 text-base"><?= e($emp['nombre']) ?></p>
+      <?php if (!empty($emp['rnc'])): ?><p class="mt-1">RNC <?= e($emp['rnc']) ?></p><?php endif; ?>
+    <?php endif; ?>
     <?php if (!empty($emp['telefono'])): ?><p class="mt-1">Tel. <?= e($emp['telefono']) ?></p><?php endif; ?>
-    <p class="mt-3 text-emerald-900/50">Ordena en línea y retira en la sucursal que prefieras.</p>
+    <p class="mt-4 text-slate-400">Ordena en línea y retira en la sucursal que prefieras.</p>
   </div>
 </footer>
 </body>
