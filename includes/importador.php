@@ -1,12 +1,21 @@
 <?php
 /**
- * Carga histórica de clientes y ventas (área de Dirección).
+ * Carga masiva desde Excel o CSV (área de Dirección).
  *
  * La CEO llega con un año entero de operaciones en un Excel del sistema
- * anterior. Este módulo lo mete en NexoPOS sin romper nada de lo que ya está
- * funcionando.
+ * anterior, con el catálogo de una importadora multimarca y con el packing list
+ * de un contenedor. Este módulo lo mete en NexoPOS sin romper nada de lo que ya
+ * está funcionando.
  *
- * CUATRO REGLAS QUE DEFINEN EL COMPORTAMIENTO
+ * CINCO TIPOS
+ *
+ *   clientes ...... el padrón de clientes del sistema viejo.
+ *   ventas ........ un año de facturación histórica.
+ *   productos ..... el catálogo. Miles de SKU que nadie va a teclear.
+ *   existencias ... lo que hay en el almacén. NO escribe stock: ver la regla 5.
+ *   embarque ...... el packing list de una importación, a una liquidación.
+ *
+ * CINCO REGLAS QUE DEFINEN EL COMPORTAMIENTO
  *
  * 1. **Una venta histórica no mueve inventario.** El stock de hoy ya refleja la
  *    realidad del almacén; descontar de nuevo un año de ventas lo dejaría en
@@ -22,6 +31,22 @@
  * 4. **Todo lo cargado lleva la marca de su lote** (`importacion_id`). Un
  *    archivo mal mapeado se revierte con un botón en vez de restaurando un
  *    respaldo completo. Es la diferencia entre un error y un desastre.
+ *
+ * 5. **La carga de existencias NO escribe en `inventario_stock`.** Genera un
+ *    conteo físico en borrador por sucursal y deja que se aplique por el camino
+ *    de siempre. Un UPDATE directo dejaría el almacén con cantidades que no
+ *    tienen origen: el kardex no cuadraría con la existencia, el costeo mentiría
+ *    y una auditoría no podría explicar de dónde salió una unidad.
+ *
+ * LA TRAMPA DE LOS DOS ÍNDICES ÚNICOS
+ *
+ * `productos` es única por `codigo` Y por `codigo_barras`, igual que `empleados`
+ * lo es por `codigo` y `cedula`. Con dos únicos, un `INSERT ... ON DUPLICATE KEY
+ * UPDATE` no falla cuando choca: ACTUALIZA la fila que estorba. Así se perdió un
+ * empleado entero en la carga del padrón, y solo lo vio una auditoría que releía
+ * el Excel fila por fila. Aquí se busca primero y se decide después, y una fila
+ * cuyo código pertenece a un producto y cuyo código de barras pertenece a OTRO
+ * se rechaza en vez de fusionar dos artículos distintos.
  *
  * Ver docs/TIENDAS-Y-DIRECCION.md.
  */
@@ -42,12 +67,106 @@ function imp_disponible(): bool
     return $ok;
 }
 
+/** ¿Está aplicada la P19, la que abre catálogo, existencias y embarques? */
+function imp_masiva_disponible(): bool
+{
+    static $ok = null;
+    if ($ok !== null) return $ok;
+    try {
+        $ok = imp_disponible() && (bool) qVal(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'productos'
+                AND COLUMN_NAME = 'importacion_id'"
+        );
+    } catch (Throwable $e) {
+        $ok = false;
+    }
+    return $ok;
+}
+
 /** Carpeta privada donde reposa el archivo entre la vista previa y la carga. */
 function imp_dir(): string
 {
     $dir = dirname(__DIR__) . '/storage/importaciones';
     if (!is_dir($dir)) @mkdir($dir, 0775, true);
     return $dir;
+}
+
+/**
+ * Qué es cada tipo, en un solo sitio.
+ *
+ * La pantalla resolvía todo con ternarios de dos ramas —«clientes o ventas»— y
+ * había una docena repartidos por la vista. Con cinco tipos eso no escala: cada
+ * uno nuevo obliga a encontrarlos todos, y el que se olvide sale mal sin avisar.
+ *
+ *   crea ......... qué escribe, para el resumen y el aviso de reversión.
+ *   sucursal ..... 'req' la exige, 'opt' la acepta como respaldo, null la ignora.
+ *   destino ...... el tipo necesita un documento destino ya creado.
+ *   escribe_stock  ninguno lo hace. Está escrito para que se note si algún día
+ *                  alguien añade uno que sí, y tenga que justificarlo.
+ */
+function imp_tipos(): array
+{
+    return [
+        'ventas' => [
+            'etiqueta' => 'Ventas históricas',
+            'ayuda'    => 'Un año de facturación del sistema anterior. No mueve inventario, no consume NCF y no toca la caja.',
+            'icono'    => 'receipt',
+            'crea'     => 'venta(s)',
+            'sucursal' => 'req',
+            'destino'  => null,
+            'escribe_stock' => false,
+        ],
+        'clientes' => [
+            'etiqueta' => 'Clientes',
+            'ayuda'    => 'El padrón de clientes. Coteja por RNC o cédula antes de crear, para no duplicar a quien ya está.',
+            'icono'    => 'users',
+            'crea'     => 'cliente(s)',
+            'sucursal' => null,
+            'destino'  => null,
+            'escribe_stock' => false,
+        ],
+        'productos' => [
+            'etiqueta' => 'Catálogo de productos',
+            'ayuda'    => 'Miles de SKU de una vez. Coteja por código y por código de barras, y crea las categorías, marcas y unidades que falten.',
+            'icono'    => 'package',
+            'crea'     => 'producto(s)',
+            'sucursal' => null,
+            'destino'  => null,
+            'escribe_stock' => false,
+        ],
+        'existencias' => [
+            'etiqueta' => 'Existencias del almacén',
+            'ayuda'    => 'No escribe el stock: deja un conteo físico en borrador por sucursal para revisarlo y aplicarlo, y que el ajuste entre al kardex con su motivo.',
+            'icono'    => 'clipboard',
+            'crea'     => 'conteo(s) en borrador',
+            'sucursal' => 'opt',
+            'destino'  => null,
+            'escribe_stock' => false,
+        ],
+        'embarque' => [
+            'etiqueta' => 'Packing list de una importación',
+            'ayuda'    => 'Vuelca las líneas del embarque en una liquidación abierta. Puede dar de alta los productos que llegan por primera vez.',
+            'icono'    => 'truck',
+            'crea'     => 'línea(s) de liquidación',
+            'sucursal' => null,
+            'destino'  => 'liquidacion',
+            'escribe_stock' => false,
+        ],
+    ];
+}
+
+/** Un tipo válido, o 'ventas'. Nunca confiar en lo que llega por POST. */
+function imp_tipo_valido($t): string
+{
+    $t = is_string($t) ? $t : '';
+    return isset(imp_tipos()[$t]) ? $t : 'ventas';
+}
+
+/** Metadatos de un tipo. */
+function imp_tipo(string $t): array
+{
+    return imp_tipos()[imp_tipo_valido($t)];
 }
 
 /* ============================================================
@@ -187,6 +306,47 @@ function imp_leer_excel(string $path, int $limite = 0): array
  */
 function imp_campos(string $tipo): array
 {
+    if ($tipo === 'productos') {
+        return [
+            'nombre'        => ['label' => 'Nombre del producto', 'req' => true,  'alias' => ['nombre', 'producto', 'descripcion', 'descripción', 'articulo', 'artículo', 'item', 'description', 'detalle']],
+            'codigo'        => ['label' => 'Código / SKU',        'req' => false, 'alias' => ['codigo', 'código', 'sku', 'ref', 'referencia', 'code', 'no', 'item code', 'codigo producto', 'clave']],
+            'codigo_barras' => ['label' => 'Código de barras',    'req' => false, 'alias' => ['codigo de barras', 'código de barras', 'barras', 'barcode', 'ean', 'upc', 'ean13', 'gtin']],
+            'categoria'     => ['label' => 'Categoría',           'req' => false, 'alias' => ['categoria', 'categoría', 'category', 'familia', 'rubro', 'linea', 'línea', 'grupo']],
+            'marca'         => ['label' => 'Marca',               'req' => false, 'alias' => ['marca', 'brand', 'fabricante marca']],
+            'unidad'        => ['label' => 'Unidad de medida',    'req' => false, 'alias' => ['unidad', 'um', 'unidad de medida', 'medida', 'uom', 'presentacion', 'presentación']],
+            'tienda'        => ['label' => 'Tienda (marca comercial)', 'req' => false, 'alias' => ['tienda', 'marca comercial', 'store', 'concepto']],
+            'precio_compra' => ['label' => 'Costo / precio de compra', 'req' => false, 'alias' => ['costo', 'precio compra', 'precio de compra', 'cost', 'costo unitario', 'fob', 'compra']],
+            'precio_venta'  => ['label' => 'Precio de venta',     'req' => false, 'alias' => ['precio', 'precio venta', 'precio de venta', 'pvp', 'price', 'venta', 'precio publico', 'precio público']],
+            'itbis_aplica'  => ['label' => 'Aplica ITBIS',        'req' => false, 'alias' => ['itbis', 'itbis aplica', 'gravado', 'impuesto', 'tax', 'iva']],
+            'stock_minimo'  => ['label' => 'Stock mínimo',        'req' => false, 'alias' => ['stock minimo', 'stock mínimo', 'minimo', 'mínimo', 'min', 'reorden', 'punto de reorden']],
+            'pais_origen'   => ['label' => 'País de origen',      'req' => false, 'alias' => ['pais', 'país', 'pais origen', 'país de origen', 'origen', 'country', 'made in']],
+            'fabricante'    => ['label' => 'Fabricante',          'req' => false, 'alias' => ['fabricante', 'manufacturer', 'proveedor fabricante', 'laboratorio']],
+            'descripcion'   => ['label' => 'Descripción larga',   'req' => false, 'alias' => ['descripcion larga', 'descripción larga', 'detalle largo', 'observacion', 'observación', 'notas']],
+        ];
+    }
+
+    if ($tipo === 'existencias') {
+        return [
+            'producto' => ['label' => 'Producto (código, barras o nombre)', 'req' => true, 'alias' => ['producto', 'sku', 'codigo', 'código', 'articulo', 'artículo', 'item', 'referencia', 'ref', 'barras', 'codigo de barras', 'código de barras', 'descripcion', 'descripción']],
+            'cantidad' => ['label' => 'Cantidad contada',  'req' => true,  'alias' => ['cantidad', 'existencia', 'existencias', 'stock', 'cant', 'qty', 'unidades', 'saldo', 'inventario', 'contado', 'fisico', 'físico']],
+            'sucursal' => ['label' => 'Sucursal / almacén', 'req' => false, 'alias' => ['sucursal', 'almacen', 'almacén', 'tienda fisica', 'local', 'branch', 'warehouse', 'deposito', 'depósito', 'ubicacion', 'ubicación']],
+            'costo'    => ['label' => 'Costo unitario',    'req' => false, 'alias' => ['costo', 'costo unitario', 'cost', 'valor unitario', 'precio compra']],
+        ];
+    }
+
+    if ($tipo === 'embarque') {
+        return [
+            'producto'     => ['label' => 'Producto (código o barras)', 'req' => true, 'alias' => ['producto', 'sku', 'codigo', 'código', 'articulo', 'artículo', 'item', 'referencia', 'ref', 'item code', 'item no', 'part number', 'part no', 'model', 'modelo', 'codigo de barras', 'código de barras', 'barras']],
+            'cantidad'     => ['label' => 'Cantidad',        'req' => true,  'alias' => ['cantidad', 'cant', 'qty', 'quantity', 'unidades', 'pcs', 'piezas', 'pzs']],
+            'costo_moneda' => ['label' => 'Costo unitario (moneda del embarque)', 'req' => false, 'alias' => ['costo', 'costo unitario', 'precio', 'precio unitario', 'unit price', 'fob unitario', 'fob', 'valor unitario', 'cost']],
+            'descripcion'  => ['label' => 'Descripción (para los que no existen)', 'req' => false, 'alias' => ['descripcion', 'descripción', 'nombre', 'producto nombre', 'detalle', 'description', 'item description']],
+            'peso'         => ['label' => 'Peso',            'req' => false, 'alias' => ['peso', 'weight', 'kg', 'kgs', 'peso neto', 'net weight', 'peso bruto']],
+            'volumen'      => ['label' => 'Volumen',         'req' => false, 'alias' => ['volumen', 'volume', 'cbm', 'm3', 'metros cubicos', 'metros cúbicos']],
+            'lote'         => ['label' => 'Lote',            'req' => false, 'alias' => ['lote', 'batch', 'lot', 'no lote']],
+            'vencimiento'  => ['label' => 'Vencimiento',     'req' => false, 'alias' => ['vencimiento', 'vence', 'expira', 'expiry', 'exp', 'fecha vencimiento', 'caducidad', 'best before']],
+        ];
+    }
+
     if ($tipo === 'clientes') {
         return [
             'nombre'           => ['label' => 'Nombre del cliente', 'req' => true,  'alias' => ['nombre', 'cliente', 'razon social', 'razón social', 'nombre cliente', 'name', 'customer']],
@@ -300,8 +460,11 @@ function imp_fecha($v): ?string
     if ($s === '') return null;
 
     // Serial de Excel (días desde 1899-12-30).
+    // `gmdate` y no `date`: el serial es una fecha sin hora ni huso, y con la
+    // zona de Santo Domingo (UTC−4) el instante de medianoche UTC cae en el día
+    // anterior. Con `date` toda fecha cargada por serial se corría un día atrás.
     if (is_numeric($s) && (float) $s > 20000 && (float) $s < 80000) {
-        return date('Y-m-d', (int) round(((float) $s - 25569) * 86400));
+        return gmdate('Y-m-d', (int) round(((float) $s - 25569) * 86400));
     }
     if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})/', $s, $m)) {
         return checkdate((int) $m[2], (int) $m[3], (int) $m[1]) ? sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]) : null;
@@ -343,9 +506,94 @@ function imp_val(array $fila, array $mapa, string $campo): string
  */
 function imp_analizar(string $tipo, array $filas, array $mapa, array $opts): array
 {
-    return $tipo === 'clientes'
-        ? imp_analizar_clientes($filas, $mapa, $opts)
-        : imp_analizar_ventas($filas, $mapa, $opts);
+    switch (imp_tipo_valido($tipo)) {
+        case 'clientes':    return imp_analizar_clientes($filas, $mapa, $opts);
+        case 'productos':   return imp_analizar_productos($filas, $mapa, $opts);
+        case 'existencias': return imp_analizar_existencias($filas, $mapa, $opts);
+        case 'embarque':    return imp_analizar_embarque($filas, $mapa, $opts);
+        default:            return imp_analizar_ventas($filas, $mapa, $opts);
+    }
+}
+
+/* ============================================================
+ *  Utilidades compartidas por los tipos de inventario
+ * ============================================================ */
+
+/**
+ * Índice de productos en memoria: código, código de barras y nombre → id.
+ *
+ * Se arma una vez por análisis. Con 5.000 SKU en el catálogo y 3.000 filas en
+ * el archivo, consultar la base por fila son 3.000 viajes; el índice es uno.
+ */
+function imp_indice_productos(bool $recargar = false): array
+{
+    static $idx = null;
+    if ($recargar) $idx = null;
+    if ($idx !== null) return $idx;
+
+    $idx = ['codigo' => [], 'barras' => [], 'nombre' => []];
+    foreach (qAll("SELECT id, codigo, codigo_barras, nombre FROM productos") as $p) {
+        $id = (int) $p['id'];
+        $idx['codigo'][imp_slug((string) $p['codigo'])] = $id;
+        if ((string) $p['codigo_barras'] !== '') {
+            $idx['barras'][imp_slug((string) $p['codigo_barras'])] = $id;
+        }
+        // El nombre es el último recurso y solo si no se repite: dos productos
+        // con el mismo nombre no se pueden distinguir, y adivinar el que no es
+        // carga la existencia en el artículo equivocado.
+        $n = imp_slug((string) $p['nombre']);
+        $idx['nombre'][$n] = array_key_exists($n, $idx['nombre']) ? 0 : $id;
+    }
+    return $idx;
+}
+
+/** Relee el catálogo. Hace falta tras crear productos y volver a analizar. */
+function imp_olvidar_indice(): void
+{
+    imp_indice_productos(true);
+}
+
+/**
+ * Busca un producto por código, por código de barras y —si se permite— por
+ * nombre exacto. Devuelve el id o null.
+ *
+ * El orden importa: el código es la identidad del artículo en el sistema y el
+ * código de barras la del fabricante. Buscar primero por nombre encontraría
+ * «Base líquida 30ml» de dos marcas distintas.
+ */
+function imp_buscar_producto(string $texto, array $idx, bool $porNombre = true): ?int
+{
+    $s = imp_slug($texto);
+    if ($s === '') return null;
+    if (isset($idx['codigo'][$s])) return $idx['codigo'][$s];
+    if (isset($idx['barras'][$s])) return $idx['barras'][$s];
+    if ($porNombre && !empty($idx['nombre'][$s])) return $idx['nombre'][$s];
+    return null;
+}
+
+/** Índice de sucursales por nombre normalizado. */
+function imp_indice_sucursales(): array
+{
+    static $idx = null;
+    if ($idx !== null) return $idx;
+    $idx = [];
+    foreach (qAll("SELECT id, nombre FROM sucursales WHERE activo = 1") as $s) {
+        $idx[imp_slug($s['nombre'])] = (int) $s['id'];
+    }
+    return $idx;
+}
+
+/**
+ * Sí o no desde una hoja de cálculo. «Sí», «S», «1», «TRUE», «X» y la celda
+ * vacía tratada como el valor por defecto que decida quien llama.
+ */
+function imp_bool($v, bool $porDefecto): bool
+{
+    $s = imp_slug((string) $v);
+    if ($s === '') return $porDefecto;
+    if (in_array($s, ['si', 'sí', 's', '1', 'true', 'v', 'x', 'y', 'yes', 'gravado', 'aplica'], true)) return true;
+    if (in_array($s, ['no', 'n', '0', 'false', 'f', 'exento', 'exenta'], true)) return false;
+    return $porDefecto;
 }
 
 function imp_analizar_clientes(array $filas, array $mapa, array $opts): array
@@ -607,6 +855,439 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
 }
 
 /* ============================================================
+ *  Análisis · Catálogo de productos
+ * ============================================================ */
+
+/**
+ * Revisa un catálogo. Nada de esto escribe: solo dice qué pasaría.
+ *
+ * Lo delicado son los dos índices únicos de `productos`. Una fila puede:
+ *   · no coincidir con nada          → producto nuevo
+ *   · coincidir por código           → actualización
+ *   · coincidir por código de barras → actualización (el código cambió de sistema)
+ *   · coincidir por código con UNO y por barras con OTRO → **conflicto**
+ *
+ * El cuarto caso se rechaza. Fusionar dos artículos distintos porque un archivo
+ * los mezcló deja el inventario de los dos mal y no hay forma de deshacerlo
+ * después: el histórico de ventas ya apunta a un solo id.
+ */
+function imp_analizar_productos(array $filas, array $mapa, array $opts): array
+{
+    $docs = []; $errores = []; $avisos = [];
+    $idx = imp_indice_productos();
+    $vistosCodigo = []; $vistosBarras = [];
+    $nuevos = 0; $existentes = 0;
+    $catNuevas = []; $marcasNuevas = []; $unidNuevas = [];
+
+    $categorias = []; $marcas = []; $unidades = []; $tiendas = [];
+    foreach (qAll("SELECT id, nombre FROM categorias") as $r) $categorias[imp_slug($r['nombre'])] = (int) $r['id'];
+    foreach (qAll("SELECT id, nombre FROM marcas") as $r)     $marcas[imp_slug($r['nombre'])]     = (int) $r['id'];
+    foreach (qAll("SELECT id, nombre, abreviatura FROM unidades") as $r) {
+        $unidades[imp_slug($r['nombre'])] = (int) $r['id'];
+        $unidades[imp_slug((string) $r['abreviatura'])] = (int) $r['id'];
+    }
+    try {
+        foreach (qAll("SELECT id, nombre FROM tiendas") as $r) $tiendas[imp_slug($r['nombre'])] = (int) $r['id'];
+    } catch (Throwable $e) { /* sin tiendas configuradas todavía */ }
+
+    foreach ($filas as $i => $fila) {
+        $linea = $i + 2;
+        $nombre = imp_val($fila, $mapa, 'nombre');
+        if ($nombre === '') { $errores[] = ['fila' => $linea, 'motivo' => 'Sin nombre de producto.']; continue; }
+
+        $codigo = mb_substr(imp_val($fila, $mapa, 'codigo'), 0, 40);
+        $barras = mb_substr(preg_replace('/\s+/', '', imp_val($fila, $mapa, 'codigo_barras')), 0, 60);
+
+        // Repetido dentro del propio archivo: se queda la primera aparición.
+        $sc = imp_slug($codigo); $sb = imp_slug($barras);
+        if ($sc !== '' && isset($vistosCodigo[$sc])) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'El código «' . $codigo . '» ya viene en la fila ' . $vistosCodigo[$sc] . ' del archivo.'];
+            continue;
+        }
+        if ($sb !== '' && isset($vistosBarras[$sb])) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'El código de barras «' . $barras . '» ya viene en la fila ' . $vistosBarras[$sb] . ' del archivo.'];
+            continue;
+        }
+
+        $porCodigo = $sc !== '' ? ($idx['codigo'][$sc] ?? null) : null;
+        $porBarras = $sb !== '' ? ($idx['barras'][$sb] ?? null) : null;
+        if ($porCodigo && $porBarras && $porCodigo !== $porBarras) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'El código «' . $codigo . '» y el código de barras «' . $barras
+                . '» pertenecen a dos productos distintos del catálogo. Corrige la fila: fusionarlos dañaría los dos.'];
+            continue;
+        }
+        $existenteId = $porCodigo ?: $porBarras;
+
+        $nombreCat = imp_val($fila, $mapa, 'categoria');
+        $nombreMar = imp_val($fila, $mapa, 'marca');
+        $nombreUni = imp_val($fila, $mapa, 'unidad');
+        $nombreTie = imp_val($fila, $mapa, 'tienda');
+
+        $catId = $nombreCat !== '' ? ($categorias[imp_slug($nombreCat)] ?? null) : null;
+        $marId = $nombreMar !== '' ? ($marcas[imp_slug($nombreMar)] ?? null) : null;
+        $uniId = $nombreUni !== '' ? ($unidades[imp_slug($nombreUni)] ?? null) : null;
+        $tieId = $nombreTie !== '' ? ($tiendas[imp_slug($nombreTie)] ?? null) : null;
+
+        if ($nombreCat !== '' && !$catId) $catNuevas[imp_slug($nombreCat)] = $nombreCat;
+        if ($nombreMar !== '' && !$marId) $marcasNuevas[imp_slug($nombreMar)] = $nombreMar;
+        if ($nombreUni !== '' && !$uniId) $unidNuevas[imp_slug($nombreUni)] = $nombreUni;
+        if ($nombreTie !== '' && !$tieId) {
+            $avisos[] = ['fila' => $linea, 'motivo' => 'La tienda «' . $nombreTie . '» no existe; el producto queda sin marca comercial.'];
+        }
+
+        $compra = imp_num(imp_val($fila, $mapa, 'precio_compra'));
+        $venta  = imp_num(imp_val($fila, $mapa, 'precio_venta'));
+        if ($venta < 0 || $compra < 0) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'Precio negativo.'];
+            continue;
+        }
+        if ($venta > 0 && $compra > 0 && $venta < $compra) {
+            $avisos[] = ['fila' => $linea, 'motivo' => '«' . $nombre . '» se vendería por debajo del costo ('
+                . number_format($venta, 2) . ' < ' . number_format($compra, 2) . ').'];
+        }
+
+        if ($sc !== '') $vistosCodigo[$sc] = $linea;
+        if ($sb !== '') $vistosBarras[$sb] = $linea;
+        $existenteId ? $existentes++ : $nuevos++;
+
+        $docs[] = [
+            'fila'          => $linea,
+            'existente_id'  => $existenteId,
+            'codigo'        => $codigo,
+            'codigo_barras' => $barras,
+            'nombre'        => mb_substr($nombre, 0, 180),
+            'descripcion'   => mb_substr(imp_val($fila, $mapa, 'descripcion'), 0, 255),
+            'categoria'     => $nombreCat,
+            'marca'         => $nombreMar,
+            'unidad'        => $nombreUni,
+            'tienda_id'     => $tieId,
+            'precio_compra' => round($compra, 2),
+            'precio_venta'  => round($venta, 2),
+            'itbis_aplica'  => imp_bool(imp_val($fila, $mapa, 'itbis_aplica'), true) ? 1 : 0,
+            'stock_minimo'  => max(0, imp_num(imp_val($fila, $mapa, 'stock_minimo'))),
+            'pais_origen'   => mb_substr(imp_val($fila, $mapa, 'pais_origen'), 0, 60),
+            'fabricante'    => mb_substr(imp_val($fila, $mapa, 'fabricante'), 0, 180),
+        ];
+    }
+
+    if ($catNuevas || $marcasNuevas || $unidNuevas) {
+        $partes = [];
+        if ($catNuevas)    $partes[] = count($catNuevas) . ' categoría(s)';
+        if ($marcasNuevas) $partes[] = count($marcasNuevas) . ' marca(s)';
+        if ($unidNuevas)   $partes[] = count($unidNuevas) . ' unidad(es)';
+        $avisos[] = ['fila' => 0, 'motivo' => empty($opts['crear_catalogos'])
+            ? 'Se dejarán sin asignar ' . implode(', ', $partes) . ' que no existen. Marca «crear los que falten» si quieres darlos de alta.'
+            : 'Se crearán ' . implode(', ', $partes) . ' que no existen todavía.'];
+    }
+
+    return [
+        'docs' => $docs, 'errores' => $errores, 'avisos' => $avisos,
+        'resumen' => [
+            'filas'      => count($filas),
+            'validos'    => count($docs),
+            'nuevos'     => $nuevos,
+            'existentes' => $existentes,
+            'rechazados' => count($errores),
+            'monto'      => 0.0,
+            'catalogos'  => ['categorias' => $catNuevas, 'marcas' => $marcasNuevas, 'unidades' => $unidNuevas],
+        ],
+    ];
+}
+
+/* ============================================================
+ *  Análisis · Existencias del almacén
+ * ============================================================ */
+
+/**
+ * Revisa un archivo de existencias y lo agrupa por sucursal.
+ *
+ * NO escribe stock. Lo que sale de aquí es la materia prima de un conteo físico
+ * en borrador por sucursal: el sistema pone el `stock_teorico` que tiene hoy y
+ * el archivo pone el `stock_contado`. La diferencia la aplica una persona, y el
+ * ajuste entra al kardex con su motivo, su usuario y su fecha.
+ *
+ * Un producto repetido para la misma sucursal se SUMA. En un archivo de almacén
+ * el mismo SKU aparece una vez por ubicación o por pallet, y `conteo_detalles`
+ * es único por (conteo, producto): insertarlo dos veces reventaría la tanda.
+ */
+function imp_analizar_existencias(array $filas, array $mapa, array $opts): array
+{
+    $errores = []; $avisos = [];
+    $idx = imp_indice_productos();
+    $sucursales = imp_indice_sucursales();
+    $porNombre = !empty($opts['cotejar_por_nombre']);
+    $sucDefecto = (int) ($opts['sucursal_id'] ?? 0);
+
+    $grupos = [];      // sucursal_id => [producto_id => ['cantidad'=>, 'costo'=>, 'filas'=>[]]]
+    $unidades = 0.0; $repetidos = 0;
+
+    foreach ($filas as $i => $fila) {
+        $linea = $i + 2;
+        $texto = imp_val($fila, $mapa, 'producto');
+        if ($texto === '') { $errores[] = ['fila' => $linea, 'motivo' => 'Sin producto.']; continue; }
+
+        $prodId = imp_buscar_producto($texto, $idx, $porNombre);
+        if (!$prodId) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'No existe el producto «' . $texto . '». Carga primero el catálogo.'];
+            continue;
+        }
+
+        $sucId = $sucDefecto;
+        $nombreSuc = imp_val($fila, $mapa, 'sucursal');
+        if ($nombreSuc !== '') {
+            $hallada = $sucursales[imp_slug($nombreSuc)] ?? 0;
+            if (!$hallada) {
+                $errores[] = ['fila' => $linea, 'motivo' => 'No existe la sucursal «' . $nombreSuc . '».'];
+                continue;
+            }
+            $sucId = $hallada;
+        }
+        if ($sucId <= 0) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'Sin sucursal: mapea la columna o escoge una para todo el archivo.'];
+            continue;
+        }
+
+        $cantidadTxt = imp_val($fila, $mapa, 'cantidad');
+        $cantidad = imp_num($cantidadTxt);
+        if ($cantidadTxt === '') { $errores[] = ['fila' => $linea, 'motivo' => 'Sin cantidad.']; continue; }
+        if ($cantidad < 0) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'Cantidad negativa (' . $cantidadTxt . '). Una existencia no puede ser negativa.'];
+            continue;
+        }
+
+        $costo = imp_num(imp_val($fila, $mapa, 'costo'));
+        if (isset($grupos[$sucId][$prodId])) {
+            $repetidos++;
+            $grupos[$sucId][$prodId]['cantidad'] += $cantidad;
+            $grupos[$sucId][$prodId]['filas'][] = $linea;
+            if ($costo > 0) $grupos[$sucId][$prodId]['costo'] = $costo;
+        } else {
+            $grupos[$sucId][$prodId] = ['cantidad' => $cantidad, 'costo' => $costo, 'filas' => [$linea]];
+        }
+        $unidades += $cantidad;
+    }
+
+    if ($repetidos) {
+        $avisos[] = ['fila' => 0, 'motivo' => $repetidos . ' fila(s) repiten un producto en la misma sucursal; sus cantidades se suman.'];
+    }
+
+    // Una sucursal solo admite un conteo abierto a la vez (regla de conteos.php).
+    // Se avisa aquí, en la vista previa, y no a mitad de la escritura.
+    $ocupadas = [];
+    if ($grupos) {
+        $ph = implode(',', array_fill(0, count($grupos), '?'));
+        foreach (qAll("SELECT sucursal_id, numero FROM conteos
+                        WHERE estado = 'abierto' AND sucursal_id IN ($ph)",
+                      array_keys($grupos)) as $r) {
+            $ocupadas[(int) $r['sucursal_id']] = $r['numero'];
+        }
+    }
+
+    // Contra el stock de hoy, para que se vea la diferencia ANTES de aplicar.
+    $docs = []; $conDiferencia = 0; $nombresSuc = array_flip($sucursales);
+    foreach ($grupos as $sucId => $lineas) {
+        if (isset($ocupadas[$sucId])) {
+            $errores[] = ['fila' => 0, 'motivo' => 'La sucursal «' . ($nombresSuc[$sucId] ?? $sucId)
+                . '» ya tiene el conteo ' . $ocupadas[$sucId] . ' abierto. Aplícalo o cancélalo antes de cargar otro.'];
+            continue;
+        }
+        $ids = array_keys($lineas);
+        $teorico = []; $costoCatalogo = [];
+        foreach (array_chunk($ids, 500) as $tanda) {
+            $ph = implode(',', array_fill(0, count($tanda), '?'));
+            foreach (qAll("SELECT producto_id, cantidad FROM inventario_stock
+                            WHERE sucursal_id = ? AND producto_id IN ($ph)",
+                          array_merge([$sucId], $tanda)) as $r) {
+                $teorico[(int) $r['producto_id']] = (float) $r['cantidad'];
+            }
+            // El conteo valora la diferencia con este costo. Si el archivo no lo
+            // trae, se usa el del catálogo: dejarlo en cero valoraría en cero un
+            // ajuste que sí mueve dinero.
+            foreach (qAll("SELECT id, precio_compra FROM productos WHERE id IN ($ph)", $tanda) as $r) {
+                $costoCatalogo[(int) $r['id']] = (float) $r['precio_compra'];
+            }
+        }
+        $det = [];
+        foreach ($lineas as $prodId => $d) {
+            $t = $teorico[$prodId] ?? 0.0;
+            if (abs($t - $d['cantidad']) > 0.0001) $conDiferencia++;
+            $det[] = [
+                'producto_id'    => $prodId,
+                'stock_teorico'  => $t,
+                'stock_contado'  => round($d['cantidad'], 3),
+                'costo_unitario' => round($d['costo'] > 0 ? $d['costo'] : ($costoCatalogo[$prodId] ?? 0), 2),
+            ];
+        }
+        $docs[] = [
+            'sucursal_id' => $sucId,
+            'sucursal'    => $nombresSuc[$sucId] ?? ('Sucursal ' . $sucId),
+            'lineas'      => $det,
+        ];
+    }
+
+    return [
+        'docs' => $docs, 'errores' => $errores, 'avisos' => $avisos,
+        'resumen' => [
+            'filas'         => count($filas),
+            'validos'       => array_sum(array_map(fn($g) => count($g['lineas']), $docs)),
+            'nuevos'        => count($docs),          // conteos que se van a crear
+            'existentes'    => 0,
+            'rechazados'    => count($errores),
+            'monto'         => 0.0,
+            'unidades'      => round($unidades, 3),
+            'con_diferencia' => $conDiferencia,
+        ],
+    ];
+}
+
+/* ============================================================
+ *  Análisis · Packing list de un embarque
+ * ============================================================ */
+
+/**
+ * Revisa el packing list contra una liquidación abierta.
+ *
+ * `liquidacion_detalles` es única por (liquidación, producto), así que el mismo
+ * SKU repetido —lo normal cuando viene en varias cajas— se SUMA en una línea, y
+ * el costo unitario se promedia ponderando por cantidad. Sumar cantidades y
+ * quedarse con el último costo daría un FOB que no cuadra con la factura.
+ */
+function imp_analizar_embarque(array $filas, array $mapa, array $opts): array
+{
+    $errores = []; $avisos = [];
+    $liqId = (int) ($opts['liquidacion_id'] ?? 0);
+    if ($liqId <= 0) {
+        return ['docs' => [], 'errores' => [['fila' => 0, 'motivo' => 'Escoge la liquidación destino.']], 'avisos' => [],
+                'resumen' => ['filas' => count($filas), 'validos' => 0, 'nuevos' => 0, 'existentes' => 0,
+                              'rechazados' => 1, 'monto' => 0.0]];
+    }
+    $liq = qOne("SELECT * FROM liquidaciones WHERE id = ?", [$liqId]);
+    if (!$liq) {
+        return ['docs' => [], 'errores' => [['fila' => 0, 'motivo' => 'Esa liquidación no existe.']], 'avisos' => [],
+                'resumen' => ['filas' => count($filas), 'validos' => 0, 'nuevos' => 0, 'existentes' => 0,
+                              'rechazados' => 1, 'monto' => 0.0]];
+    }
+    if (function_exists('liq_editable') && !liq_editable($liq)) {
+        return ['docs' => [], 'errores' => [['fila' => 0, 'motivo' => 'La liquidación ' . $liq['numero']
+                    . ' ya no se puede editar (estado: ' . $liq['estado'] . ').']], 'avisos' => [],
+                'resumen' => ['filas' => count($filas), 'validos' => 0, 'nuevos' => 0, 'existentes' => 0,
+                              'rechazados' => 1, 'monto' => 0.0]];
+    }
+
+    $idx = imp_indice_productos();
+    $crear = !empty($opts['crear_productos']);
+    // Los que exigen lote. La pantalla del embarque no deja agregarlos sin él y
+    // el archivo tampoco puede: sin lote no hay trazabilidad ni vencimiento.
+    $conLote = array_flip(array_map('intval', qCol("SELECT id FROM productos WHERE controla_lote = 1")));
+    $yaEnLiq = [];
+    foreach (qCol("SELECT producto_id FROM liquidacion_detalles WHERE liquidacion_id = ?", [$liqId]) as $p) {
+        $yaEnLiq[(int) $p] = true;
+    }
+
+    $lineas = [];    // clave => línea agregada
+    $nuevosProd = 0; $repetidos = 0; $fob = 0.0; $reemplazos = 0;
+
+    foreach ($filas as $i => $fila) {
+        $linea = $i + 2;
+        $texto = imp_val($fila, $mapa, 'producto');
+        $desc  = imp_val($fila, $mapa, 'descripcion');
+        if ($texto === '' && $desc === '') { $errores[] = ['fila' => $linea, 'motivo' => 'Sin producto.']; continue; }
+
+        $cantidadTxt = imp_val($fila, $mapa, 'cantidad');
+        $cantidad = imp_num($cantidadTxt);
+        if ($cantidad <= 0) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'Cantidad inválida (' . ($cantidadTxt ?: 'vacía') . ').'];
+            continue;
+        }
+
+        // Por código o barras. Nunca por nombre: en un packing list la
+        // descripción del proveedor casi nunca es la del catálogo.
+        $prodId = imp_buscar_producto($texto, $idx, false);
+        $clave = $prodId ? 'p' . $prodId : 'n' . imp_slug($texto !== '' ? $texto : $desc);
+
+        if (!$prodId && !$crear) {
+            $errores[] = ['fila' => $linea, 'motivo' => 'No existe el producto «' . ($texto ?: $desc)
+                . '». Marca «dar de alta los que no existan» o cárgalo primero en el catálogo.'];
+            continue;
+        }
+        if (!$prodId && $texto === '') {
+            $errores[] = ['fila' => $linea, 'motivo' => 'Para dar de alta un producto hace falta su código, no solo la descripción.'];
+            continue;
+        }
+
+        $costo = imp_num(imp_val($fila, $mapa, 'costo_moneda'));
+        if ($costo < 0) { $errores[] = ['fila' => $linea, 'motivo' => 'Costo negativo.']; continue; }
+
+        $lote = mb_substr(imp_val($fila, $mapa, 'lote'), 0, 60);
+        if ($prodId && isset($conLote[$prodId]) && $lote === '') {
+            $errores[] = ['fila' => $linea, 'motivo' => '«' . ($texto ?: $desc)
+                . '» controla lote: el archivo tiene que traer el número de lote del embarque.'];
+            continue;
+        }
+
+        if (isset($lineas[$clave])) {
+            $repetidos++;
+            $l = &$lineas[$clave];
+            // Promedio ponderado: el FOB de la línea tiene que ser el de la factura.
+            $totalPrevio = $l['cantidad'] * $l['costo_moneda'];
+            $l['cantidad'] += $cantidad;
+            $l['costo_moneda'] = $l['cantidad'] > 0 ? ($totalPrevio + $cantidad * $costo) / $l['cantidad'] : $costo;
+            $l['peso']    += imp_num(imp_val($fila, $mapa, 'peso'));
+            $l['volumen'] += imp_num(imp_val($fila, $mapa, 'volumen'));
+            $l['filas'][] = $linea;
+            unset($l);
+        } else {
+            if (!$prodId) $nuevosProd++;
+            if ($prodId && isset($yaEnLiq[$prodId])) $reemplazos++;
+            $lineas[$clave] = [
+                'producto_id'  => $prodId,
+                'codigo'       => $texto,
+                'nombre'       => $desc !== '' ? $desc : $texto,
+                'cantidad'     => $cantidad,
+                'costo_moneda' => $costo,
+                'peso'         => imp_num(imp_val($fila, $mapa, 'peso')),
+                'volumen'      => imp_num(imp_val($fila, $mapa, 'volumen')),
+                'lote'         => $lote,
+                'vencimiento'  => imp_fecha(imp_val($fila, $mapa, 'vencimiento')),
+                'ya_estaba'    => $prodId ? isset($yaEnLiq[$prodId]) : false,
+                'filas'        => [$linea],
+            ];
+        }
+    }
+
+    foreach ($lineas as &$l) {
+        $l['cantidad']     = round($l['cantidad'], 3);
+        $l['costo_moneda'] = round($l['costo_moneda'], 4);
+        $fob += $l['cantidad'] * $l['costo_moneda'];
+    }
+    unset($l);
+
+    if ($repetidos) {
+        $avisos[] = ['fila' => 0, 'motivo' => $repetidos . ' fila(s) repiten un SKU; se agrupan en una línea y el costo se promedia ponderando por cantidad.'];
+    }
+    if ($nuevosProd) {
+        $avisos[] = ['fila' => 0, 'motivo' => $nuevosProd . ' producto(s) del embarque no están en el catálogo y se darán de alta con el costo de esta factura.'];
+    }
+    if ($reemplazos) {
+        $avisos[] = ['fila' => 0, 'motivo' => $reemplazos . ' línea(s) ya estaban en la liquidación ' . $liq['numero'] . ' y se reemplazan con lo del archivo.'];
+    }
+
+    return [
+        'docs' => array_values($lineas), 'errores' => $errores, 'avisos' => $avisos,
+        'resumen' => [
+            'filas'         => count($filas),
+            'validos'       => count($lineas),
+            'nuevos'        => $nuevosProd,
+            'existentes'    => count($lineas) - $nuevosProd,
+            'rechazados'    => count($errores),
+            'monto'         => round($fob, 2),
+            'liquidacion'   => $liq['numero'],
+            'moneda'        => $liq['moneda_id'] ?? null,
+        ],
+    ];
+}
+
+/* ============================================================
  *  Carga definitiva
  * ============================================================ */
 
@@ -619,9 +1300,10 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
  */
 function imp_ejecutar(string $tipo, array $analisis, array $opts, string $archivo): int
 {
+    $tipo = imp_tipo_valido($tipo);
     $uid = (int) (current_user()['id'] ?? 0);
     $impId = dbInsert('importaciones', [
-        'tipo'       => $tipo === 'clientes' ? 'clientes' : 'ventas',
+        'tipo'       => $tipo,
         'archivo'    => mb_substr($archivo, 0, 200),
         'filas'      => (int) $analisis['resumen']['filas'],
         'usuario_id' => $uid ?: null,
@@ -629,23 +1311,33 @@ function imp_ejecutar(string $tipo, array $analisis, array $opts, string $archiv
 
     $creados = 0; $actualizados = 0; $monto = 0.0;
     $docs = $analisis['docs'];
-    $tandas = array_chunk($docs, 100);
 
-    foreach ($tandas as $tanda) {
-        $r = tx(function () use ($tanda, $tipo, $impId, $uid, $opts) {
-            $c = 0; $a = 0; $m = 0.0;
-            foreach ($tanda as $doc) {
-                if ($tipo === 'clientes') {
-                    [$hecho, $esNuevo] = imp_grabar_cliente($doc, $impId, $uid, $opts);
-                    if ($hecho) { $esNuevo ? $c++ : $a++; }
-                } else {
-                    $m += imp_grabar_venta($doc, $impId, $uid, $opts);
-                    $c++;
+    // Existencias y embarque no son filas sueltas: uno agrupa por sucursal y el
+    // otro cuelga de un documento. Se escriben aparte y en su propia tanda.
+    if ($tipo === 'existencias') {
+        [$creados, $actualizados] = imp_grabar_existencias($docs, $impId, $uid, $opts);
+    } elseif ($tipo === 'embarque') {
+        [$creados, $actualizados, $monto] = imp_grabar_embarque($docs, $impId, $uid, $opts);
+    } else {
+        foreach (array_chunk($docs, 100) as $tanda) {
+            $r = tx(function () use ($tanda, $tipo, $impId, $uid, $opts) {
+                $c = 0; $a = 0; $m = 0.0;
+                foreach ($tanda as $doc) {
+                    if ($tipo === 'clientes') {
+                        [$hecho, $esNuevo] = imp_grabar_cliente($doc, $impId, $uid, $opts);
+                        if ($hecho) { $esNuevo ? $c++ : $a++; }
+                    } elseif ($tipo === 'productos') {
+                        [$hecho, $esNuevo] = imp_grabar_producto($doc, $impId, $uid, $opts);
+                        if ($hecho) { $esNuevo ? $c++ : $a++; }
+                    } else {
+                        $m += imp_grabar_venta($doc, $impId, $uid, $opts);
+                        $c++;
+                    }
                 }
-            }
-            return [$c, $a, $m];
-        });
-        $creados += $r[0]; $actualizados += $r[1]; $monto += $r[2];
+                return [$c, $a, $m];
+            });
+            $creados += $r[0]; $actualizados += $r[1]; $monto += $r[2];
+        }
     }
 
     dbUpdate('importaciones', [
@@ -793,6 +1485,206 @@ function imp_grabar_venta(array $d, int $impId, int $uid, array $opts): float
     return round($d['subtotal'] - $d['descuento'], 2);
 }
 
+/**
+ * Id de una categoría, marca o unidad por nombre; la crea si se pidió.
+ * Memoriza para no consultar dos veces el mismo nombre en un archivo de 3.000
+ * filas donde «Maquillaje» se repite mil veces.
+ */
+function imp_catalogo_id(string $tabla, string $nombre, bool $crear): ?int
+{
+    static $cache = [];
+    $nombre = trim($nombre);
+    if ($nombre === '') return null;
+
+    $clave = $tabla . '|' . imp_slug($nombre);
+    if (array_key_exists($clave, $cache)) return $cache[$clave];
+
+    $id = (int) (qVal("SELECT id FROM `$tabla` WHERE nombre = ? LIMIT 1", [$nombre]) ?: 0);
+    if (!$id && $crear) {
+        $datos = ['nombre' => mb_substr($nombre, 0, $tabla === 'unidades' ? 50 : 100)];
+        if ($tabla !== 'unidades') $datos['activo'] = 1;
+        // `unidades.abreviatura` es obligatoria: se saca del propio nombre.
+        if ($tabla === 'unidades') $datos['abreviatura'] = mb_substr($nombre, 0, 10);
+        $id = dbInsert($tabla, $datos);
+    }
+    return $cache[$clave] = ($id ?: null);
+}
+
+/** Código libre para un producto nuevo: respeta el del archivo si no está tomado. */
+function imp_codigo_producto(string $preferido): string
+{
+    $preferido = mb_substr(trim($preferido), 0, 40);
+    if ($preferido !== '' && !qVal("SELECT 1 FROM productos WHERE codigo = ?", [$preferido])) {
+        return $preferido;
+    }
+    return nextNumero('productos', 'codigo', 'SKU', 5);
+}
+
+/**
+ * Crea o actualiza un producto. Devuelve [bool grabado, bool esNuevo].
+ *
+ * Al actualizar se respeta lo que el archivo no trae: un catálogo sin la
+ * columna «stock mínimo» no puede poner en cero los mínimos que ya estaban
+ * configurados. Es la misma regla que en clientes.
+ */
+function imp_grabar_producto(array $d, int $impId, int $uid, array $opts): array
+{
+    $crearCat = !empty($opts['crear_catalogos']);
+    $catId = imp_catalogo_id('categorias', $d['categoria'], $crearCat);
+    $marId = imp_catalogo_id('marcas',     $d['marca'],     $crearCat);
+    $uniId = imp_catalogo_id('unidades',   $d['unidad'],    $crearCat);
+
+    // Solo lo que vino con dato. El código de barras vacío va como NULL y no
+    // como cadena vacía: `codigo_barras` es único y dos cadenas vacías chocan,
+    // mientras que dos NULL conviven.
+    $datos = [];
+    if ($d['nombre'] !== '')        $datos['nombre'] = $d['nombre'];
+    if ($d['descripcion'] !== '')   $datos['descripcion'] = $d['descripcion'];
+    if ($d['codigo_barras'] !== '') $datos['codigo_barras'] = $d['codigo_barras'];
+    if ($catId)                     $datos['categoria_id'] = $catId;
+    if ($marId)                     $datos['marca_id'] = $marId;
+    if ($uniId)                     $datos['unidad_id'] = $uniId;
+    if ($d['tienda_id'])            $datos['tienda_id'] = $d['tienda_id'];
+    if ($d['precio_compra'] > 0)    $datos['precio_compra'] = $d['precio_compra'];
+    if ($d['precio_venta'] > 0)     $datos['precio_venta'] = $d['precio_venta'];
+    if ($d['stock_minimo'] > 0)     $datos['stock_minimo'] = $d['stock_minimo'];
+    if ($d['pais_origen'] !== '')   $datos['pais_origen'] = $d['pais_origen'];
+    if ($d['fabricante'] !== '')    $datos['fabricante'] = $d['fabricante'];
+
+    if ($d['existente_id']) {
+        if (empty($opts['actualizar_existentes'])) return [false, false];
+        // El nombre no se pisa al actualizar: quien ya tenía el producto en el
+        // sistema probablemente le puso un nombre mejor que el del proveedor.
+        unset($datos['nombre']);
+        if ($datos) dbUpdate('productos', $datos, 'id = ?', [(int) $d['existente_id']]);
+        return [true, false];
+    }
+
+    $datos['nombre']         = $d['nombre'];
+    $datos['codigo']         = imp_codigo_producto($d['codigo']);
+    $datos['tipo']           = 'producto';
+    $datos['itbis_aplica']   = $d['itbis_aplica'];
+    $datos['activo']         = 1;
+    $datos['importacion_id'] = $impId;
+    dbInsert('productos', $datos);
+    return [true, true];
+}
+
+/**
+ * Deja un conteo físico en borrador por sucursal. NO escribe stock.
+ *
+ * Devuelve [conteos creados, líneas escritas]. Cada conteo va en su propia
+ * transacción: si la tercera sucursal falla, las dos primeras quedan cargadas y
+ * el lote las revierte igual.
+ */
+function imp_grabar_existencias(array $docs, int $impId, int $uid, array $opts): array
+{
+    $conteos = 0; $lineas = 0;
+    $descripcion = mb_substr(trim((string) ($opts['descripcion'] ?? '')) ?: 'Carga de existencias', 0, 150);
+
+    foreach ($docs as $doc) {
+        $n = tx(function () use ($doc, $impId, $uid, $opts, $descripcion) {
+            $conteoId = dbInsert('conteos', [
+                'numero'         => nextNumero('conteos', 'numero', 'CNT'),
+                'sucursal_id'    => (int) $doc['sucursal_id'],
+                'descripcion'    => $descripcion . ' · ' . $doc['sucursal'],
+                'estado'         => 'abierto',
+                'notas'          => 'Cargado desde archivo. Revisa las diferencias antes de aplicar: '
+                                    . 'al aplicar se mueve el stock por la diferencia y queda en el kardex.',
+                'usuario_id'     => $uid ?: null,
+                'importacion_id' => $impId,
+            ]);
+            $escritas = 0;
+            foreach (array_chunk($doc['lineas'], 200) as $tanda) {
+                foreach ($tanda as $l) {
+                    dbInsert('conteo_detalles', [
+                        'conteo_id'      => $conteoId,
+                        'producto_id'    => (int) $l['producto_id'],
+                        'stock_teorico'  => $l['stock_teorico'],
+                        'stock_contado'  => $l['stock_contado'],
+                        'costo_unitario' => (float) $l['costo_unitario'],
+                        'contado_por'    => $uid ?: null,
+                        'contado_at'     => date('Y-m-d H:i:s'),
+                    ]);
+                    $escritas++;
+                }
+            }
+            return $escritas;
+        });
+        $conteos++; $lineas += $n;
+    }
+    return [$conteos, $lineas];
+}
+
+/**
+ * Vuelca el packing list en la liquidación destino.
+ *
+ * Devuelve [líneas nuevas, líneas reemplazadas, FOB en la moneda del embarque].
+ * Al final recalcula la liquidación una sola vez: hacerlo por línea repartiría
+ * los gastos 300 veces para llegar al mismo sitio.
+ */
+function imp_grabar_embarque(array $docs, int $impId, int $uid, array $opts): array
+{
+    $liqId = (int) ($opts['liquidacion_id'] ?? 0);
+    $liq = qOne("SELECT * FROM liquidaciones WHERE id = ?", [$liqId]);
+    if (!$liq) throw new RuntimeException('La liquidación destino ya no existe.');
+    $tasa = (float) ($liq['tasa_cambio'] ?: 1);
+
+    $nuevas = 0; $reemplazadas = 0; $fob = 0.0;
+
+    foreach (array_chunk($docs, 100) as $tanda) {
+        $r = tx(function () use ($tanda, $liqId, $tasa, $impId, $uid, $opts) {
+            $n = 0; $rep = 0; $f = 0.0;
+            foreach ($tanda as $d) {
+                $prodId = (int) ($d['producto_id'] ?? 0);
+
+                // Producto que llega por primera vez en este contenedor.
+                if (!$prodId) {
+                    $prodId = dbInsert('productos', [
+                        'codigo'         => imp_codigo_producto($d['codigo']),
+                        'nombre'         => mb_substr($d['nombre'], 0, 180),
+                        'tipo'           => 'producto',
+                        'precio_compra'  => round($d['costo_moneda'] * $tasa, 2),
+                        'itbis_aplica'   => 1,
+                        'activo'         => 1,
+                        'importacion_id' => $impId,
+                    ]);
+                }
+
+                $datos = [
+                    'cantidad'       => $d['cantidad'],
+                    'costo_moneda'   => $d['costo_moneda'],
+                    'costo_fob'      => round($d['costo_moneda'] * $tasa, 4),
+                    'peso'           => max(0, (float) $d['peso']),
+                    'volumen'        => max(0, (float) $d['volumen']),
+                    'lote'           => $d['lote'] !== '' ? $d['lote'] : null,
+                    'vencimiento'    => $d['vencimiento'],
+                    'importacion_id' => $impId,
+                ];
+
+                // UNIQUE (liquidacion_id, producto_id): repetir es corregir.
+                $ya = qVal("SELECT id FROM liquidacion_detalles WHERE liquidacion_id = ? AND producto_id = ?",
+                           [$liqId, $prodId]);
+                if ($ya) {
+                    dbUpdate('liquidacion_detalles', $datos, 'id = ?', [(int) $ya]);
+                    $rep++;
+                } else {
+                    $datos['liquidacion_id'] = $liqId;
+                    $datos['producto_id']    = $prodId;
+                    dbInsert('liquidacion_detalles', $datos);
+                    $n++;
+                }
+                $f += $d['cantidad'] * $d['costo_moneda'];
+            }
+            return [$n, $rep, $f];
+        });
+        $nuevas += $r[0]; $reemplazadas += $r[1]; $fob += $r[2];
+    }
+
+    liq_recalcular($liqId);
+    return [$nuevas, $reemplazadas, round($fob, 2)];
+}
+
 /* ============================================================
  *  Reversión y consulta de lotes
  * ============================================================ */
@@ -811,6 +1703,20 @@ function imp_revertir(int $id): array
         $imp = qOne("SELECT * FROM importaciones WHERE id = ? FOR UPDATE", [$id]);
         if (!$imp) throw new RuntimeException('Ese lote de carga no existe.');
         if ($imp['estado'] === 'revertida') throw new RuntimeException('Ese lote ya se revirtió.');
+
+        switch ($imp['tipo']) {
+            case 'productos':   $r = imp_revertir_productos($id);   break;
+            case 'existencias': $r = imp_revertir_existencias($id); break;
+            case 'embarque':    $r = imp_revertir_embarque($id);    break;
+            default:            $r = null;
+        }
+        if ($r !== null) {
+            dbUpdate('importaciones', [
+                'estado'       => 'revertida',
+                'revertida_at' => date('Y-m-d H:i:s'),
+            ], 'id = ?', [$id]);
+            return $r;
+        }
 
         $ventas = (int) qVal("SELECT COUNT(*) FROM ventas WHERE importacion_id = ?", [$id]);
         q("DELETE FROM ventas WHERE importacion_id = ?", [$id]);
@@ -840,6 +1746,115 @@ function imp_revertir(int $id): array
 
         return ['ventas' => $ventas, 'clientes' => $clientes, 'clientes_conservados' => $conservados];
     });
+}
+
+/**
+ * Deshace una carga de catálogo.
+ *
+ * Borra los productos que no dejaron rastro. El que ya se vendió, ya tiene
+ * existencia o ya entró en un embarque **se conserva** y solo pierde la marca
+ * del lote: borrarlo se llevaría por delante ventas reales y dejaría el
+ * histórico apuntando a un id que no existe.
+ */
+function imp_revertir_productos(int $id): array
+{
+    $borrables = qCol(
+        "SELECT p.id FROM productos p
+          WHERE p.importacion_id = ?
+            AND NOT EXISTS (SELECT 1 FROM venta_detalles vd WHERE vd.producto_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM liquidacion_detalles ld WHERE ld.producto_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM conteo_detalles cd WHERE cd.producto_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM movimientos_inventario mi WHERE mi.producto_id = p.id)
+            AND NOT EXISTS (SELECT 1 FROM inventario_stock st WHERE st.producto_id = p.id AND st.cantidad <> 0)",
+        [$id]
+    );
+    $borrados = 0;
+    if ($borrables) {
+        foreach (array_chunk($borrables, 200) as $tanda) {
+            $ph = implode(',', array_fill(0, count($tanda), '?'));
+            // Las existencias en cero no son rastro, pero sí una fila que
+            // estorba a la clave foránea.
+            q("DELETE FROM inventario_stock WHERE producto_id IN ($ph)", $tanda);
+            q("DELETE FROM productos WHERE id IN ($ph)", $tanda);
+            $borrados += count($tanda);
+        }
+    }
+    $conservados = (int) qVal("SELECT COUNT(*) FROM productos WHERE importacion_id = ?", [$id]);
+    q("UPDATE productos SET importacion_id = NULL WHERE importacion_id = ?", [$id]);
+
+    return ['productos' => $borrados, 'productos_conservados' => $conservados];
+}
+
+/**
+ * Deshace una carga de existencias.
+ *
+ * Solo si NINGÚN conteo del lote se aplicó. Un conteo aplicado ya movió el
+ * stock y lo dejó escrito en el kardex: borrar el conteo dejaría el movimiento
+ * huérfano, apuntando a un documento que no existe. Eso se corrige con otro
+ * conteo, no borrando el rastro.
+ */
+function imp_revertir_existencias(int $id): array
+{
+    $aplicados = qAll("SELECT numero FROM conteos WHERE importacion_id = ? AND estado = 'aplicado'", [$id]);
+    if ($aplicados) {
+        $nums = implode(', ', array_column($aplicados, 'numero'));
+        throw new RuntimeException(
+            'No se puede revertir: ' . count($aplicados) . ' conteo(s) de este lote ya se aplicaron (' . $nums . ') '
+            . 'y su ajuste está en el kardex. Corrígelo con un conteo nuevo, no borrando el que dejó el movimiento.'
+        );
+    }
+
+    $ids = array_map('intval', qCol("SELECT id FROM conteos WHERE importacion_id = ?", [$id]));
+    $lineas = 0;
+    if ($ids) {
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $lineas = (int) qVal("SELECT COUNT(*) FROM conteo_detalles WHERE conteo_id IN ($ph)", $ids);
+        q("DELETE FROM conteo_detalles WHERE conteo_id IN ($ph)", $ids);
+        q("DELETE FROM conteos WHERE id IN ($ph)", $ids);
+    }
+    return ['conteos' => count($ids), 'lineas' => $lineas];
+}
+
+/**
+ * Deshace la carga de un packing list.
+ *
+ * Solo si la liquidación sigue editable. Si ya se aplicó, el costo del embarque
+ * está fijado en el catálogo y el stock entró: quitarle las líneas dejaría un
+ * documento aplicado que no explica el costo que puso. Para eso está la
+ * anulación de la liquidación, que sí sabe devolver stock y costo.
+ */
+function imp_revertir_embarque(int $id): array
+{
+    $liqs = qAll(
+        "SELECT DISTINCT l.id, l.numero, l.estado
+           FROM liquidacion_detalles d JOIN liquidaciones l ON l.id = d.liquidacion_id
+          WHERE d.importacion_id = ?",
+        [$id]
+    );
+    foreach ($liqs as $l) {
+        if (!liq_editable($l)) {
+            throw new RuntimeException(
+                'No se puede revertir: la liquidación ' . $l['numero'] . ' está ' . $l['estado']
+                . ' y su costo ya quedó en el catálogo. Anula la liquidación desde su pantalla, '
+                . 'que sí sabe devolver el stock y el costo anterior.'
+            );
+        }
+    }
+
+    $lineas = (int) qVal("SELECT COUNT(*) FROM liquidacion_detalles WHERE importacion_id = ?", [$id]);
+    q("DELETE FROM liquidacion_detalles WHERE importacion_id = ?", [$id]);
+    foreach ($liqs as $l) liq_recalcular((int) $l['id']);
+
+    // Los productos que nacieron con el embarque siguen la misma regla que en
+    // una carga de catálogo: se van los que no dejaron rastro.
+    $prod = imp_revertir_productos($id);
+
+    return [
+        'lineas'       => $lineas,
+        'liquidaciones' => count($liqs),
+        'productos'    => $prod['productos'],
+        'productos_conservados' => $prod['productos_conservados'],
+    ];
 }
 
 /** Últimos lotes cargados, para la pantalla del historial. */

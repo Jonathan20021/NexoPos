@@ -1,6 +1,6 @@
 <?php
 /**
- * Carga histórica de clientes y ventas.
+ * Carga masiva desde Excel o CSV.
  *
  * Flujo en tres pasos, y el del medio es el importante:
  *   1. Subir el archivo (CSV o Excel).
@@ -8,20 +8,26 @@
  *      rechazar y por qué. Nada se escribe todavía.
  *   3. Cargar. Y si algo salió mal, revertir el lote entero con un botón.
  *
- * Lo que se carga NO mueve inventario, NO consume NCF y NO genera movimientos
- * de caja: son operaciones que ya ocurrieron en otro sistema. Ver la cabecera de
- * includes/importador.php.
+ * Cinco tipos: clientes, ventas, catálogo, existencias y packing list. Cada uno
+ * tiene sus campos, sus opciones y su forma de revertirse; la pantalla los saca
+ * de `imp_tipos()` en vez de decidirlos aquí, para que añadir el sexto no
+ * obligue a encontrar una docena de condicionales repartidos por la vista.
+ *
+ * Nada de lo que se carga escribe stock. Las existencias dejan un conteo en
+ * borrador y el ajuste entra al kardex cuando alguien lo aplica. Ver la
+ * cabecera de includes/importador.php.
  */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('direccion.importar');
 
 if (!imp_disponible()) {
-    layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores');
+    layout_start('Cargar datos', 'Catálogo, existencias, embarques e histórico');
     echo empty_state('Falta aplicar la migración',
-        'Ejecuta database/migracion_tiendas_p16.sql para habilitar la carga histórica.', 'alert');
+        'Ejecuta database/migracion_tiendas_p16.sql para habilitar la carga de archivos.', 'alert');
     layout_end();
     return;
 }
+$masiva = imp_masiva_disponible();
 
 imp_limpiar_archivos();
 
@@ -36,7 +42,11 @@ if (isPost()) {
 
     /* -------- 1) Subir el archivo -------- */
     if ($accion === 'subir') {
-        $tipo = post('tipo') === 'clientes' ? 'clientes' : 'ventas';
+        $tipo = imp_tipo_valido(post('tipo'));
+        if (!$masiva && !in_array($tipo, ['clientes', 'ventas'], true)) {
+            flash('error', 'Falta aplicar database/migracion_carga_masiva_p19.sql para cargar ' . imp_tipo($tipo)['etiqueta'] . '.');
+            redirect('modules/direccion/importar.php');
+        }
         $r = imp_guardar_archivo('archivo');
         if (!$r['ok']) {
             flash('error', $r['error']);
@@ -86,6 +96,12 @@ if (isPost()) {
             'costo_catalogo'        => post('costo_catalogo') === '1',
             'crear_clientes'        => post('crear_clientes') === '1',
             'actualizar_existentes' => post('actualizar_existentes') === '1',
+            // Tipos de inventario
+            'crear_catalogos'       => post('crear_catalogos') === '1',
+            'crear_productos'       => post('crear_productos') === '1',
+            'cotejar_por_nombre'    => post('cotejar_por_nombre') === '1',
+            'liquidacion_id'        => postInt('liquidacion_id'),
+            'descripcion'           => trim((string) post('descripcion')),
         ];
 
         // Faltan obligatorios: se avisa antes de recorrer 12.000 filas.
@@ -96,8 +112,17 @@ if (isPost()) {
         if ($ses['tipo'] === 'ventas' && !isset($mapa['subtotal']) && !isset($mapa['total']) && !isset($mapa['precio'])) {
             $faltan[] = 'algún importe (subtotal, total o precio)';
         }
-        if ($ses['tipo'] === 'ventas' && $opts['sucursal_id'] <= 0 && !isset($mapa['sucursal'])) {
+        if (imp_tipo($ses['tipo'])['sucursal'] === 'req' && $opts['sucursal_id'] <= 0 && !isset($mapa['sucursal'])) {
             $faltan[] = 'la sucursal (elige una por defecto o mapea la columna)';
+        }
+        if ($ses['tipo'] === 'existencias' && $opts['sucursal_id'] <= 0 && !isset($mapa['sucursal'])) {
+            $faltan[] = 'la sucursal: sin ella no se sabe de qué almacén son esas cantidades';
+        }
+        if (imp_tipo($ses['tipo'])['destino'] === 'liquidacion' && $opts['liquidacion_id'] <= 0) {
+            $faltan[] = 'la liquidación destino';
+        }
+        if ($ses['tipo'] === 'productos' && !isset($mapa['codigo']) && !isset($mapa['codigo_barras'])) {
+            $faltan[] = 'el código o el código de barras (sin uno de los dos no se puede saber qué producto ya existe)';
         }
 
         if ($faltan) {
@@ -127,8 +152,15 @@ if (isPost()) {
                     ['tabla' => 'importaciones', 'registro_id' => $impId]);
                 @unlink($ses['path']);
                 unset($_SESSION[IMP_SESION]);
-                flash('success', 'Carga completada. Se registraron ' . number_format(count($prev['docs'])) . ' '
-                    . ($ses['tipo'] === 'clientes' ? 'cliente(s).' : 'venta(s) por ' . money($prev['resumen']['monto']) . '.'));
+
+                $meta = imp_tipo($ses['tipo']);
+                $msg = 'Carga completada. Se registraron ' . number_format(count($prev['docs'])) . ' ' . $meta['crea'] . '.';
+                if ($ses['tipo'] === 'ventas')      $msg .= ' Ingreso neto: ' . money($prev['resumen']['monto']) . '.';
+                if ($ses['tipo'] === 'embarque')    $msg .= ' FOB del embarque: ' . number_format($prev['resumen']['monto'], 2) . '.';
+                if ($ses['tipo'] === 'existencias') {
+                    $msg .= ' NO se movió stock: revisa cada conteo y aplícalo para que el ajuste entre al kardex.';
+                }
+                flash('success', $msg);
             } catch (Throwable $e) {
                 flash('error', 'La carga se detuvo: ' . $e->getMessage());
             }
@@ -154,11 +186,22 @@ if (isPost()) {
             $r = imp_revertir(postInt('id'));
             audit('direccion', 'importar', 'Lote de carga revertido #' . postInt('id'),
                 ['tabla' => 'importaciones', 'registro_id' => postInt('id')]);
-            $msg = 'Lote revertido: se eliminaron ' . number_format($r['ventas']) . ' venta(s) y '
-                . number_format($r['clientes']) . ' cliente(s).';
-            if ($r['clientes_conservados'] > $r['clientes']) {
-                $msg .= ' Se conservaron ' . number_format($r['clientes_conservados'] - $r['clientes'])
-                     . ' cliente(s) que ya tienen movimientos propios.';
+
+            // Cada tipo deshace cosas distintas; se cuenta lo que devolvió.
+            $partes = [];
+            if (isset($r['ventas']))        $partes[] = number_format($r['ventas']) . ' venta(s)';
+            if (isset($r['clientes']))      $partes[] = number_format($r['clientes']) . ' cliente(s)';
+            if (isset($r['productos']))     $partes[] = number_format($r['productos']) . ' producto(s)';
+            if (isset($r['conteos']))       $partes[] = number_format($r['conteos']) . ' conteo(s)';
+            if (isset($r['lineas']))        $partes[] = number_format($r['lineas']) . ' línea(s) de embarque';
+            $msg = 'Lote revertido: se eliminaron ' . ($partes ? implode(', ', $partes) : 'los registros del lote') . '.';
+
+            $conservados = 0;
+            if (isset($r['clientes_conservados']))  $conservados += max(0, $r['clientes_conservados'] - ($r['clientes'] ?? 0));
+            if (isset($r['productos_conservados'])) $conservados += (int) $r['productos_conservados'];
+            if ($conservados > 0) {
+                $msg .= ' Se conservaron ' . number_format($conservados)
+                     . ' registro(s) que ya tienen movimientos propios: borrarlos se llevaría datos reales por delante.';
             }
             flash('success', $msg);
         } catch (Throwable $e) {
@@ -177,7 +220,8 @@ if ($ses && is_file($ses['path'])) {
     $ses = null;
 }
 
-$tipo    = $ses['tipo'] ?? 'ventas';
+$tipo    = imp_tipo_valido($ses['tipo'] ?? 'ventas');
+$meta    = imp_tipo($tipo);
 $campos  = imp_campos($tipo);
 $headers = $ses['headers'] ?? [];
 $mapa    = $ses['mapa'] ?? ($headers ? imp_automapear($headers, $tipo) : []);
@@ -185,7 +229,18 @@ $opts    = $ses['opts'] ?? [];
 $sucursales = sucursales_visibles();
 $lotes   = imp_lotes(15);
 
-layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores, sin tocar el inventario ni la caja');
+// Liquidaciones que todavía admiten líneas, para el packing list.
+$liqAbiertas = [];
+if ($masiva && $tipo === 'embarque') {
+    $liqAbiertas = qAll(
+        "SELECT l.id, l.numero, l.referencia, l.fecha, l.estado, p.nombre AS proveedor
+           FROM liquidaciones l LEFT JOIN proveedores p ON p.id = l.proveedor_id
+          WHERE l.estado IN ('borrador','transito')
+          ORDER BY l.id DESC LIMIT 50"
+    );
+}
+
+layout_start('Cargar datos', 'Catálogo, existencias, embarques e histórico — desde Excel o CSV');
 ?>
 
 <!-- Pasos -->
@@ -209,21 +264,23 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
       <form method="post" enctype="multipart/form-data" class="space-y-5">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="subir">
-        <div x-data="{tipo:'ventas'}">
+        <div x-data="{tipo:'productos'}">
           <span class="label">¿Qué vas a cargar?</span>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
-            <label class="rounded-xl border p-4 cursor-pointer transition"
-                   :class="tipo==='ventas' ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-200' : 'border-slate-200 hover:border-slate-300'">
-              <input type="radio" name="tipo" value="ventas" x-model="tipo" class="sr-only">
-              <p class="font-semibold text-slate-800 flex items-center gap-2"><?= icon('receipt', 'w-4 h-4') ?> Ventas</p>
-              <p class="text-xs text-slate-500 mt-1">Facturas de años anteriores. Alimentan comparativos, márgenes y ranking de clientes.</p>
-            </label>
-            <label class="rounded-xl border p-4 cursor-pointer transition"
-                   :class="tipo==='clientes' ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-200' : 'border-slate-200 hover:border-slate-300'">
-              <input type="radio" name="tipo" value="clientes" x-model="tipo" class="sr-only">
-              <p class="font-semibold text-slate-800 flex items-center gap-2"><?= icon('users', 'w-4 h-4') ?> Clientes</p>
-              <p class="text-xs text-slate-500 mt-1">La cartera completa: nombre, RNC, teléfono, correo y dirección.</p>
-            </label>
+            <?php foreach (imp_tipos() as $k => $t):
+              $bloqueado = !$masiva && !in_array($k, ['clientes', 'ventas'], true); ?>
+              <label class="rounded-xl border p-4 transition <?= $bloqueado ? 'opacity-50 cursor-not-allowed border-slate-200' : 'cursor-pointer' ?>"
+                     <?= $bloqueado ? '' : ':class="tipo===\'' . $k . '\' ? \'border-blue-500 bg-blue-50/50 ring-1 ring-blue-200\' : \'border-slate-200 hover:border-slate-300\'"' ?>>
+                <input type="radio" name="tipo" value="<?= e($k) ?>" x-model="tipo" class="sr-only" <?= $bloqueado ? 'disabled' : '' ?>>
+                <p class="font-semibold text-slate-800 flex items-center gap-2">
+                  <?= icon($t['icono'], 'w-4 h-4') ?> <?= e($t['etiqueta']) ?>
+                </p>
+                <p class="text-xs text-slate-500 mt-1"><?= e($t['ayuda']) ?></p>
+                <?php if ($bloqueado): ?>
+                  <p class="text-xs text-amber-600 mt-1.5 font-semibold">Falta aplicar la migración P19.</p>
+                <?php endif; ?>
+              </label>
+            <?php endforeach; ?>
           </div>
         </div>
         <div>
@@ -238,12 +295,12 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
     <div class="card p-5 bg-slate-50/60">
       <h4 class="font-bold text-slate-800 text-sm mb-2">Qué hace y qué no hace</h4>
       <ul class="text-sm text-slate-600 space-y-2 leading-snug">
-        <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Alimenta ventas, márgenes, comparativos y el ranking de clientes.</li>
-        <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Reimportar el mismo archivo no duplica nada: las facturas ya registradas se omiten.</li>
+        <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Antes de escribir nada te dice cuántas filas entran, cuántas se rechazan y por qué.</li>
+        <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Adivina el mapeo de columnas: reconoce los encabezados en español y en inglés.</li>
         <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Todo queda marcado con su lote y se puede revertir de un golpe.</li>
-        <li class="flex gap-2"><span class="text-slate-400 shrink-0"><?= icon('x', 'w-4 h-4') ?></span> <strong>No</strong> mueve inventario: el stock de hoy ya es el real.</li>
-        <li class="flex gap-2"><span class="text-slate-400 shrink-0"><?= icon('x', 'w-4 h-4') ?></span> <strong>No</strong> consume NCF: esos comprobantes ya se emitieron.</li>
-        <li class="flex gap-2"><span class="text-slate-400 shrink-0"><?= icon('x', 'w-4 h-4') ?></span> <strong>No</strong> genera movimientos de caja ni cuentas por cobrar.</li>
+        <li class="flex gap-2"><span class="text-emerald-600 shrink-0"><?= icon('check', 'w-4 h-4') ?></span> Reimportar el mismo archivo no duplica: lo que ya está se actualiza o se omite.</li>
+        <li class="flex gap-2"><span class="text-slate-400 shrink-0"><?= icon('x', 'w-4 h-4') ?></span> <strong>No</strong> escribe existencias. Las cantidades del almacén dejan un <strong>conteo en borrador</strong> para revisar y aplicar, y así el ajuste queda en el kardex con su motivo.</li>
+        <li class="flex gap-2"><span class="text-slate-400 shrink-0"><?= icon('x', 'w-4 h-4') ?></span> <strong>No</strong> consume NCF ni mueve caja: el histórico ya ocurrió en otro sistema.</li>
       </ul>
     </div>
   </div>
@@ -258,7 +315,7 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
     <div class="card">
       <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h3 class="font-bold text-slate-800">Mapear columnas · <?= $tipo === 'clientes' ? 'Clientes' : 'Ventas' ?></h3>
+          <h3 class="font-bold text-slate-800">Mapear columnas · <?= e($meta['etiqueta']) ?></h3>
           <p class="text-xs text-slate-500 mt-0.5">
             <?= e($ses['nombre']) ?> · <?= number_format((int) $ses['total']) ?> fila(s) · <?= count($headers) ?> columna(s)
           </p>
@@ -329,12 +386,78 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
             <span>Crear los clientes que no existan<br>
               <span class="text-xs text-slate-500">Si no, esas ventas quedan como consumidor final.</span></span>
           </label>
-        <?php else: ?>
+        <?php elseif ($tipo === 'clientes'): ?>
           <label class="flex items-start gap-2 text-sm text-slate-600 cursor-pointer sm:col-span-2">
             <input type="hidden" name="actualizar_existentes" value="0">
             <input type="checkbox" name="actualizar_existentes" value="1" <?= !empty($opts['actualizar_existentes']) ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600 mt-0.5">
             <span>Actualizar los clientes que ya existan<br>
               <span class="text-xs text-slate-500">Solo se completan los campos que el archivo traiga con dato; nunca se borra lo que ya está.</span></span>
+          </label>
+
+        <?php elseif ($tipo === 'productos'): ?>
+          <label class="flex items-start gap-2 text-sm text-slate-600 cursor-pointer sm:col-span-2 xl:col-span-1">
+            <input type="hidden" name="crear_catalogos" value="0">
+            <input type="checkbox" name="crear_catalogos" value="1" <?= !empty($opts['crear_catalogos']) ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600 mt-0.5">
+            <span>Crear las categorías, marcas y unidades que falten<br>
+              <span class="text-xs text-slate-500">Si no, esos productos entran sin clasificar y hay que asignarlos a mano.</span></span>
+          </label>
+          <label class="flex items-start gap-2 text-sm text-slate-600 cursor-pointer sm:col-span-2 xl:col-span-1">
+            <input type="hidden" name="actualizar_existentes" value="0">
+            <input type="checkbox" name="actualizar_existentes" value="1" <?= !empty($opts['actualizar_existentes']) ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600 mt-0.5">
+            <span>Actualizar los productos que ya existan<br>
+              <span class="text-xs text-slate-500">Actualiza precios y datos, pero <strong>nunca pisa el nombre</strong> que ya tenías ni borra lo que el archivo no trae.</span></span>
+          </label>
+
+        <?php elseif ($tipo === 'existencias'): ?>
+          <div>
+            <label class="label" for="imp_suc">Sucursal / almacén</label>
+            <select id="imp_suc" name="sucursal_id" class="select">
+              <option value="">— Usar la columna del archivo —</option>
+              <?php foreach ($sucursales as $s): ?>
+                <option value="<?= (int) $s['id'] ?>" <?= (int) ($opts['sucursal_id'] ?? 0) === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['nombre']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <p class="mt-1 text-xs text-slate-500">Se genera un conteo por cada sucursal que aparezca.</p>
+          </div>
+          <div>
+            <label class="label" for="imp_desc">Nombre del conteo</label>
+            <input type="text" id="imp_desc" name="descripcion" class="input" maxlength="120"
+                   value="<?= e($opts['descripcion'] ?? '') ?>" placeholder="Inventario inicial 2026">
+            <p class="mt-1 text-xs text-slate-500">Se le añade el nombre de la sucursal.</p>
+          </div>
+          <label class="flex items-start gap-2 text-sm text-slate-600 cursor-pointer sm:col-span-2 xl:col-span-1">
+            <input type="hidden" name="cotejar_por_nombre" value="0">
+            <input type="checkbox" name="cotejar_por_nombre" value="1" <?= !empty($opts['cotejar_por_nombre']) ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600 mt-0.5">
+            <span>Buscar también por nombre exacto<br>
+              <span class="text-xs text-slate-500">Solo si el nombre no se repite en el catálogo. Lo seguro es cotejar por código o por barras.</span></span>
+          </label>
+
+        <?php elseif ($tipo === 'embarque'): ?>
+          <div class="sm:col-span-2">
+            <label class="label" for="imp_liq">Liquidación destino *</label>
+            <?php if (!$liqAbiertas): ?>
+              <p class="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                No hay ninguna liquidación abierta. Créala primero en
+                <a class="underline font-semibold" href="<?= e(url('modules/inventario/liquidaciones.php')) ?>">Liquidaciones</a>
+                con su proveedor, moneda y tasa: el packing list se vuelca dentro de una que ya exista.
+              </p>
+            <?php else: ?>
+              <select id="imp_liq" name="liquidacion_id" class="select" required>
+                <option value="">— Escoge la liquidación —</option>
+                <?php foreach ($liqAbiertas as $l): ?>
+                  <option value="<?= (int) $l['id'] ?>" <?= (int) ($opts['liquidacion_id'] ?? 0) === (int) $l['id'] ? 'selected' : '' ?>>
+                    <?= e($l['numero']) ?> · <?= e($l['proveedor'] ?: 'sin proveedor') ?> · <?= fechaCorta($l['fecha']) ?> (<?= e($l['estado']) ?>)
+                  </option>
+                <?php endforeach; ?>
+              </select>
+              <p class="mt-1 text-xs text-slate-500">Solo las que siguen en borrador o en tránsito. El costo se convierte con la tasa de esa liquidación.</p>
+            <?php endif; ?>
+          </div>
+          <label class="flex items-start gap-2 text-sm text-slate-600 cursor-pointer sm:col-span-2 xl:col-span-1">
+            <input type="hidden" name="crear_productos" value="0">
+            <input type="checkbox" name="crear_productos" value="1" <?= !empty($opts['crear_productos']) ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600 mt-0.5">
+            <span>Dar de alta los productos que no existan<br>
+              <span class="text-xs text-slate-500">Lo normal en un contenedor con artículos nuevos. Nacen con el código y el costo del embarque.</span></span>
           </label>
         <?php endif; ?>
       </div>
@@ -352,16 +475,47 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
           <p class="text-xs text-slate-500 mt-0.5">Todavía no se ha escrito nada en el sistema.</p>
         </div>
 
+        <?php
+        // Las cuatro cifras que importan cambian con el tipo: en un catálogo lo
+        // relevante es cuántos son nuevos y cuántos se actualizan; en un almacén,
+        // cuántos conteos salen y cuántos difieren de lo que dice el sistema.
+        switch ($tipo) {
+            case 'clientes':
+                $tarjeta1 = [number_format($r['validos']), 'cliente(s)'];
+                $tarjeta2 = ['Ya existían', number_format($r['existentes']), 'se actualizan o se omiten'];
+                $tarjeta4 = ['A actualizar', number_format($r['existentes']), ''];
+                break;
+            case 'productos':
+                $tarjeta1 = [number_format($r['nuevos']), 'producto(s) nuevo(s)'];
+                $tarjeta2 = ['Ya en el catálogo', number_format($r['existentes']), 'se actualizan'];
+                $tarjeta4 = ['Se van a escribir', number_format($r['validos']), 'filas válidas en total'];
+                break;
+            case 'existencias':
+                $tarjeta1 = [number_format($r['validos']), 'línea(s) de conteo'];
+                $tarjeta2 = ['Conteos a crear', number_format($r['nuevos']), 'uno por sucursal, en borrador'];
+                $tarjeta4 = ['Difieren del sistema', number_format($r['con_diferencia'] ?? 0), 'esas son las que ajustan'];
+                break;
+            case 'embarque':
+                $tarjeta1 = [number_format($r['validos']), 'línea(s) del embarque'];
+                $tarjeta2 = ['Productos nuevos', number_format($r['nuevos']), 'se dan de alta'];
+                $tarjeta4 = ['FOB del archivo', number_format($r['monto'], 2), 'en la moneda del embarque'];
+                break;
+            default:
+                $tarjeta1 = [number_format($r['validos']), 'venta(s)'];
+                $tarjeta2 = ['Ya registradas', number_format($r['existentes']), 'se omiten'];
+                $tarjeta4 = ['Ingreso neto', money($r['monto']), 'subtotal − descuento'];
+        }
+        ?>
         <div class="p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div class="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
             <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">Se cargarán</p>
-            <p class="text-2xl font-extrabold text-emerald-700 mt-1 tabular-nums"><?= number_format($r['validos']) ?></p>
-            <p class="text-xs text-emerald-600/80 mt-0.5"><?= $tipo === 'clientes' ? 'cliente(s) nuevo(s)' : 'venta(s)' ?></p>
+            <p class="text-2xl font-extrabold text-emerald-700 mt-1 tabular-nums"><?= $tarjeta1[0] ?></p>
+            <p class="text-xs text-emerald-600/80 mt-0.5"><?= e($tarjeta1[1]) ?></p>
           </div>
           <div class="rounded-xl border border-slate-200 p-4">
-            <p class="text-xs font-bold uppercase tracking-wide text-slate-400"><?= $tipo === 'clientes' ? 'Ya existían' : 'Ya registradas' ?></p>
-            <p class="text-2xl font-extrabold text-slate-700 mt-1 tabular-nums"><?= number_format($r['existentes']) ?></p>
-            <p class="text-xs text-slate-400 mt-0.5">se omiten</p>
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-400"><?= e($tarjeta2[0]) ?></p>
+            <p class="text-2xl font-extrabold text-slate-700 mt-1 tabular-nums"><?= $tarjeta2[1] ?></p>
+            <p class="text-xs text-slate-400 mt-0.5"><?= e($tarjeta2[2]) ?></p>
           </div>
           <div class="rounded-xl border <?= $r['rechazados'] > 0 ? 'border-rose-200 bg-rose-50/50' : 'border-slate-200' ?> p-4">
             <p class="text-xs font-bold uppercase tracking-wide <?= $r['rechazados'] > 0 ? 'text-rose-700' : 'text-slate-400' ?>">Rechazadas</p>
@@ -369,12 +523,10 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
             <p class="text-xs text-slate-400 mt-0.5">de <?= number_format($r['filas']) ?> fila(s)</p>
           </div>
           <div class="rounded-xl border border-slate-200 p-4">
-            <p class="text-xs font-bold uppercase tracking-wide text-slate-400"><?= $tipo === 'clientes' ? 'A actualizar' : 'Ingreso neto' ?></p>
-            <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums">
-              <?= $tipo === 'clientes' ? number_format($r['existentes']) : money($r['monto']) ?>
-            </p>
-            <?php if ($tipo === 'ventas'): ?>
-              <p class="text-xs text-slate-400 mt-0.5">subtotal − descuento</p>
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-400"><?= e($tarjeta4[0]) ?></p>
+            <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums"><?= $tarjeta4[1] ?></p>
+            <?php if ($tarjeta4[2] !== ''): ?>
+              <p class="text-xs text-slate-400 mt-0.5"><?= e($tarjeta4[2]) ?></p>
             <?php endif; ?>
           </div>
         </div>
@@ -430,6 +582,56 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
                       </tr>
                     <?php endforeach; ?>
                   </tbody>
+                <?php elseif ($tipo === 'productos'): ?>
+                  <thead><tr><th>Código</th><th>Nombre</th><th>Categoría</th><th class="text-right">Costo</th><th class="text-right">Precio</th><th></th></tr></thead>
+                  <tbody>
+                    <?php foreach (array_slice($prev['docs'], 0, 8) as $d): ?>
+                      <tr>
+                        <td class="font-mono text-sm"><?= e($d['codigo'] ?: '(automático)') ?></td>
+                        <td class="font-medium text-slate-700"><?= e($d['nombre']) ?></td>
+                        <td class="text-slate-500"><?= e($d['categoria'] ?: '—') ?></td>
+                        <td class="text-right tabular-nums text-slate-500"><?= money($d['precio_compra'], false) ?></td>
+                        <td class="text-right tabular-nums font-semibold"><?= money($d['precio_venta'], false) ?></td>
+                        <td><?= $d['existente_id'] ? badge('actualiza', 'slate') : badge('nuevo', 'emerald') ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+
+                <?php elseif ($tipo === 'existencias'): ?>
+                  <thead><tr><th>Sucursal</th><th class="text-center">Productos</th><th class="text-right">Unidades contadas</th><th class="text-right">Difieren</th><th></th></tr></thead>
+                  <tbody>
+                    <?php foreach (array_slice($prev['docs'], 0, 12) as $d):
+                      $u = array_sum(array_column($d['lineas'], 'stock_contado'));
+                      $dif = count(array_filter($d['lineas'], fn($l) => abs($l['stock_teorico'] - $l['stock_contado']) > 0.0001)); ?>
+                      <tr>
+                        <td class="font-medium text-slate-700"><?= e($d['sucursal']) ?></td>
+                        <td class="text-center"><span class="badge badge-slate"><?= count($d['lineas']) ?></span></td>
+                        <td class="text-right tabular-nums"><?= number_format($u, 2) ?></td>
+                        <td class="text-right tabular-nums <?= $dif ? 'text-amber-700 font-semibold' : 'text-slate-400' ?>"><?= number_format($dif) ?></td>
+                        <td><?= badge('conteo en borrador', 'amber') ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+
+                <?php elseif ($tipo === 'embarque'): ?>
+                  <thead><tr><th>Código</th><th>Descripción</th><th class="text-right">Cantidad</th><th class="text-right">Costo unit.</th><th class="text-right">FOB línea</th><th></th></tr></thead>
+                  <tbody>
+                    <?php foreach (array_slice($prev['docs'], 0, 8) as $d): ?>
+                      <tr>
+                        <td class="font-mono text-sm"><?= e($d['codigo']) ?></td>
+                        <td class="text-slate-600"><?= e($d['nombre']) ?>
+                          <?php if (count($d['filas']) > 1): ?>
+                            <span class="badge badge-slate ml-1"><?= count($d['filas']) ?> filas agrupadas</span>
+                          <?php endif; ?></td>
+                        <td class="text-right tabular-nums"><?= number_format($d['cantidad'], 2) ?></td>
+                        <td class="text-right tabular-nums text-slate-500"><?= number_format($d['costo_moneda'], 4) ?></td>
+                        <td class="text-right tabular-nums font-semibold"><?= number_format($d['cantidad'] * $d['costo_moneda'], 2) ?></td>
+                        <td><?php if (!$d['producto_id']) { echo badge('alta nueva', 'emerald'); }
+                                elseif ($d['ya_estaba']) { echo badge('reemplaza', 'amber'); } ?></td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+
                 <?php else: ?>
                   <thead><tr><th>Factura</th><th>Fecha</th><th>Cliente</th><th class="text-center">Líneas</th><th class="text-right">Subtotal</th><th class="text-right">ITBIS</th><th class="text-right">Total</th></tr></thead>
                   <tbody>
@@ -452,11 +654,17 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
         <?php endif; ?>
 
         <div class="px-5 py-4 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-          <p class="text-sm text-slate-500">
+          <p class="text-sm <?= $tipo === 'existencias' ? 'text-amber-700 font-semibold' : 'text-slate-500' ?>">
             <?php if ($tipo === 'ventas'): ?>
               No se moverá inventario, no se consumirá ningún NCF y no se registrará movimiento de caja.
-            <?php else: ?>
+            <?php elseif ($tipo === 'clientes'): ?>
               Los clientes entran sin balance: las cuentas por cobrar no se ven afectadas.
+            <?php elseif ($tipo === 'productos'): ?>
+              El catálogo entra sin existencia: el stock se carga aparte, con un conteo.
+            <?php elseif ($tipo === 'existencias'): ?>
+              Esto NO escribe el stock. Deja los conteos en borrador; el ajuste se mueve cuando los apliques.
+            <?php elseif ($tipo === 'embarque'): ?>
+              Las líneas entran en la liquidación, que sigue en borrador: el costo no llega al catálogo hasta que la apliques.
             <?php endif; ?>
           </p>
           <button type="submit" onclick="document.getElementById('imp_accion').value='cargar'"
@@ -494,7 +702,7 @@ layout_start('Cargar datos históricos', 'Clientes y ventas de años anteriores,
           <?php foreach ($lotes as $l): ?>
             <tr class="<?= $l['estado'] === 'revertida' ? 'opacity-60' : '' ?>">
               <td><span class="font-mono text-sm">#<?= (int) $l['id'] ?></span>
-                <p class="text-xs text-slate-400"><?= $l['tipo'] === 'clientes' ? 'Clientes' : 'Ventas' ?></p></td>
+                <p class="text-xs text-slate-400"><?= e(imp_tipo($l['tipo'])['etiqueta']) ?></p></td>
               <td class="text-slate-500 text-sm max-w-[220px] truncate" title="<?= e($l['archivo']) ?>"><?= e($l['archivo'] ?: '—') ?></td>
               <td class="text-center tabular-nums"><?= number_format((int) $l['filas']) ?></td>
               <td class="text-center">
