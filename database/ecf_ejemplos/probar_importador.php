@@ -168,6 +168,49 @@ afirmar('Pero sí se actualiza el precio que trae el archivo',
     casi((float) $refAdespues['precio_venta'], 150.00));
 
 /* =========================================================================
+ * 3b. La foto del producto
+ * ====================================================================== */
+echo "\nFoto del producto\n";
+
+// Una imagen de verdad dentro de la carpeta permitida.
+$dirFotos = $raiz . '/assets/uploads/productos';
+@mkdir($dirFotos, 0775, true);
+$fotoRel = 'assets/uploads/productos/zz_prueba_importador.png';
+file_put_contents($raiz . '/' . $fotoRel, base64_decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='));
+
+afirmar('Acepta una ruta válida dentro de assets/uploads',
+    imp_ruta_imagen($fotoRel) === $fotoRel);
+afirmar('Tolera la barra invertida de Windows y la barra inicial',
+    imp_ruta_imagen('/' . str_replace('/', '\\', $fotoRel)) === $fotoRel);
+afirmar('RECHAZA salir de la carpeta con «..»',
+    imp_ruta_imagen('assets/uploads/../../config/config.local.php') === '');
+afirmar('RECHAZA una ruta absoluta de Windows',
+    imp_ruta_imagen('C:\\xampp\\htdocs\\proyecto-inventario-pos\\config\\config.php') === '');
+afirmar('RECHAZA una ruta absoluta de Unix',      imp_ruta_imagen('/etc/passwd') === '');
+afirmar('RECHAZA una URL',                        imp_ruta_imagen('https://ajeno.example/x.png') === '');
+afirmar('RECHAZA fuera de assets/uploads',        imp_ruta_imagen('assets/img/logo.png') === '');
+afirmar('RECHAZA una extensión que no es imagen', imp_ruta_imagen('assets/uploads/productos/x.php') === '');
+afirmar('RECHAZA una foto que no existe',
+    imp_ruta_imagen('assets/uploads/productos/no_existe_jamas.png') === '');
+
+$anFoto = imp_analizar('productos', [
+    ['ZZ-FOTO-1', 'Producto con foto', $fotoRel],
+    ['ZZ-FOTO-2', 'Producto con foto inventada', 'assets/uploads/productos/fantasma.png'],
+], ['codigo' => 0, 'nombre' => 1, 'imagen' => 2], []);
+afirmar('La foto válida entra en el producto', ($anFoto['docs'][0]['imagen'] ?? '') === $fotoRel);
+afirmar('La foto que no existe avisa y deja el producto sin imagen',
+    ($anFoto['docs'][1]['imagen'] ?? 'x') === '' && str_contains(avisos($anFoto), 'No se encontró la foto'));
+
+$loteFoto = imp_ejecutar('productos', $anFoto, [], 'confotos.csv');
+afirmar('Se graba la ruta de la foto en el producto',
+    qVal("SELECT imagen FROM productos WHERE codigo = 'ZZ-FOTO-1'") === $fotoRel);
+afirmar('Y el que no tenía foto queda sin imagen, no con una ruta rota',
+    (string) qVal("SELECT COALESCE(imagen,'') FROM productos WHERE codigo = 'ZZ-FOTO-2'") === '');
+imp_revertir($loteFoto);
+@unlink($raiz . '/' . $fotoRel);
+
+/* =========================================================================
  * 4. Existencias: la regla que no se puede romper
  * ====================================================================== */
 echo "\nExistencias del almacén\n";

@@ -321,7 +321,12 @@ function imp_campos(string $tipo): array
             'stock_minimo'  => ['label' => 'Stock mínimo',        'req' => false, 'alias' => ['stock minimo', 'stock mínimo', 'minimo', 'mínimo', 'min', 'reorden', 'punto de reorden']],
             'pais_origen'   => ['label' => 'País de origen',      'req' => false, 'alias' => ['pais', 'país', 'pais origen', 'país de origen', 'origen', 'country', 'made in']],
             'fabricante'    => ['label' => 'Fabricante',          'req' => false, 'alias' => ['fabricante', 'manufacturer', 'proveedor fabricante', 'laboratorio']],
-            'descripcion'   => ['label' => 'Descripción larga',   'req' => false, 'alias' => ['descripcion larga', 'descripción larga', 'detalle largo', 'observacion', 'observación', 'notas']],
+            // «descripción» a secas también vale aquí: el campo `nombre` la
+            // reclama como alias por si el archivo no trae columna de nombre,
+            // pero cuando vienen las dos, el nombre se queda con «Nombre» y la
+            // descripción tiene que poder quedarse con la suya.
+            'descripcion'   => ['label' => 'Descripción larga',   'req' => false, 'alias' => ['descripcion larga', 'descripción larga', 'descripcion', 'descripción', 'detalle largo', 'detalle', 'observacion', 'observación', 'notas', 'description']],
+            'imagen'        => ['label' => 'Foto (ruta en assets/uploads)', 'req' => false, 'alias' => ['imagen', 'foto', 'image', 'photo', 'ruta imagen', 'archivo imagen', 'picture']],
         ];
     }
 
@@ -569,6 +574,45 @@ function imp_buscar_producto(string $texto, array $idx, bool $porNombre = true):
     if (isset($idx['barras'][$s])) return $idx['barras'][$s];
     if ($porNombre && !empty($idx['nombre'][$s])) return $idx['nombre'][$s];
     return null;
+}
+
+/**
+ * Valida la ruta de una foto que viene en el archivo.
+ *
+ * El archivo no sube la imagen: la nombra. Las fotos se dejan antes en
+ * `assets/uploads/`, y aquí solo se comprueba que la ruta apunte de verdad
+ * dentro de esa carpeta y que el archivo exista.
+ *
+ * Se rechaza todo lo demás —rutas absolutas, `..`, unidades de Windows, enlaces
+ * que salgan de la carpeta— porque un `imagen` sin filtrar es una ruta que
+ * acaba impresa en un `<img src>` y, peor, un puntero a cualquier archivo del
+ * servidor guardado en la base.
+ *
+ * Devuelve la ruta relativa limpia, o '' si no vale.
+ */
+function imp_ruta_imagen(string $ruta): string
+{
+    $r = str_replace('\\', '/', trim($ruta));
+    if ($r === '') return '';
+    if (preg_match('#^[a-zA-Z]:#', $r)) return '';        // C:\...
+    if (preg_match('#^\w+://#', $r)) return '';           // http://, file://…
+    if (str_contains($r, '..')) return '';
+
+    // La barra inicial se quita en vez de rechazarse: «/assets/uploads/x.jpg»
+    // es como se escribe una ruta web y no tiene nada de peligroso. Lo que
+    // protege es exigir el prefijo y comprobar dónde acaba de verdad, no la
+    // forma de escribirla — «/etc/passwd» se cae igual en el prefijo.
+    $r = ltrim($r, '/');
+    if (!str_starts_with($r, 'assets/uploads/')) return '';
+    if (!preg_match('/\.(jpe?g|png|gif|webp)$/i', $r)) return '';
+
+    $raiz = str_replace('\\', '/', realpath(dirname(__DIR__)) ?: '');
+    $abs  = realpath(dirname(__DIR__) . '/' . $r);
+    if (!$abs || !is_file($abs)) return '';
+    // Que el destino real siga dentro de la carpeta, no solo la ruta escrita.
+    if (!str_starts_with(str_replace('\\', '/', $abs), $raiz . '/assets/uploads/')) return '';
+
+    return $r;
 }
 
 /** Índice de sucursales por nombre normalizado. */
@@ -946,6 +990,13 @@ function imp_analizar_productos(array $filas, array $mapa, array $opts): array
                 . number_format($venta, 2) . ' < ' . number_format($compra, 2) . ').'];
         }
 
+        $imagenCruda = imp_val($fila, $mapa, 'imagen');
+        $imagen = $imagenCruda !== '' ? imp_ruta_imagen($imagenCruda) : '';
+        if ($imagenCruda !== '' && $imagen === '') {
+            $avisos[] = ['fila' => $linea, 'motivo' => 'No se encontró la foto «' . mb_substr($imagenCruda, 0, 80)
+                . '» dentro de assets/uploads; el producto entra sin imagen.'];
+        }
+
         if ($sc !== '') $vistosCodigo[$sc] = $linea;
         if ($sb !== '') $vistosBarras[$sb] = $linea;
         $existenteId ? $existentes++ : $nuevos++;
@@ -967,6 +1018,7 @@ function imp_analizar_productos(array $filas, array $mapa, array $opts): array
             'stock_minimo'  => max(0, imp_num(imp_val($fila, $mapa, 'stock_minimo'))),
             'pais_origen'   => mb_substr(imp_val($fila, $mapa, 'pais_origen'), 0, 60),
             'fabricante'    => mb_substr(imp_val($fila, $mapa, 'fabricante'), 0, 180),
+            'imagen'        => $imagen,
         ];
     }
 
@@ -1550,6 +1602,7 @@ function imp_grabar_producto(array $d, int $impId, int $uid, array $opts): array
     if ($d['stock_minimo'] > 0)     $datos['stock_minimo'] = $d['stock_minimo'];
     if ($d['pais_origen'] !== '')   $datos['pais_origen'] = $d['pais_origen'];
     if ($d['fabricante'] !== '')    $datos['fabricante'] = $d['fabricante'];
+    if (($d['imagen'] ?? '') !== '') $datos['imagen'] = $d['imagen'];
 
     if ($d['existente_id']) {
         if (empty($opts['actualizar_existentes'])) return [false, false];
