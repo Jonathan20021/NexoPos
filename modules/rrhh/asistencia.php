@@ -117,6 +117,10 @@ foreach ($empleados as $emp) {
         case 'tardanza': $tardanzas++; break;
     }
 }
+// La cifra que de verdad se mira en esta pantalla: a quién falta por marcar.
+// Estaba el total de empleados, que no dice nada que no se sepa ya.
+$sinRegistro = 0;
+foreach ($empleados as $emp) if (!$emp['estado_dia']) $sinRegistro++;
 
 /** Color del badge según el estado del día. */
 function colorEstadoDia(?string $estado): string
@@ -135,6 +139,23 @@ $esHoy = $fecha === date('Y-m-d');
 layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empleados activos');
 ?>
 
+<?php /* Buscar y filtrar se hacen en el navegador: son 56 filas ya cargadas y
+         el trabajo aquí es marcar a todo el mundo, no paginar. Recargar la
+         página por cada filtro perdería el sitio donde ibas. */ ?>
+<div x-data="{
+       buscar: '',
+       filtro: '',
+       get visibles() {
+         return this.$root.querySelectorAll('tbody tr[data-busca]:not([hidden])').length;
+       },
+       coincide(fila) {
+         const t = this.buscar.trim().toLowerCase();
+         const okTexto  = t === '' || fila.dataset.busca.includes(t);
+         const okEstado = this.filtro === '' || fila.dataset.estado === this.filtro;
+         return okTexto && okEstado;
+       }
+     }">
+
 <!-- Selector de fecha + KPIs -->
 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
   <form method="get" class="flex items-end gap-3">
@@ -149,30 +170,51 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
     <?php endif; ?>
   </form>
 
+  <?php /* Las tarjetas son además los filtros: la cifra que llama la atención
+           es la que quieres aislar, y hacer que responda al clic ahorra tener
+           que buscarla en una lista de 56. */ ?>
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-    <div class="card px-4 py-3">
+    <button type="button" @click="filtro = filtro === 'presente' ? '' : 'presente'"
+            class="card px-4 py-3 text-left transition hover:border-emerald-300"
+            :class="filtro === 'presente' ? 'ring-2 ring-emerald-400 border-emerald-300' : ''">
       <div class="text-xs text-slate-400 font-medium">Presentes</div>
       <div class="text-2xl font-bold text-emerald-600"><?= $presentes ?></div>
-    </div>
-    <div class="card px-4 py-3">
+    </button>
+    <button type="button" @click="filtro = filtro === 'ausente' ? '' : 'ausente'"
+            class="card px-4 py-3 text-left transition hover:border-rose-300"
+            :class="filtro === 'ausente' ? 'ring-2 ring-rose-400 border-rose-300' : ''">
       <div class="text-xs text-slate-400 font-medium">Ausentes</div>
       <div class="text-2xl font-bold text-rose-600"><?= $ausentes ?></div>
-    </div>
-    <div class="card px-4 py-3">
+    </button>
+    <button type="button" @click="filtro = filtro === 'tardanza' ? '' : 'tardanza'"
+            class="card px-4 py-3 text-left transition hover:border-amber-300"
+            :class="filtro === 'tardanza' ? 'ring-2 ring-amber-400 border-amber-300' : ''">
       <div class="text-xs text-slate-400 font-medium">Tardanzas</div>
       <div class="text-2xl font-bold text-amber-600"><?= $tardanzas ?></div>
-    </div>
-    <div class="card px-4 py-3">
-      <div class="text-xs text-slate-400 font-medium">Total empleados</div>
-      <div class="text-2xl font-bold text-slate-700"><?= $totalEmpleados ?></div>
-    </div>
+    </button>
+    <button type="button" @click="filtro = filtro === 'sin' ? '' : 'sin'"
+            class="card px-4 py-3 text-left transition <?= $sinRegistro > 0 ? 'border-slate-300 bg-slate-50' : '' ?>"
+            :class="filtro === 'sin' ? 'ring-2 ring-slate-400 border-slate-400' : ''">
+      <div class="text-xs <?= $sinRegistro > 0 ? 'text-slate-600 font-semibold' : 'text-slate-400 font-medium' ?>">Falta marcar</div>
+      <div class="text-2xl font-bold <?= $sinRegistro > 0 ? 'text-slate-800' : 'text-slate-300' ?>"><?= $sinRegistro ?></div>
+    </button>
   </div>
 </div>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
     <h3 class="font-semibold text-slate-700">Asistencia del <?= e(fechaCorta($fecha)) ?></h3>
-    <span class="text-sm text-slate-400"><?= $totalEmpleados ?> empleado(s) activo(s)</span>
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="relative min-w-[220px]">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><?= icon('search', 'w-4 h-4') ?></span>
+        <input type="text" x-model="buscar" placeholder="Buscar empleado..." class="input pl-9" autocomplete="off">
+      </div>
+      <button type="button" x-show="filtro !== '' || buscar !== ''" x-cloak
+              @click="filtro = ''; buscar = ''" class="btn btn-ghost btn-sm">Quitar filtros</button>
+      <span class="text-sm text-slate-400 whitespace-nowrap">
+        <span x-text="visibles"></span> de <?= $totalEmpleados ?>
+      </span>
+    </div>
   </div>
 
   <?php if (!$empleados): ?>
@@ -194,8 +236,12 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
         </thead>
         <tbody>
           <?php foreach ($empleados as $emp): ?>
-            <?php $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido']; ?>
-            <tr>
+            <?php
+              $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido'];
+              $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? ''));
+            ?>
+            <tr data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
+                x-show="coincide($el)">
               <td>
                 <div class="flex items-center gap-3">
                   <?= avatar($nombreCompleto) ?>
@@ -259,8 +305,15 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
         </tbody>
       </table>
     </div>
+    <div x-show="visibles === 0" x-cloak class="px-5 py-12 text-center">
+      <p class="font-semibold text-slate-700">Ningún empleado coincide</p>
+      <p class="text-sm text-slate-400 mt-1">Prueba con otro nombre o quita el filtro.</p>
+      <button type="button" @click="filtro = ''; buscar = ''" class="btn btn-soft btn-sm mt-4">Quitar filtros</button>
+    </div>
   <?php endif; ?>
 </div>
+
+</div><!-- /buscador y filtros -->
 
 <?php if ($puedeRegistrar): ?>
 <!-- Modal detalle de asistencia -->

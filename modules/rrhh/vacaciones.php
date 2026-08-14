@@ -121,7 +121,22 @@ if ($fEmpleado > 0) {
     $where[] = 'v.empleado_id = ?';
     $params[] = $fEmpleado;
 }
+// Búsqueda por nombre: con 56 empleados, encontrar a alguien en el desplegable
+// es más lento que escribir tres letras.
+$q = trim(get('q'));
+if ($q !== '') {
+    $where[] = "(e.nombre LIKE ? OR e.apellido LIKE ? OR CONCAT(e.nombre,' ',e.apellido) LIKE ?)";
+    $params[] = "%$q%"; $params[] = "%$q%"; $params[] = "%$q%";
+}
 $whereSql = implode(' AND ', $where);
+
+// Antes esta consulta NO tenía límite: traía todas las solicitudes de la
+// historia de la empresa en cada carga. Con 58 personas pidiendo vacaciones
+// cada año, eso crece para siempre.
+$pg = paginar((int) qVal(
+    "SELECT COUNT(*) FROM vacaciones v JOIN empleados e ON e.id = v.empleado_id WHERE $whereSql",
+    $params
+), 25);
 
 $solicitudes = qAll(
     "SELECT v.*,
@@ -131,7 +146,8 @@ $solicitudes = qAll(
        JOIN empleados e ON e.id = v.empleado_id
        LEFT JOIN usuarios ap ON ap.id = v.aprobado_por
       WHERE $whereSql
-      ORDER BY v.created_at DESC, v.id DESC",
+      ORDER BY v.created_at DESC, v.id DESC
+      LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}",
     $params
 );
 
@@ -219,11 +235,24 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="min-w-[220px]">
+        <label class="label" for="vac_q">Buscar</label>
+        <div class="relative">
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><?= icon('search', 'w-4 h-4') ?></span>
+          <input id="vac_q" type="search" name="q" value="<?= e($q) ?>" data-buscar
+                 placeholder="Nombre del empleado..." class="input pl-9" autocomplete="off">
+        </div>
+      </div>
       <button type="submit" class="btn btn-soft"><?= icon('filter', 'w-4 h-4') ?> Filtrar</button>
-      <?php if ($fEstado !== '' || $fEmpleado > 0): ?>
+      <?php if ($fEstado !== '' || $fEmpleado > 0 || $q !== ''): ?>
         <a href="<?= url('modules/rrhh/vacaciones.php') ?>" class="btn btn-ghost">Limpiar</a>
       <?php endif; ?>
-      <span class="ml-auto text-sm text-slate-400 self-center"><?= count($solicitudes) ?> solicitud(es)</span>
+      <span class="ml-auto text-sm text-slate-400 self-center">
+        <?= number_format($pg['total']) ?> solicitud(es)
+        <?php if ($pg['totalPag'] > 1): ?>
+          · <?= number_format($pg['desde']) ?>–<?= number_format($pg['hasta']) ?>
+        <?php endif; ?>
+      </span>
     </form>
   </div>
 
@@ -293,6 +322,7 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
         </tbody>
       </table>
     </div>
+    <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
 

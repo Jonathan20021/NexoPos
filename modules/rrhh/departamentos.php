@@ -158,8 +158,41 @@ $puestos = qAll(
 $depsParaSelect = qAll("SELECT d.id, d.nombre FROM departamentos d WHERE $scopeEstructura ORDER BY d.nombre", $paramsEstructura);
 $defaultSucursal = current_sucursal_id() ?? '';
 
+// La estructura no sirve de nada si nadie está colgado de ella. Esta pantalla
+// tenía las dos listas pero no decía cuánta gente se había quedado fuera, que
+// es justo lo que se viene a arreglar aquí.
+[$wSin, $pSin] = sucursalScope('e.sucursal_id');
+$sinPuesto = (int) qVal("SELECT COUNT(*) FROM empleados e WHERE e.estado = 'activo' AND e.puesto_id IS NULL AND $wSin", $pSin);
+$sinDepto  = (int) qVal("SELECT COUNT(*) FROM empleados e WHERE e.estado = 'activo' AND e.departamento_id IS NULL AND $wSin", $pSin);
+$activos   = (int) qVal("SELECT COUNT(*) FROM empleados e WHERE e.estado = 'activo' AND $wSin", $pSin);
+
 layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal');
 ?>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+  <div class="card p-5">
+    <p class="text-sm text-slate-400">Departamentos</p>
+    <p class="text-xl font-extrabold text-slate-800 mt-1"><?= count($departamentos) ?></p>
+  </div>
+  <div class="card p-5">
+    <p class="text-sm text-slate-400">Puestos</p>
+    <p class="text-xl font-extrabold text-slate-800 mt-1"><?= count($puestos) ?></p>
+  </div>
+  <div class="card p-5 <?= $sinDepto > 0 ? 'border-amber-200 bg-amber-50/50' : '' ?>">
+    <p class="text-sm <?= $sinDepto > 0 ? 'text-amber-700' : 'text-slate-400' ?>">Sin departamento</p>
+    <p class="text-xl font-extrabold mt-1 <?= $sinDepto > 0 ? 'text-amber-700' : 'text-slate-300' ?>"><?= $sinDepto ?></p>
+    <?php if ($sinDepto > 0): ?>
+      <a href="<?= e(url('modules/rrhh/empleados.php')) ?>" class="text-xs text-amber-700 underline mt-0.5 inline-block">Ver empleados</a>
+    <?php endif; ?>
+  </div>
+  <div class="card p-5 <?= $sinPuesto > 0 ? 'border-amber-200 bg-amber-50/50' : '' ?>">
+    <p class="text-sm <?= $sinPuesto > 0 ? 'text-amber-700' : 'text-slate-400' ?>">Sin puesto asignado</p>
+    <p class="text-xl font-extrabold mt-1 <?= $sinPuesto > 0 ? 'text-amber-700' : 'text-slate-300' ?>"><?= $sinPuesto ?></p>
+    <?php if ($sinPuesto > 0): ?>
+      <p class="text-xs text-amber-600/80 mt-0.5">de <?= $activos ?> activos</p>
+    <?php endif; ?>
+  </div>
+</div>
 
 <div x-data="{ tab: 'departamentos' }">
   <!-- Pestañas -->
