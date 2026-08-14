@@ -123,6 +123,80 @@ function nominaDiasBase(string $tipo): float
     return $tipo === 'mensual' ? 23.82 : ($tipo === 'quincenal' ? 11.91 : 5.5);
 }
 
+/* ============================================================
+ *  LO QUE CUESTA UN EMPLEADO
+ * ============================================================ */
+
+/**
+ * Aportes que paga LA EMPRESA sobre el salario cotizable, en tanto por uno.
+ *
+ * Ojo con la confusión más común de la nómina dominicana: lo que se le retiene
+ * al empleado (AFP 2.87% y SFS 3.04%) NO es lo que le cuesta a la empresa. La
+ * empresa aporta aparte, y esa parte es más del doble.
+ *
+ * Son los porcentajes generales de la Ley 87-01 y del INFOTEP. El de riesgos
+ * laborales lleva un componente variable según la siniestralidad de la empresa;
+ * aquí va el mínimo.
+ *
+ * @see COSTO_PENDIENTE_CONFIRMAR
+ */
+const COSTO_EMPLEADOR = [
+    'afp'      => 0.0710,   // pensiones
+    'sfs'      => 0.0709,   // salud familiar
+    'riesgos'  => 0.0110,   // riesgos laborales, mínimo
+    'infotep'  => 0.0100,   // formación técnico profesional
+];
+
+/**
+ * Provisión mensual de la regalía pascual: un doceavo del salario ordinario.
+ * No es un aporte a la TSS, pero se paga cada diciembre y quien mira el costo
+ * de un empleado necesita verlo, o el número sale corto un 8%.
+ */
+const COSTO_REGALIA = 1 / 12;
+
+/**
+ * Lo que la empresa NO ha confirmado todavía y por tanto no se aplica solo.
+ *
+ * 1. Los TOPES de cotización de la TSS —SFS y AFP dejan de cotizar por encima
+ *    de cierto múltiplo del salario mínimo—. Sin ellos, un sueldo alto sale con
+ *    un costo mayor del real. Es la misma duda que arrastra la hoja del cliente.
+ * 2. La provisión de cesantía, que depende de la antigüedad y solo se paga si
+ *    hay desahucio.
+ */
+const COSTO_PENDIENTE_CONFIRMAR = ['topes de cotización TSS', 'provisión de cesantía'];
+
+/**
+ * Desglosa lo que le cuesta a la empresa un salario mensual.
+ *
+ * Función pura y sin base de datos: se puede probar sola y se usa igual en la
+ * ficha del empleado que en un informe.
+ *
+ * @param float $salarioMensual Salario ordinario del mes.
+ * @param bool  $conRegalia     Incluir la provisión de la regalía pascual.
+ */
+function costoEmpleadorRD(float $salarioMensual, bool $conRegalia = true): array
+{
+    $base = max(0.0, $salarioMensual);
+    $partes = [];
+    foreach (COSTO_EMPLEADOR as $k => $tasa) {
+        $partes[$k] = round($base * $tasa, 2);
+    }
+    $aportes = round(array_sum($partes), 2);
+    $regalia = $conRegalia ? round($base * COSTO_REGALIA, 2) : 0.0;
+    $total   = round($base + $aportes + $regalia, 2);
+
+    return [
+        'salario'   => round($base, 2),
+        'partes'    => $partes,
+        'aportes'   => $aportes,
+        'regalia'   => $regalia,
+        'total'     => $total,
+        // Cuánto se paga de más por encima del salario, en porcentaje.
+        'recargo'   => $base > 0 ? round(($total - $base) / $base * 100, 2) : 0.0,
+        'anual'     => round($total * 12, 2),
+    ];
+}
+
 /**
  * Vuelve a sumar los totales de la nómina desde sus líneas.
  *

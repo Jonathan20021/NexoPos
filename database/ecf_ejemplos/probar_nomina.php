@@ -205,6 +205,42 @@ afirmar('El marcador del padron entra en la 2da quincena de julio',
 afirmar('...y queda fuera de la 1ra, que es justo lo que hay que avisar',
     !perteneceAlPeriodo($marcador, '2026-07-01', '2026-07-15'));
 
+/* =========================================================================
+ * 8. Lo que le cuesta un empleado a la empresa
+ * ====================================================================== */
+echo "
+Costo para el empleador
+";
+
+$c = costoEmpleadorRD(29998.00);
+afirmar('AFP patronal 7.10%',          casi($c['partes']['afp'], 2129.86), 'dio ' . $c['partes']['afp']);
+afirmar('SFS patronal 7.09%',          casi($c['partes']['sfs'], 2126.86), 'dio ' . $c['partes']['sfs']);
+afirmar('Riesgos laborales 1.10%',     casi($c['partes']['riesgos'], 329.98));
+afirmar('INFOTEP 1.00%',               casi($c['partes']['infotep'], 299.98));
+afirmar('Regalia = un doceavo',        casi($c['regalia'], 29998 / 12));
+afirmar('El costo total es salario + aportes + regalia',
+    casi($c['total'], 29998 + $c['aportes'] + $c['regalia']), 'dio ' . $c['total']);
+afirmar('El recargo sobre el salario ronda el 24.6%',
+    $c['recargo'] > 24.0 && $c['recargo'] < 25.5, 'dio ' . $c['recargo']);
+afirmar('El anual son doce meses del costo', casi($c['anual'], $c['total'] * 12));
+
+// Lo que se le retiene al empleado NO es lo que paga la empresa: es su bolsillo.
+$emp = calcNominaRD(29998.00, [], 1.0);
+afirmar('El aporte patronal es mas del doble de lo que se le retiene de TSS',
+    $c['aportes'] > ($emp['afp'] + $emp['sfs']) * 2,
+    'patronal=' . round($c['aportes'], 2) . ' empleado=' . round($emp['afp'] + $emp['sfs'], 2));
+
+afirmar('Sin regalia el costo baja exactamente esa provision',
+    casi(costoEmpleadorRD(29998.00, false)['total'], $c['total'] - $c['regalia']));
+afirmar('Un salario de cero no cuesta nada y no divide por cero',
+    costoEmpleadorRD(0.0)['total'] === 0.0 && costoEmpleadorRD(0.0)['recargo'] === 0.0);
+afirmar('Un salario negativo se trata como cero',
+    costoEmpleadorRD(-5000.0)['total'] === 0.0);
+afirmar('El recargo no depende del sueldo: es proporcional',
+    casi(costoEmpleadorRD(20000.0)['recargo'], costoEmpleadorRD(150000.0)['recargo']));
+afirmar('Queda escrito lo que falta confirmar con el contador',
+    count(COSTO_PENDIENTE_CONFIRMAR) >= 2);
+
 echo "\n--------------------------------------------------------------------------\n";
 printf("  %d pruebas · %d fallos\n\n", $pruebas, $fallos);
 echo $fallos === 0

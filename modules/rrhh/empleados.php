@@ -214,7 +214,8 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
                 <div class="flex items-center gap-3">
                   <?= avatar($e['nombre'] . ' ' . $e['apellido']) ?>
                   <div class="min-w-0">
-                    <p class="font-semibold text-slate-700 truncate"><?= e($e['nombre'] . ' ' . $e['apellido']) ?></p>
+                    <a href="<?= e(url('modules/rrhh/empleado.php?id=' . (int) $e['id'])) ?>"
+                       class="font-semibold text-slate-700 hover:text-blue-700 truncate block"><?= e($e['nombre'] . ' ' . $e['apellido']) ?></a>
                     <p class="text-xs text-slate-400 font-mono"><?= e($e['codigo']) ?></p>
                   </div>
                 </div>
@@ -227,6 +228,8 @@ layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acc
               <td><?= badgeFor($e['estado']) ?></td>
               <td>
                 <div class="flex items-center justify-end gap-1">
+                  <a href="<?= e(url('modules/rrhh/empleado.php?id=' . (int) $e['id'])) ?>"
+                     class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Ver ficha completa"><?= icon('eye', 'w-4 h-4') ?></a>
                   <?php if (can('rrhh_empleados.editar')): ?>
                     <button onclick="<?= jsEvent('emp:edit', [
                         'id' => $e['id'], 'nombre' => $e['nombre'], 'apellido' => $e['apellido'], 'cedula' => $e['cedula'],
