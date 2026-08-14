@@ -12,11 +12,14 @@ require_perm('reportes.contabilidad');
 $p = rep_periodo('mes');
 [$scopeN, $scopeNP] = rep_scope('n.sucursal_id');
 
-// Tasas patronales TSS vigentes (porcentaje sobre el salario cotizable).
-const TSS_AFP_PATRONAL  = 7.10;   // pensiones
-const TSS_SFS_PATRONAL  = 7.09;   // salud
-const TSS_RIESGOS       = 1.15;   // riesgos laborales (promedio)
-const TSS_INFOTEP       = 1.00;   // INFOTEP
+// Las tasas patronales viven en `includes/nomina.php` (COSTO_EMPLEADOR) y se
+// leen de ahí. Estaban duplicadas en este archivo y ya habían divergido: aquí
+// riesgos laborales figuraba al 1.15% y en la ficha del empleado al 1.10%, así
+// que el mismo empleado costaba distinto según la pantalla que se abriera.
+const TSS_AFP_PATRONAL = COSTO_EMPLEADOR['afp']     * 100;
+const TSS_SFS_PATRONAL = COSTO_EMPLEADOR['sfs']     * 100;
+const TSS_RIESGOS      = COSTO_EMPLEADOR['riesgos'] * 100;
+const TSS_INFOTEP      = COSTO_EMPLEADOR['infotep'] * 100;
 
 /* ---------- Nóminas del periodo ---------- */
 $nominas = qAll(

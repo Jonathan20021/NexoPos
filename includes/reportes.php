@@ -65,6 +65,9 @@ function rep_catalogo(): array
                 ['impuestos.php', 'ITBIS y retenciones', 'ITBIS cobrado vs. adelantado, retenciones y saldo a pagar del periodo.', 'percent'],
                 ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box'],
                 ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
+                // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
+                // contratada. Es la cifra para decidir si un local se sostiene.
+                ['costo_plantilla.php', 'Costo de la plantilla', 'Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales.', 'users'],
                 ['auxiliar_cuentas.php', 'Auxiliar de cuentas', 'Mayor por cuenta financiera con saldo inicial, movimientos y saldo final.', 'briefcase'],
             ],
         ],
