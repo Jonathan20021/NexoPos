@@ -33,6 +33,19 @@ $sucursalId = (int) $sucursal['id'];
 // La identidad de la página sale de la marca del local elegido.
 $marca = tienda_marca_de($sucursal);
 
+/**
+ * Un escaparate de INGLOT no puede ofrecer un producto de L'Occitane.
+ *
+ * Misma regla que el POS: pasa lo de la marca del local Y lo que no tiene marca
+ * —los genéricos, una bolsa, un envoltorio—, que se venden en cualquiera. Con
+ * el catálogo sin etiquetar no cambia nada; en cuanto se etiqueta, cada tienda
+ * enseña lo suyo.
+ *
+ * No es solo estética: si alguien carga existencia de un artículo en el local
+ * equivocado, sin este filtro aparecería a la venta bajo la marca que no es.
+ */
+$filtroMarca = $marca['id'] ? '(p.tienda_id = ' . (int) $marca['id'] . ' OR p.tienda_id IS NULL)' : '1=1';
+
 $tasaItbis = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
 // ---------------------------------------------------------------------------
@@ -73,7 +86,7 @@ if (isPost() && post('accion') === 'pedido') {
                             COALESCE(s.cantidad, 0) AS stock
                        FROM productos p
                        LEFT JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
-                      WHERE p.id = ? AND p.activo = 1 AND p.tipo = 'producto'",
+                      WHERE p.id = ? AND p.activo = 1 AND p.tipo = 'producto' AND $filtroMarca",
                     [$sucursalId, $pid]
                 );
                 if (!$p) throw new RuntimeException('Uno de los productos ya no está disponible.');
@@ -132,7 +145,7 @@ if (isPost() && post('accion') === 'pedido') {
 $q          = trim(get('q'));
 $categoriaId = (int) get('categoria');
 
-$cond = ["p.activo = 1", "p.tipo = 'producto'", "s.cantidad > 0"];
+$cond = ["p.activo = 1", "p.tipo = 'producto'", "s.cantidad > 0", $filtroMarca];
 $params = [$sucursalId];
 if ($q !== '')      { $cond[] = "(p.nombre LIKE ? OR p.codigo LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; }
 if ($categoriaId)   { $cond[] = "p.categoria_id = ?"; $params[] = $categoriaId; }
@@ -162,6 +175,7 @@ $categorias = qAll(
        FROM categorias c
        JOIN productos p ON p.categoria_id = c.id AND p.activo = 1 AND p.tipo = 'producto'
        JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ? AND s.cantidad > 0
+      WHERE $filtroMarca
       ORDER BY c.nombre",
     [$sucursalId]
 );
