@@ -155,6 +155,56 @@ afirmar('Ningún importe sale negativo',
 $x = calcNominaRD(30000, ['dias_base' => 11.91, 'dias_trabajados' => 11.91, 'descuento_dias' => 999999], 0.5);
 afirmar('Un descuento mayor que el sueldo deja la base en cero, no en negativo', casi($x['base'], 0.0));
 
+/* =========================================================================
+ * 7. Quien entra en una nomina: la pertenencia al PERIODO
+ * ====================================================================== */
+echo "
+Pertenencia al periodo
+";
+
+/**
+ * Reproduce en PHP la condicion SQL de `modules/rrhh/nomina.php`, para poder
+ * probarla sin base de datos. Si una cambia y la otra no, esta prueba falla.
+ */
+function perteneceAlPeriodo(array $e, string $desde, string $hasta): bool
+{
+    $ingreso = $e['fecha_ingreso'];
+    $salida  = $e['fecha_salida'] ?? null;
+    $estado  = $e['estado'] ?? 'activo';
+    if ($ingreso > $hasta) return false;                       // entro despues
+    if ($salida !== null && $salida < $desde) return false;    // se fue antes
+    return $estado === 'activo' || $salida !== null;
+}
+
+$D = '2026-07-16'; $H = '2026-07-31';
+$caso = fn(array $x) => perteneceAlPeriodo($x, $D, $H);
+
+afirmar('Un activo de siempre entra',
+    $caso(['fecha_ingreso' => '2020-01-01', 'fecha_salida' => null, 'estado' => 'activo']));
+afirmar('Quien entro DESPUES del periodo NO cobra ese periodo',
+    !$caso(['fecha_ingreso' => '2026-08-13', 'fecha_salida' => null, 'estado' => 'activo']));
+afirmar('Quien entro el ultimo dia del periodo si entra',
+    $caso(['fecha_ingreso' => '2026-07-31', 'fecha_salida' => null, 'estado' => 'activo']));
+afirmar('Quien entro a mitad del periodo entra',
+    $caso(['fecha_ingreso' => '2026-07-20', 'fecha_salida' => null, 'estado' => 'activo']));
+afirmar('Quien se fue DENTRO del periodo cobra su ultima quincena aunque este inactivo',
+    $caso(['fecha_ingreso' => '2020-01-01', 'fecha_salida' => '2026-07-25', 'estado' => 'inactivo']));
+afirmar('Quien se fue ANTES del periodo no cobra',
+    !$caso(['fecha_ingreso' => '2020-01-01', 'fecha_salida' => '2026-06-30', 'estado' => 'inactivo']));
+afirmar('Un inactivo SIN fecha de salida queda fuera: no se sabe si le tocaba',
+    !$caso(['fecha_ingreso' => '2020-01-01', 'fecha_salida' => null, 'estado' => 'inactivo']));
+afirmar('Un activo con salida anterior tampoco cobra, aunque el estado este mal',
+    !$caso(['fecha_ingreso' => '2020-01-01', 'fecha_salida' => '2026-07-01', 'estado' => 'activo']));
+
+// El marcador 2026-07-16 del padron cargado: entra en la 2da quincena y NO en
+// la 1ra. Es correcto segun el dato, y por eso la pantalla avisa de quien queda
+// fuera en vez de descartarlo en silencio.
+$marcador = ['fecha_ingreso' => '2026-07-16', 'fecha_salida' => null, 'estado' => 'activo'];
+afirmar('El marcador del padron entra en la 2da quincena de julio',
+    perteneceAlPeriodo($marcador, '2026-07-16', '2026-07-31'));
+afirmar('...y queda fuera de la 1ra, que es justo lo que hay que avisar',
+    !perteneceAlPeriodo($marcador, '2026-07-01', '2026-07-15'));
+
 echo "\n--------------------------------------------------------------------------\n";
 printf("  %d pruebas · %d fallos\n\n", $pruebas, $fallos);
 echo $fallos === 0

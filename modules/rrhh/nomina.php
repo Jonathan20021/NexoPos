@@ -24,10 +24,41 @@ if (isPost()) {
             flash('error', 'La fecha inicial no puede ser posterior a la fecha final.');
             redirect('modules/rrhh/nomina.php');
         }
-        $cond = ["estado='activo'"]; $params = [];
+        // Una nómina es de un PERÍODO, no de hoy. Quien entró después de que el
+        // período terminara no puede cobrarlo, y quien se fue antes de que
+        // empezara tampoco. Antes solo se miraba `estado`, así que una
+        // contratación nueva se colaba en la nómina del mes pasado en cuanto
+        // alguien la regenerara.
+        //
+        // Al revés también: quien se fue DENTRO del período cobra su última
+        // quincena aunque hoy figure inactivo. Solo si consta su fecha de
+        // salida — sin ella no hay forma de saber si le tocaba, y meterlo a
+        // ciegas sería pagarle a quien quizá no trabajó.
+        $cond = [
+            'fecha_ingreso <= ?',
+            '(fecha_salida IS NULL OR fecha_salida >= ?)',
+            "(estado = 'activo' OR fecha_salida IS NOT NULL)",
+        ];
+        $params = [$hasta, $desde];
         if ($sucFiltro > 0) { $cond[] = 'sucursal_id = ?'; $params[] = $sucFiltro; }
         $emps = qAll("SELECT * FROM empleados WHERE " . implode(' AND ', $cond), $params);
-        if (!$emps) { flash('error', 'No hay empleados activos para procesar.'); redirect('modules/rrhh/nomina.php'); }
+
+        // Quién queda fuera y por qué. Un filtro mudo que descarta a media
+        // plantilla es peor que no tenerlo: las fechas de ingreso del padrón
+        // vienen de una carga y pueden estar sin depurar.
+        $fueraIngreso = qAll(
+            "SELECT nombre, apellido, fecha_ingreso FROM empleados
+              WHERE estado = 'activo' AND fecha_ingreso > ?"
+            . ($sucFiltro > 0 ? ' AND sucursal_id = ?' : '') . ' ORDER BY fecha_ingreso, nombre',
+            $sucFiltro > 0 ? [$hasta, $sucFiltro] : [$hasta]
+        );
+
+        if (!$emps) {
+            flash('error', 'Ningún empleado corresponde a ese período.'
+                . ($fueraIngreso ? ' Hay ' . count($fueraIngreso) . ' activo(s), pero su fecha de ingreso es'
+                    . ' posterior al ' . fechaCorta($hasta) . '. Revisa las fechas de ingreso del padrón.' : ''));
+            redirect('modules/rrhh/nomina.php');
+        }
 
         $factor = $tipo === 'quincenal' ? 0.5 : ($tipo === 'semanal' ? (1 / 4.33) : 1);
         try {
@@ -62,6 +93,13 @@ if (isPost()) {
             audit('rrhh_nomina', 'procesar', "Nómina procesada: $descripcion (" . count($emps) . " empleados)", ['tabla' => 'nominas', 'registro_id' => $nid]);
             flash('success', 'Nómina generada para ' . count($emps) . ' empleados. '
                 . 'Queda en BORRADOR: captura horas extra, comisiones, préstamos y días antes de confirmarla.');
+            if ($fueraIngreso) {
+                // Se avisa por nombre: si sobran, quien lea sabrá dónde mirar.
+                $quienes = array_slice(array_map(fn($e) => $e['nombre'] . ' ' . $e['apellido'], $fueraIngreso), 0, 6);
+                flash('info', count($fueraIngreso) . ' empleado(s) quedaron fuera por haber ingresado después del '
+                    . fechaCorta($hasta) . ': ' . implode(', ', $quienes)
+                    . (count($fueraIngreso) > 6 ? ' y ' . (count($fueraIngreso) - 6) . ' más' : '') . '.');
+            }
             redirect('modules/rrhh/nomina.php?ver=' . $nid);
         } catch (Throwable $ex) {
             flash('error', $ex->getMessage());
