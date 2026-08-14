@@ -461,12 +461,40 @@ function rep_encabezado_impresion(string $titulo, array $p): string
 }
 
 /** Acciones de la cabecera de página: volver al hub + imprimir. */
-function rep_barra_titulo(string $extra = ''): string
+function rep_barra_titulo(string $extra = '', bool $exportable = true): string
 {
-    return $extra
-        . '<button type="button" onclick="window.print()" class="btn btn-ghost no-print">' . icon('print', 'w-4 h-4') . ' Imprimir</button>'
+    // 23 de los 27 informes saben exportarse a PDF y a Excel desde hace tiempo
+    // —`export_solicitado()` + `export_tabla()`— pero NINGUNO enseñaba el botón.
+    // Lo único que había era «Imprimir», que dispara la impresión del navegador
+    // y saca la página con su cabecera, su fecha y sin las tablas.
+    //
+    // El PDF de verdad sale por `pdf_tabla()`, que lleva el membrete de la
+    // empresa, y el Excel por PhpSpreadsheet. Los botones se ponen aquí una vez
+    // y los heredan los 23.
+    $botones = '';
+    if ($exportable) {
+        $botones = '<a href="' . e(rep_url_export('excel')) . '" class="btn btn-ghost no-print">'
+                 . icon('download', 'w-4 h-4') . ' Excel</a>'
+                 . '<a href="' . e(rep_url_export('pdf')) . '" target="_blank" rel="noopener" class="btn btn-ghost no-print">'
+                 . icon('file', 'w-4 h-4') . ' PDF</a>';
+    }
+    return $extra . $botones
         . '<a href="' . e(url('modules/reportes/index.php')) . '" class="btn btn-ghost no-print">'
         . icon('grid', 'w-4 h-4') . ' Centro de reportes</a>';
+}
+
+/**
+ * La URL del informe actual con `export=…`, conservando los filtros.
+ *
+ * Sin conservarlos, el PDF saldría del período por defecto y no del que la
+ * persona está mirando: el documento diría una cosa y la pantalla otra.
+ */
+function rep_url_export(string $formato): string
+{
+    $qs = $_GET;
+    unset($qs['export']);
+    $qs['export'] = $formato;
+    return strtok((string) ($_SERVER['REQUEST_URI'] ?? ''), '?') . '?' . http_build_query($qs);
 }
 
 /**

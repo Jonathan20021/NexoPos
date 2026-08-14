@@ -153,7 +153,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
     pdf_render($H, 'estado_resultados_' . $p['desde'] . '_a_' . $p['hasta'], 'portrait');
 }
 
-layout_start('Estado de resultados', rep_subtitulo($p), rep_barra_titulo());
+layout_start('Estado de resultados', rep_subtitulo($p), rep_barra_titulo('', false));
 echo rep_abrir('Estado de resultados', $p, ['sucursal' => true]);
 ?>
 

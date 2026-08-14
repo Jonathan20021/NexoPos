@@ -262,6 +262,25 @@ function pdf_render(string $bodyHtml, string $filename, string $orientation = 'p
 }
 
 /** PDF genérico de un listado (tabla con la marca). */
+/**
+ * Formatea una celda numérica para un documento.
+ *
+ * Los informes pasan los importes en crudo y salían así: «554985», «8299689.84».
+ * En un papel que se le enseña a un contador o a un banco eso no vale.
+ *
+ * La regla se decide por la FORMA del dato, no por su valor: si el número trae
+ * parte decimal, se imprimen dos decimales; si es entero, ninguno. Así un conteo
+ * de empleados sale «14» y un importe sale «8,299,689.84», sin que cada informe
+ * tenga que decir de qué tipo es cada columna.
+ */
+function pdf_numero($valor): string
+{
+    if (!is_numeric($valor)) return (string) $valor;
+    $s = (string) $valor;
+    $decimales = (str_contains($s, '.') || str_contains($s, ',')) ? 2 : 0;
+    return number_format((float) $valor, $decimales);
+}
+
 function pdf_tabla(string $titulo, array $headers, array $filas, string $filename, string $orientation = 'landscape'): void
 {
     $html = pdf_brand_header($titulo);
@@ -272,7 +291,7 @@ function pdf_tabla(string $titulo, array $headers, array $filas, string $filenam
         $html .= '<tr>';
         foreach ($row as $c) {
             $cls = is_numeric($c) ? ' class="num"' : '';
-            $html .= '<td' . $cls . '>' . htmlspecialchars((string) $c) . '</td>';
+            $html .= '<td' . $cls . '>' . htmlspecialchars(pdf_numero($c)) . '</td>';
         }
         $html .= '</tr>';
     }

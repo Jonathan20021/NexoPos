@@ -92,7 +92,7 @@ $proveedores = qAll(
       ORDER BY (licencia_vencimiento IS NULL), licencia_vencimiento LIMIT 100"
 );
 
-layout_start('Expediente de auditoría', 'Documento consolidado para las entidades de control', rep_barra_titulo());
+layout_start('Expediente de auditoría', 'Documento consolidado para las entidades de control', rep_barra_titulo('', false));
 ?>
 
 <!-- ============ Portada ============ -->

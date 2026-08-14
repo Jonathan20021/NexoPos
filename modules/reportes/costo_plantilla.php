@@ -106,9 +106,11 @@ if (export_solicitado()) {
     }
     $filas[] = ['TOTAL EMPRESA', $tot['empleados'], round($tot['salarios'], 2), round($tot['aportes'], 2),
                 round($tot['regalia'], 2), round($tot['total'], 2), round($tot['total'] * 12, 2)];
+    // El título va explícito: derivado del nombre del archivo salía «Costo
+    // plantilla», que no es como se llama el informe.
     export_tabla('costo_plantilla',
         ['Grupo', 'Empleados', 'Salarios', 'Aportes patronales', 'Provisión regalía', 'Costo mensual', 'Costo anual'],
-        $filas);
+        $filas, 'Costo de la plantilla');
 }
 
 layout_start('Costo de la plantilla', 'Lo que cuesta hoy la gente contratada, por sucursal y por marca', rep_barra_titulo());

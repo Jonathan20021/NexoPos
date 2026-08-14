@@ -250,7 +250,7 @@ if (quiere_pdf() && function_exists('pdf_render')) {
     pdf_render($H, 'panel_ejecutivo_' . $p['desde'] . '_a_' . $p['hasta'], 'portrait');
 }
 
-layout_start('Panel ejecutivo', rep_subtitulo($p), rep_barra_titulo());
+layout_start('Panel ejecutivo', rep_subtitulo($p), rep_barra_titulo('', false));
 echo rep_abrir('Panel ejecutivo', $p, ['sucursal' => true]);
 ?>
 

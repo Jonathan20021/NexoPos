@@ -33,7 +33,7 @@ $pctMarg = $venta > 0 ? $margen / $venta * 100 : 0;
 $totalReportes = 0;
 foreach ($grupos as $g) $totalReportes += count($g['reportes']);
 
-layout_start('Centro de Reportes', $totalReportes . ' reportes disponibles · ' . rep_subtitulo($p), rep_barra_titulo());
+layout_start('Centro de Reportes', $totalReportes . ' reportes disponibles · ' . rep_subtitulo($p), rep_barra_titulo('', false));
 echo rep_filtros($p, ['sucursal' => true, 'acciones' => '']);
 ?>
 
