@@ -123,6 +123,31 @@ function nominaDiasBase(string $tipo): float
     return $tipo === 'mensual' ? 23.82 : ($tipo === 'quincenal' ? 11.91 : 5.5);
 }
 
+/**
+ * Vuelve a sumar los totales de la nómina desde sus líneas.
+ *
+ * Hace falta cada vez que se añade o se quita una línea. Se suma desde la base
+ * y no se ajusta el total sumando o restando la línea tocada: si alguna vez los
+ * totales quedaron descuadrados por otra vía, esto los deja bien en lugar de
+ * arrastrar el error.
+ */
+function nominaRecalcularTotales(int $nominaId): void
+{
+    $t = qOne(
+        "SELECT COALESCE(SUM(total_ingresos), 0)    AS bruto,
+                COALESCE(SUM(total_deducciones), 0) AS deducciones,
+                COALESCE(SUM(salario_neto), 0)      AS neto
+           FROM nomina_detalles WHERE nomina_id = ?",
+        [$nominaId]
+    ) ?: ['bruto' => 0, 'deducciones' => 0, 'neto' => 0];
+
+    dbUpdate('nominas', [
+        'total_bruto'       => round((float) $t['bruto'], 2),
+        'total_deducciones' => round((float) $t['deducciones'], 2),
+        'total_neto'        => round((float) $t['neto'], 2),
+    ], 'id = ?', [$nominaId]);
+}
+
 
 /* ============================================================
  *  EXPORTABLES
