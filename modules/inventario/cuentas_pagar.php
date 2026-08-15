@@ -74,6 +74,17 @@ $deudores = qAll(
 
 $resumen    = cxp_resumen();
 $antiguedad = cxp_antiguedad();
+
+// El contador pide esta lista en Excel para cuadrar el pasivo con sus libros.
+if (export_solicitado()) {
+    export_tabla('cuentas_por_pagar',
+        ['Código', 'Proveedor', 'RNC', 'Teléfono', 'Facturas abiertas', 'Factura más vieja', 'Días', 'Saldo'],
+        array_map(function ($d) {
+            $dias = $d['mas_vieja'] ? (int) ((time() - strtotime($d['mas_vieja'])) / 86400) : 0;
+            return [$d['codigo'], $d['nombre'], $d['rnc'], $d['telefono'],
+                    (int) $d['facturas'], $d['mas_vieja'], $dias, (float) $d['balance']];
+        }, $deudores));
+}
 $metodos    = qAll("SELECT id, nombre FROM metodos_pago WHERE activo = 1 AND es_credito = 0 ORDER BY id");
 $monedasAct = monedas();
 
@@ -102,30 +113,22 @@ if (export_solicitado()) {
         'Cuentas por Pagar');
 }
 
-layout_start('Cuentas por Pagar', 'Lo que le debes a tus proveedores');
-?>
+layout_start('Cuentas por Pagar', 'Lo que le debes a tus proveedores', export_buttons());
 
-<!-- Resumen -->
-<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-5">
-  <?php
-  $kpis = [
-      ['Deuda total',        money($resumen['total']),        'wallet', 'rose'],
-      ['Proveedores',        number_format($resumen['proveedores']), 'briefcase', 'slate'],
-      ['Facturas pendientes',number_format($resumen['facturas']),    'receipt', 'slate'],
-      ['Con más de 30 días', money($resumen['vencido']),      'clock', 'amber'],
-  ];
-  foreach ($kpis as [$lbl, $val, $ic, $col]): ?>
-    <div class="card p-5">
-      <div class="flex items-start justify-between mb-3">
-        <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold"><?= e($lbl) ?></p>
-        <div class="w-9 h-9 rounded-xl bg-<?= $col ?>-50 text-<?= $col ?>-600 flex items-center justify-center">
-          <?= icon($ic, 'w-4 h-4') ?>
-        </div>
-      </div>
-      <p class="text-2xl font-bold text-slate-800"><?= e($val) ?></p>
-    </div>
-  <?php endforeach; ?>
-</div>
+echo kpis([
+    ['label' => 'Deuda total', 'valor' => money($resumen['total']), 'icono' => 'wallet',
+     'color' => $resumen['total'] > 0 ? 'rose' : 'emerald',
+     'nota' => $resumen['total'] > 0 ? 'Saldo abierto con suplidores' : 'No se le debe nada a nadie'],
+    ['label' => 'Proveedores', 'valor' => number_format($resumen['proveedores']), 'icono' => 'briefcase', 'color' => 'slate',
+     'nota' => 'Con saldo pendiente'],
+    ['label' => 'Facturas pendientes', 'valor' => number_format($resumen['facturas']), 'icono' => 'receipt', 'color' => 'slate'],
+    // Los 30 días son la línea a partir de la cual una factura deja de ser
+    // «pendiente» y pasa a ser un problema con el suplidor.
+    ['label' => 'Con más de 30 días', 'valor' => money($resumen['vencido']), 'icono' => 'clock',
+     'color' => $resumen['vencido'] > 0 ? 'amber' : 'slate',
+     'nota' => $resumen['vencido'] > 0 ? 'Ya vencidas' : 'Nada vencido'],
+], 4);
+?>
 
 <!-- Antigüedad -->
 <?php if ($resumen['total'] > 0): ?>

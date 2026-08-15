@@ -135,33 +135,31 @@ $acciones = can('liquidaciones.crear') ? btn_nuevo('liq:new', 'Nuevo embarque') 
 layout_start('Liquidación de importaciones', 'El costo real de la mercancía puesta en almacén', $acciones);
 ?>
 
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <div class="card p-4">
-    <p class="text-xs font-bold uppercase tracking-wide text-slate-400">En tránsito</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums"><?= number_format($res['transito']) ?></p>
-    <p class="text-xs text-slate-400 mt-0.5"><?= money($res['transito_valor']) ?> en camino</p>
-  </div>
-  <div class="card p-4">
-    <p class="text-xs font-bold uppercase tracking-wide text-slate-400">Borradores</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums"><?= number_format($res['borradores']) ?></p>
-    <p class="text-xs text-slate-400 mt-0.5">Pendientes de aplicar</p>
-  </div>
-  <div class="card p-4">
-    <p class="text-xs font-bold uppercase tracking-wide text-slate-400">Costeado este mes</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums"><?= money($res['costo_mes']) ?></p>
-    <p class="text-xs text-slate-400 mt-0.5"><?= number_format($res['aplicadas_mes']) ?> embarque(s)</p>
-  </div>
-  <div class="card p-4">
-    <p class="text-xs font-bold uppercase tracking-wide text-slate-400">Recargo sobre el FOB</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1 tabular-nums"><?= number_format($res['recargo_pct'], 1) ?>%</p>
-    <p class="text-xs text-slate-400 mt-0.5">Cuánto encarece traerla</p>
-  </div>
-</div>
+<?php
+// Las cuatro tarjetas ya decían lo correcto, pero con su propio formato: título
+// en versalitas y sin icono, distinto del resto del sistema. Mismo dato, misma
+// tarjeta que en Productos, Lotes o Conteos. Las dos primeras filtran.
+echo kpis([
+    ['label' => 'En tránsito', 'valor' => number_format($res['transito']), 'icono' => 'truck',
+     'color' => $res['transito'] > 0 ? 'sky' : 'slate',
+     'nota' => money($res['transito_valor']) . ' en camino',
+     'href' => $res['transito'] > 0 ? '?estado=transito' : ''],
+    ['label' => 'Borradores', 'valor' => number_format($res['borradores']), 'icono' => 'clipboard',
+     'color' => $res['borradores'] > 0 ? 'amber' : 'slate', 'nota' => 'Pendientes de aplicar',
+     'href' => $res['borradores'] > 0 ? '?estado=borrador' : ''],
+    ['label' => 'Costeado este mes', 'valor' => money($res['costo_mes']), 'icono' => 'wallet', 'color' => 'emerald',
+     'nota' => number_format($res['aplicadas_mes']) . ' embarque' . ((int) $res['aplicadas_mes'] === 1 ? '' : 's')],
+    // El recargo sobre el FOB es EL número del negocio importador: cuánto
+    // encarece la mercancía el flete, el seguro y la aduana.
+    ['label' => 'Recargo sobre el FOB', 'valor' => number_format($res['recargo_pct'], 1) . '%', 'icono' => 'chart',
+     'color' => 'violet', 'nota' => 'Cuánto encarece traerla'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
     <div class="flex items-center gap-2 flex-wrap">
-      <?= search_box('Buscar por número o referencia (BL, contenedor)...') ?>
+      <?= search_box('Buscar por número o referencia (BL, contenedor)...', array_filter(['estado' => $estado ?: null])) ?>
       <form method="get" class="flex items-center gap-2">
         <?php if ($busq !== ''): ?><input type="hidden" name="q" value="<?= e($busq) ?>"><?php endif; ?>
         <select name="estado" onchange="this.form.submit()" class="select w-44" aria-label="Filtrar por estado">

@@ -237,6 +237,32 @@ if (count($sucursales) < 2):
     echo empty_state('Se necesitan al menos 2 sucursales', 'Crea otra sucursal para transferir inventario entre ellas.', 'transfer');
     layout_end(); return;
 endif;
+
+// El indicador que importa es «enviada»: esa mercancía ya salió del almacén de
+// origen y todavía no la ha recibido nadie. Está en el limbo, y cuanto más
+// tiempo pase más difícil es saber si se perdió o si nadie pulsó «recibir».
+// Se mide sobre el alcance de sucursal, no sobre el filtro de pantalla.
+$resumen = qOne(
+    "SELECT COALESCE(SUM(t.estado = 'borrador'), 0) borradores,
+            COALESCE(SUM(t.estado = 'enviada'), 0)  en_camino,
+            COALESCE(SUM(t.estado = 'enviada' AND t.enviada_at < DATE_SUB(NOW(), INTERVAL 7 DAY)), 0) varadas,
+            COALESCE(SUM(t.estado = 'recibida' AND t.recibida_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) recibidas_mes
+       FROM transferencias t WHERE $scope"
+) ?: ['borradores' => 0, 'en_camino' => 0, 'varadas' => 0, 'recibidas_mes' => 0];
+
+echo kpis([
+    ['label' => 'En camino', 'valor' => number_format((int) $resumen['en_camino']), 'icono' => 'truck',
+     'color' => (int) $resumen['en_camino'] > 0 ? 'sky' : 'slate',
+     'nota' => (int) $resumen['varadas'] > 0
+        ? number_format((int) $resumen['varadas']) . ' llevan más de 7 días sin recibirse'
+        : 'Ninguna atrasada',
+     'href' => (int) $resumen['en_camino'] > 0 ? '?estado=enviada' : ''],
+    ['label' => 'Borradores', 'valor' => number_format((int) $resumen['borradores']), 'icono' => 'clipboard',
+     'color' => (int) $resumen['borradores'] > 0 ? 'amber' : 'slate', 'nota' => 'Sin enviar todavía',
+     'href' => (int) $resumen['borradores'] > 0 ? '?estado=borrador' : ''],
+    ['label' => 'Recibidas este mes', 'valor' => number_format((int) $resumen['recibidas_mes']), 'icono' => 'check',
+     'color' => 'emerald', 'nota' => 'Ya sumaron al destino', 'href' => '?estado=recibida'],
+], 3);
 ?>
 
 <div class="card overflow-hidden">

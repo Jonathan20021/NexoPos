@@ -68,10 +68,25 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
           <td class="font-semibold text-slate-700"><?= e($m['nombre']) ?></td>
           <td class="text-center"><span class="badge badge-slate"><?= (int) $m['productos'] ?></span></td>
           <td><?= $m['activo'] ? badge('Activa', 'emerald') : badge('Inactiva', 'slate') ?></td>
-          <td><div class="flex items-center justify-end gap-1">
-            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('marca:edit', ['id'=>$m['id'],'nombre'=>$m['nombre'],'activo'=>$m['activo']]) ?>" aria-label="Editar marca" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
-            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar marca?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_marca"><input type="hidden" name="id" value="<?= (int) $m['id'] ?>"><button aria-label="Eliminar marca" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
-          </div></td>
+          <td>
+            <?= acciones([
+                (int) $m['productos'] > 0 ? btn_icono([
+                    'icono' => 'box', 'titulo' => 'Ver los productos de esta marca', 'color' => 'slate',
+                    'href' => url('modules/inventario/productos.php?q=' . rawurlencode($m['nombre'])),
+                ]) : '',
+                can('productos.editar') ? btn_icono([
+                    'icono' => 'edit', 'titulo' => 'Editar marca',
+                    'onclick' => jsEvent('marca:edit', ['id'=>$m['id'],'nombre'=>$m['nombre'],'activo'=>$m['activo']]),
+                ]) : '',
+                // La pregunta nombra la marca. «¿Eliminar marca?» a secas, con
+                // varias filas iguales en pantalla, no es una confirmación:
+                // es una ruleta.
+                can('productos.eliminar') ? btn_eliminar([
+                    'id' => (int) $m['id'], 'accion' => 'eliminar_marca', 'titulo' => 'Eliminar marca',
+                    'pregunta' => '¿Eliminar la marca «' . $m['nombre'] . '»?',
+                ]) : '',
+            ]) ?>
+          </td>
         </tr>
         <?php endforeach; ?>
       </tbody>
@@ -95,8 +110,16 @@ layout_start('Marcas y Unidades', 'Catálogos base para tus productos');
           <td><span class="badge badge-indigo"><?= e($u['abreviatura']) ?></span></td>
           <td class="text-center"><span class="badge badge-slate"><?= (int) $u['productos'] ?></span></td>
           <td><div class="flex items-center justify-end gap-1">
-            <?php if (can('productos.editar')): ?><button onclick="<?= jsEvent('unidad:edit', ['id'=>$u['id'],'nombre'=>$u['nombre'],'abreviatura'=>$u['abreviatura']]) ?>" aria-label="Editar unidad" title="Editar" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"><?= icon('edit', 'w-4 h-4') ?></button><?php endif; ?>
-            <?php if (can('productos.eliminar')): ?><form method="post" class="inline" onsubmit="return confirm('¿Eliminar unidad?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_unidad"><input type="hidden" name="id" value="<?= (int) $u['id'] ?>"><button aria-label="Eliminar unidad" title="Eliminar" class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button></form><?php endif; ?>
+            <?= acciones([
+                can('productos.editar') ? btn_icono([
+                    'icono' => 'edit', 'titulo' => 'Editar unidad',
+                    'onclick' => jsEvent('unidad:edit', ['id'=>$u['id'],'nombre'=>$u['nombre'],'abreviatura'=>$u['abreviatura']]),
+                ]) : '',
+                can('productos.eliminar') ? btn_eliminar([
+                    'id' => (int) $u['id'], 'accion' => 'eliminar_unidad', 'titulo' => 'Eliminar unidad',
+                    'pregunta' => '¿Eliminar la unidad «' . $u['nombre'] . '»?',
+                ]) : '',
+            ]) ?>
           </div></td>
         </tr>
         <?php endforeach; ?>

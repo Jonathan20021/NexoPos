@@ -113,6 +113,35 @@ $categorias = qAll("SELECT id, nombre FROM categorias WHERE activo = 1 ORDER BY 
 
 $acciones = can('conteos.crear') ? btn_nuevo('cnt:new', 'Nuevo conteo') : '';
 layout_start('Conteo físico de inventario', 'Cuadra el almacén contra el sistema con trazabilidad', $acciones);
+
+// Un conteo abierto congela la existencia de su sucursal, así que saber cuántos
+// hay sin cerrar es lo primero. El impacto es lo que los ajustes ya aplicados le
+// movieron al valor del inventario: si sale grande, el almacén no cuadra.
+[$scopeK, $parK] = sucursalScope('c.sucursal_id');
+$resumen = qOne(
+    "SELECT COALESCE(SUM(c.estado = 'abierto'), 0)  abiertos,
+            COALESCE(SUM(c.estado = 'aplicado'), 0) aplicados,
+            COALESCE((SELECT SUM((d.stock_contado - d.stock_teorico) * d.costo_unitario)
+                        FROM conteo_detalles d
+                        JOIN conteos c2 ON c2.id = d.conteo_id
+                       WHERE c2.estado = 'aplicado' AND d.stock_contado IS NOT NULL), 0) impacto
+       FROM conteos c WHERE $scopeK", $parK
+) ?: ['abiertos' => 0, 'aplicados' => 0, 'impacto' => 0];
+$impacto = (float) $resumen['impacto'];
+
+echo kpis([
+    ['label' => 'Conteos abiertos', 'valor' => number_format((int) $resumen['abiertos']), 'icono' => 'clipboard',
+     'color' => (int) $resumen['abiertos'] > 0 ? 'amber' : 'slate',
+     'nota' => (int) $resumen['abiertos'] > 0 ? 'Pendientes de aplicar' : 'Nada pendiente',
+     'href' => (int) $resumen['abiertos'] > 0 ? '?estado=abierto' : ''],
+    ['label' => 'Conteos aplicados', 'valor' => number_format((int) $resumen['aplicados']), 'icono' => 'check',
+     'color' => 'emerald', 'nota' => 'Ya ajustaron el inventario', 'href' => '?estado=aplicado'],
+    ['label' => 'Impacto acumulado', 'valor' => ($impacto >= 0 ? '+' : '−') . money(abs($impacto)),
+     'icono' => 'wallet', 'color' => abs($impacto) < 0.01 ? 'slate' : ($impacto >= 0 ? 'emerald' : 'rose'),
+     'nota' => abs($impacto) < 0.01
+        ? 'El almacén cuadraba'
+        : ($impacto >= 0 ? 'Había más de lo que decía el sistema' : 'Faltaba mercancía')],
+], 3);
 ?>
 
 <div class="card p-4 mb-5 no-print flex flex-wrap items-center gap-2">

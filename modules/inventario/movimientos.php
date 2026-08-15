@@ -37,7 +37,33 @@ $movs = qAll(
 
 $tipoBadge = ['entrada'=>['Entrada','emerald'],'compra'=>['Compra','emerald'],'transferencia_entrada'=>['Transf. entrada','sky'],'devolucion'=>['Devolución','sky'],'salida'=>['Salida','rose'],'venta'=>['Venta','rose'],'transferencia_salida'=>['Transf. salida','amber'],'ajuste'=>['Ajuste','violet']];
 
+// Aquí los totales SÍ siguen al filtro, al revés que en el catálogo: un kardex
+// se lee por tramos —este mes, esta sucursal, este producto— y el resumen tiene
+// que hablar del tramo que se está mirando, no del histórico completo.
+$resumen = qOne(
+    "SELECT COUNT(*) n,
+            COALESCE(SUM(CASE WHEN m.cantidad > 0 THEN m.cantidad ELSE 0 END), 0) entradas,
+            COALESCE(SUM(CASE WHEN m.cantidad < 0 THEN -m.cantidad ELSE 0 END), 0) salidas,
+            COALESCE(SUM(m.tipo = 'ajuste'), 0) ajustes
+       FROM movimientos_inventario m
+       JOIN productos p ON p.id = m.producto_id
+      WHERE $where", $params
+) ?: ['n' => 0, 'entradas' => 0, 'salidas' => 0, 'ajustes' => 0];
+$neto = (float) $resumen['entradas'] - (float) $resumen['salidas'];
+
 layout_start('Movimientos de inventario', 'Kardex: historial completo de entradas y salidas', export_buttons());
+
+echo kpis([
+    ['label' => 'Movimientos', 'valor' => number_format((int) $resumen['n']), 'icono' => 'history', 'color' => 'slate',
+     'nota' => 'En el tramo filtrado'],
+    ['label' => 'Unidades que entraron', 'valor' => qty($resumen['entradas']), 'icono' => 'arrow-down', 'color' => 'emerald'],
+    ['label' => 'Unidades que salieron', 'valor' => qty($resumen['salidas']), 'icono' => 'arrow-up', 'color' => 'rose'],
+    ['label' => 'Movimiento neto', 'valor' => ($neto >= 0 ? '+' : '−') . qty(abs($neto)),
+     'icono' => 'layers', 'color' => $neto >= 0 ? 'blue' : 'amber',
+     'nota' => (int) $resumen['ajustes'] > 0
+        ? number_format((int) $resumen['ajustes']) . ' ajuste' . ((int) $resumen['ajustes'] === 1 ? '' : 's') . ' incluidos'
+        : 'Sin ajustes manuales'],
+], 4);
 ?>
 
 <div class="card overflow-hidden">

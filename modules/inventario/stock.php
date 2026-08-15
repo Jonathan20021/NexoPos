@@ -69,11 +69,19 @@ $valorTotal = (float) qVal("SELECT COALESCE(SUM(s.cantidad*p.precio_compra),0) F
 layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
 ?>
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5 flex items-center gap-4"><div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><?= icon('box', 'w-6 h-6') ?></div><div><p class="text-2xl font-extrabold text-slate-800"><?= number_format($totProd) ?></p><p class="text-sm text-slate-400">Productos en inventario</p></div></div>
-  <a href="?bajo=1" class="card p-5 flex items-center gap-4 hover:border-amber-300 transition"><div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center"><?= icon('alert', 'w-6 h-6') ?></div><div><p class="text-2xl font-extrabold text-slate-800"><?= number_format($totBajo) ?></p><p class="text-sm text-slate-400">En stock bajo</p></div></a>
-  <div class="card p-5 flex items-center gap-4"><div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><?= icon('dollar', 'w-6 h-6') ?></div><div><p class="text-2xl font-extrabold text-slate-800"><?= money($valorTotal) ?></p><p class="text-sm text-slate-400">Valor del inventario (costo)</p></div></div>
-</div>
+<?php
+// Estas tres se pintaban en horizontal —icono, valor, y la etiqueta DEBAJO del
+// número—, al revés que el resto del sistema. Mismo dato, misma tarjeta.
+echo kpis([
+    ['label' => 'Productos en inventario', 'valor' => number_format($totProd), 'icono' => 'box', 'color' => 'blue'],
+    ['label' => 'En stock bajo', 'valor' => number_format($totBajo), 'icono' => 'alert',
+     'color' => $totBajo > 0 ? 'amber' : 'slate',
+     'nota' => $totBajo > 0 ? 'Conviene reponer' : 'Nada por reponer',
+     'href' => $totBajo > 0 ? '?bajo=1' : ''],
+    ['label' => 'Valor del inventario', 'valor' => money($valorTotal), 'icono' => 'dollar', 'color' => 'emerald',
+     'nota' => 'A precio de costo'],
+], 3);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">

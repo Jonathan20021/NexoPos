@@ -62,15 +62,44 @@ $cats = qAll(
     $params
 );
 
-$acciones = can('categorias.crear') ? btn_nuevo('cat:new', 'Nueva categoría') : '';
+// La exportación se lleva TODO lo que coincide con el filtro, no la página.
+if (export_solicitado()) {
+    export_tabla('categorias', ['Nombre', 'Descripción', 'Color', 'Productos', 'Estado'],
+        array_map(fn($c) => [
+            $c['nombre'], $c['descripcion'], $c['color'], (int) $c['productos'],
+            $c['activo'] ? 'Activa' : 'Inactiva',
+        ], $cats));
+}
+
+$resumen = qOne(
+    "SELECT (SELECT COUNT(*) FROM categorias) total,
+            (SELECT COALESCE(SUM(activo = 1), 0) FROM categorias) activas,
+            (SELECT COUNT(*) FROM productos WHERE categoria_id IS NOT NULL) clasificados,
+            (SELECT COUNT(*) FROM productos WHERE categoria_id IS NULL) sin_clasificar,
+            (SELECT COUNT(*) FROM categorias c
+              WHERE NOT EXISTS (SELECT 1 FROM productos p WHERE p.categoria_id = c.id)) vacias"
+) ?: ['total' => 0, 'activas' => 0, 'clasificados' => 0, 'sin_clasificar' => 0, 'vacias' => 0];
+
+$acciones = export_buttons() . (can('categorias.crear') ? btn_nuevo('cat:new', 'Nueva categoría') : '');
 layout_start('Categorías', 'Organiza tus productos diversos por categoría', $acciones);
+
+echo kpis([
+    ['label' => 'Categorías activas', 'valor' => number_format((int) $resumen['activas']), 'icono' => 'tag', 'color' => 'blue',
+     'nota' => (int) $resumen['vacias'] > 0
+        ? number_format((int) $resumen['vacias']) . ' sin ningún producto' : 'Todas tienen productos'],
+    ['label' => 'Productos clasificados', 'valor' => number_format((int) $resumen['clasificados']), 'icono' => 'box', 'color' => 'emerald'],
+    // Un producto sin categoría se pierde: no sale en los filtros del catálogo
+    // ni en los informes que agrupan por categoría. Por eso se cuenta aparte.
+    ['label' => 'Sin categoría', 'valor' => number_format((int) $resumen['sin_clasificar']),
+     'icono' => 'alert', 'color' => (int) $resumen['sin_clasificar'] > 0 ? 'amber' : 'slate',
+     'nota' => (int) $resumen['sin_clasificar'] > 0
+        ? 'No aparecen al filtrar por categoría'
+        : 'Todo el catálogo está clasificado'],
+], 3);
 ?>
 
 <div class="card overflow-hidden">
-  <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-    <?= search_box('Buscar categoría...') ?>
-    <span class="text-sm text-slate-400"><?= count($cats) ?> categorías</span>
-  </div>
+  <?= toolbar(search_box('Buscar categoría...'), toolbar_conteo(count($cats), 'categoría', 'categorías')) ?>
 
   <?php if (!$cats): ?>
     <?= empty_state('Sin categorías', 'Crea tu primera categoría para clasificar los productos.', 'tag',
@@ -92,18 +121,20 @@ layout_start('Categorías', 'Organiza tus productos diversos por categoría', $a
               <td class="text-center"><span class="badge badge-slate"><?= (int) $c['productos'] ?></span></td>
               <td><?= $c['activo'] ? badge('Activa', 'emerald') : badge('Inactiva', 'slate') ?></td>
               <td>
-                <div class="flex items-center justify-end gap-1">
-                  <?php if (can('categorias.editar')): ?>
-                    <button onclick="<?= jsEvent('cat:edit', ['id' => $c['id'], 'nombre' => $c['nombre'], 'descripcion' => $c['descripcion'], 'color' => $c['color'], 'activo' => $c['activo']]) ?>"
-                            class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
-                  <?php endif; ?>
-                  <?php if (can('categorias.eliminar')): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la categoría «<?= e($c['nombre']) ?>»?')">
-                      <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
-                      <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
-                    </form>
-                  <?php endif; ?>
-                </div>
+                <?= acciones([
+                    (int) $c['productos'] > 0 ? btn_icono([
+                        'icono' => 'box', 'titulo' => 'Ver los productos de esta categoría', 'color' => 'slate',
+                        'href' => url('modules/inventario/productos.php?categoria_id=' . (int) $c['id']),
+                    ]) : '',
+                    can('categorias.editar') ? btn_icono([
+                        'icono' => 'edit', 'titulo' => 'Editar categoría',
+                        'onclick' => jsEvent('cat:edit', ['id' => $c['id'], 'nombre' => $c['nombre'], 'descripcion' => $c['descripcion'], 'color' => $c['color'], 'activo' => $c['activo']]),
+                    ]) : '',
+                    can('categorias.eliminar') ? btn_eliminar([
+                        'id' => (int) $c['id'], 'titulo' => 'Eliminar categoría',
+                        'pregunta' => '¿Eliminar la categoría «' . $c['nombre'] . '»?',
+                    ]) : '',
+                ]) ?>
               </td>
             </tr>
           <?php endforeach; ?>

@@ -125,35 +125,33 @@ $acciones = '<a href="' . e(url('modules/reportes/vencimientos.php')) . '" class
 layout_start('Lotes y vencimientos', 'Control sanitario de la mercancía regulada', $acciones);
 ?>
 
-<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-  <?php foreach ([
-      ['Vencidos con existencia', $res['lotes_vencidos'], 'alert', $res['lotes_vencidos'] > 0 ? 'rose' : 'emerald', money($res['valor_vencido']) . ' inmovilizados', 'vencido'],
-      ['Por vencer', $res['lotes_por_vencer'], 'clock', $res['lotes_por_vencer'] > 0 ? 'amber' : 'emerald', 'En ' . SAN_DIAS_AVISO_LOTE . ' días', 'por_vencer'],
-      ['Bloqueados', $res['lotes_bloqueados'], 'lock', $res['lotes_bloqueados'] > 0 ? 'violet' : 'slate', 'Fuera de circulación', 'bloqueado'],
-      ['Sin identificar', $res['sin_identificar'], 'search', $res['sin_identificar'] > 0 ? 'amber' : 'emerald', 'Existencia sin lote', 'sin_lote'],
-  ] as [$lbl, $val, $ic, $col, $nota, $filtro]): ?>
-    <a href="?estado=<?= e($filtro) ?>" class="card p-5 hover:shadow-soft transition">
-      <div class="w-11 h-11 rounded-xl bg-<?= $col ?>-50 text-<?= $col ?>-600 flex items-center justify-center mb-3"><?= icon($ic, 'w-5 h-5') ?></div>
-      <p class="text-sm text-slate-500"><?= e($lbl) ?></p>
-      <p class="text-2xl font-extrabold text-slate-800 mt-0.5 tabular-nums"><?= number_format($val) ?></p>
-      <p class="text-xs text-slate-400 mt-1"><?= e($nota) ?></p>
-    </a>
-  <?php endforeach; ?>
-</div>
+<?php
+// Las cuatro tarjetas ya eran filtros —pulsarlas acota el listado—, pero se
+// pintaban a mano componiendo la clase del color en tiempo de ejecución. Ahora
+// pasan por kpi(), que es la misma tarjeta del resto del sistema.
+echo kpis([
+    ['label' => 'Vencidos con existencia', 'valor' => number_format($res['lotes_vencidos']), 'icono' => 'alert',
+     'color' => $res['lotes_vencidos'] > 0 ? 'rose' : 'emerald',
+     'nota' => money($res['valor_vencido']) . ' inmovilizados', 'href' => '?estado=vencido'],
+    ['label' => 'Por vencer', 'valor' => number_format($res['lotes_por_vencer']), 'icono' => 'clock',
+     'color' => $res['lotes_por_vencer'] > 0 ? 'amber' : 'emerald',
+     'nota' => 'En ' . SAN_DIAS_AVISO_LOTE . ' días', 'href' => '?estado=por_vencer'],
+    ['label' => 'Bloqueados', 'valor' => number_format($res['lotes_bloqueados']), 'icono' => 'lock',
+     'color' => $res['lotes_bloqueados'] > 0 ? 'violet' : 'slate',
+     'nota' => 'Fuera de circulación', 'href' => '?estado=bloqueado'],
+    ['label' => 'Sin identificar', 'valor' => number_format($res['sin_identificar']), 'icono' => 'search',
+     'color' => $res['sin_identificar'] > 0 ? 'amber' : 'emerald',
+     'nota' => 'Existencia sin lote', 'href' => '?estado=sin_lote'],
+], 4);
+
+$limpiar = ($q || $estado) ? '<a href="?" class="btn btn-ghost btn-sm">Limpiar</a>' : '';
+?>
 
 <div class="card overflow-hidden">
-  <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-    <form method="get" class="flex items-center gap-2">
-      <?php if ($estado): ?><input type="hidden" name="estado" value="<?= e($estado) ?>"><?php endif; ?>
-      <div class="relative">
-        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"><?= icon('search', 'w-4 h-4') ?></span>
-        <input type="search" name="q" value="<?= e($q) ?>" placeholder="Lote, producto o SKU…" class="input pl-10 min-w-[240px]">
-      </div>
-      <button class="btn btn-ghost btn-sm"><?= icon('filter', 'w-3.5 h-3.5') ?> Buscar</button>
-      <?php if ($q || $estado): ?><a href="?" class="btn btn-ghost btn-sm">Limpiar</a><?php endif; ?>
-    </form>
-    <span class="text-sm text-slate-400"><?= count($lotes) ?> lote(s)</span>
-  </div>
+  <?= toolbar(
+        search_box('Lote, producto o SKU…', array_filter(['estado' => $estado ?: null])) . $limpiar,
+        toolbar_conteo(count($lotes), 'lote')
+      ) ?>
 
   <?php if (!$lotes): ?>
     <?= empty_state('Sin lotes', 'Aparecerán al recibir compras de productos con control sanitario.', 'layers') ?>
