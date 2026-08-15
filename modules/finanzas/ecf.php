@@ -611,6 +611,38 @@ layout_start(
     );
     $colores = ['aceptado' => 'emerald', 'enviado' => 'sky', 'pendiente' => 'amber',
                 'rechazado' => 'rose', 'error' => 'rose'];
+
+    // Un documento «atascado» es el que salió hace rato y sigue sin veredicto.
+    // No es lo mismo que uno recién enviado: si lleva más de una hora esperando
+    // acuse, o la cola no está corriendo o el proveedor no contesta, y esa
+    // factura no existe todavía para la DGII.
+    $r = qOne(
+        "SELECT COUNT(*) total,
+                COALESCE(SUM(estado = 'aceptado'), 0) aceptados,
+                COALESCE(SUM(estado IN ('rechazado','error')), 0) fallidos,
+                COALESCE(SUM(estado IN ('pendiente','enviado')), 0) en_cola,
+                COALESCE(SUM(estado IN ('pendiente','enviado')
+                             AND created_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)), 0) atascados
+           FROM ecf_documentos"
+    ) ?: ['total' => 0, 'aceptados' => 0, 'fallidos' => 0, 'en_cola' => 0, 'atascados' => 0];
+    $tasa = (int) $r['total'] > 0 ? round((int) $r['aceptados'] / (int) $r['total'] * 100) : 0;
+
+    echo kpis([
+        ['label' => 'Aceptados por la DGII', 'valor' => number_format((int) $r['aceptados']), 'icono' => 'check',
+         'color' => 'emerald', 'nota' => $tasa . '% de ' . number_format((int) $r['total']) . ' emitidos'],
+        ['label' => 'Rechazados o con error', 'valor' => number_format((int) $r['fallidos']), 'icono' => 'alert',
+         'color' => (int) $r['fallidos'] > 0 ? 'rose' : 'slate',
+         'nota' => (int) $r['fallidos'] > 0 ? 'Esas facturas no existen para la DGII' : 'Ninguno'],
+        ['label' => 'En cola', 'valor' => number_format((int) $r['en_cola']), 'icono' => 'clock',
+         'color' => (int) $r['atascados'] > 0 ? 'amber' : ((int) $r['en_cola'] > 0 ? 'sky' : 'slate'),
+         'nota' => (int) $r['atascados'] > 0
+            ? number_format((int) $r['atascados']) . ' llevan más de una hora sin acuse'
+            : ((int) $r['en_cola'] > 0 ? 'Esperando veredicto' : 'Nada pendiente')],
+        ['label' => 'Ambiente', 'valor' => strtoupper((string) (ecfConfig()['ambiente'] ?? '—')),
+         'icono' => 'shield', 'color' => (ecfConfig()['ambiente'] ?? '') === 'stage' ? 'amber' : 'violet',
+         'nota' => (ecfConfig()['ambiente'] ?? '') === 'stage'
+            ? 'Pruebas: no tiene valor fiscal' : 'Emisión real'],
+    ], 4);
   ?>
   <?php if (can('ecf.emitir')): ?>
     <form method="post" class="mb-4">

@@ -179,11 +179,22 @@ layout_start('Comisiones de Vendedores', 'Cálculo y pago de comisiones · ' . f
   <a href="<?= e(url('modules/finanzas/comisiones.php')) ?>" class="btn btn-ghost">Mes actual</a>
 </form>
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5"><p class="text-sm text-slate-400">Total facturado</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($totFact) ?></p></div>
-  <div class="card p-5"><p class="text-sm text-slate-400">Base de comisión</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($totBase) ?></p></div>
-  <div class="card p-5"><p class="text-sm text-slate-400">Comisiones del periodo</p><p class="text-2xl font-extrabold text-emerald-600 mt-1"><?= money($totComision) ?></p></div>
-</div>
+<?php
+// «Base» es lo facturado menos lo que no comisiona (devoluciones, descuentos,
+// productos excluidos). La diferencia entre las dos primeras es la pregunta
+// que siempre hace el vendedor: por qué su comisión no sale sobre el total.
+$excluido = $totFact - $totBase;
+$pctEfectivo = $totBase > 0 ? round($totComision / $totBase * 100, 2) : 0.0;
+
+echo kpis([
+    ['label' => 'Total facturado', 'valor' => money($totFact), 'icono' => 'receipt', 'color' => 'blue',
+     'nota' => 'En el periodo elegido'],
+    ['label' => 'Base de comisión', 'valor' => money($totBase), 'icono' => 'percent', 'color' => 'violet',
+     'nota' => $excluido > 0.01 ? money($excluido) . ' no comisiona' : 'Todo lo facturado comisiona'],
+    ['label' => 'Comisiones del periodo', 'valor' => money($totComision), 'icono' => 'dollar', 'color' => 'emerald',
+     'nota' => $pctEfectivo > 0 ? $pctEfectivo . '% efectivo sobre la base' : 'Sin comisiones que pagar'],
+], 3);
+?>
 
 <div class="card overflow-hidden">
   <?php if (!$filas): ?>

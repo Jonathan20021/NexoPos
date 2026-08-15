@@ -120,34 +120,28 @@ layout_start('Reportes DGII', 'Formatos de envío de datos · Norma General 07-2
   </div>
 </form>
 
-<!-- Resumen -->
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Registros en el archivo</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format(count($filasArchivo)) ?></p>
-    <?php if ($sucursalRevision): ?>
-      <p class="text-xs text-slate-500 mt-1"><?= number_format(count($filasVista)) ?> en la sucursal filtrada</p>
-    <?php endif; ?>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Monto facturado</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= $formato === '608' ? '—' : money($totales['facturado']) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">ITBIS</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= $formato === '608' ? '—' : money($totales['itbis']) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Validación</p>
-    <?php if ($errores): ?>
-      <p class="text-2xl font-extrabold text-rose-600 mt-1"><?= count($errores) ?></p>
-      <p class="text-xs text-rose-600 mt-1">errores por corregir</p>
-    <?php else: ?>
-      <p class="text-2xl font-extrabold text-emerald-600 mt-1">OK</p>
-      <p class="text-xs text-slate-500 mt-1">sin errores</p>
-    <?php endif; ?>
-  </div>
-</div>
+<?php
+// El 608 es el formato de comprobantes ANULADOS: no lleva monto ni ITBIS, por
+// eso esas dos cifras salen en raya. La tarjeta de validación es la que manda:
+// con un solo error la DGII rechaza el archivo entero.
+echo kpis([
+    ['label' => 'Registros en el archivo', 'valor' => number_format(count($filasArchivo)), 'icono' => 'file',
+     'color' => 'blue',
+     'nota' => $sucursalRevision
+        ? number_format(count($filasVista)) . ' en la sucursal filtrada'
+        : 'Formato ' . $formato],
+    ['label' => 'Monto facturado', 'valor' => $formato === '608' ? '—' : money($totales['facturado']),
+     'icono' => 'dollar', 'color' => $formato === '608' ? 'slate' : 'emerald',
+     'nota' => $formato === '608' ? 'El 608 no declara montos' : ''],
+    ['label' => 'ITBIS', 'valor' => $formato === '608' ? '—' : money($totales['itbis']),
+     'icono' => 'percent', 'color' => $formato === '608' ? 'slate' : 'violet'],
+    ['label' => 'Validación', 'valor' => $errores ? number_format(count($errores)) : 'OK', 'icono' => 'shield',
+     'color' => $errores ? 'rose' : 'emerald',
+     'nota' => $errores
+        ? 'La DGII rechazaría el archivo entero'
+        : 'Listo para subir a la Oficina Virtual'],
+], 4);
+?>
 
 <!-- Errores y advertencias -->
 <?php if ($errores): ?>

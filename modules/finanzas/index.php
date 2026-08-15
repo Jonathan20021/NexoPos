@@ -204,29 +204,22 @@ layout_start('Ingresos y Gastos', 'Movimientos financieros del ' . fechaCorta($d
 </form>
 
 <!-- KPIs -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5">
-    <div class="flex items-start justify-between">
-      <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><?= icon('arrow-down', 'w-5 h-5') ?></div>
-    </div>
-    <p class="text-sm text-slate-500 mt-4">Total Ingresos</p>
-    <p class="text-2xl font-extrabold text-emerald-600 mt-0.5"><?= money($totalIngresos) ?></p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-start justify-between">
-      <div class="w-11 h-11 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center"><?= icon('arrow-up', 'w-5 h-5') ?></div>
-    </div>
-    <p class="text-sm text-slate-500 mt-4">Total Gastos</p>
-    <p class="text-2xl font-extrabold text-rose-600 mt-0.5"><?= money($totalGastos) ?></p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-start justify-between">
-      <div class="w-11 h-11 rounded-xl <?= $balance >= 0 ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600' ?> flex items-center justify-center"><?= icon('wallet', 'w-5 h-5') ?></div>
-    </div>
-    <p class="text-sm text-slate-500 mt-4">Balance del periodo</p>
-    <p class="text-2xl font-extrabold mt-0.5 <?= $balance >= 0 ? 'text-blue-600' : 'text-rose-600' ?>"><?= money($balance) ?></p>
-  </div>
-</div>
+<?php
+// El margen es lo que estas tres cifras nunca decían: RD$ 40,000 de balance no
+// significan lo mismo sobre 50,000 facturados que sobre 900,000.
+$margen = $totalIngresos > 0 ? round($balance / $totalIngresos * 100, 1) : 0.0;
+
+echo kpis([
+    ['label' => 'Total ingresos', 'valor' => money($totalIngresos), 'icono' => 'arrow-down', 'color' => 'emerald',
+     'nota' => 'En el periodo elegido'],
+    ['label' => 'Total gastos', 'valor' => money($totalGastos), 'icono' => 'arrow-up', 'color' => 'rose'],
+    ['label' => 'Balance del periodo', 'valor' => money($balance), 'icono' => 'wallet',
+     'color' => $balance >= 0 ? 'blue' : 'rose',
+     'nota' => $totalIngresos > 0
+        ? $margen . '% de lo ingresado'
+        : ($balance < 0 ? 'Gastos sin ingresos' : 'Sin movimientos')],
+], 3);
+?>
 
 <!-- Lista de transacciones -->
 <div class="card overflow-hidden">

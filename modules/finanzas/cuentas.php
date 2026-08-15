@@ -116,22 +116,34 @@ $acciones = can('finanzas.crear') ? btn_nuevo('cta:new', 'Nueva cuenta') : '';
 layout_start('Cuentas Financieras', 'Efectivo, bancos y otras cuentas de tu negocio', $acciones);
 ?>
 
-<!-- KPI: balance total -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5 sm:col-span-1">
-    <div class="flex items-start justify-between">
-      <div class="w-11 h-11 rounded-xl <?= $balanceTotal >= 0 ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600' ?> flex items-center justify-center"><?= icon('wallet', 'w-5 h-5') ?></div>
-    </div>
-    <p class="text-sm text-slate-500 mt-4">Balance total (cuentas activas)</p>
-    <p class="text-2xl font-extrabold mt-0.5 <?= $balanceTotal >= 0 ? 'text-slate-800' : 'text-rose-600' ?>"><?= money($balanceTotal) ?></p>
-  </div>
-</div>
+<?php
+// Había UNA tarjeta sola dentro de una rejilla de tres columnas: dos tercios de
+// la fila en blanco. Y el dato que falta al mirar esta pantalla no es el total,
+// sino cómo se reparte: cuánto está en caja (que se puede perder o robar) y
+// cuánto en banco.
+$enEfectivo = 0.0; $enBanco = 0.0; $enRojo = 0;
+foreach ($cuentas as $c) {
+    if (!$c['activo']) continue;
+    $b = (float) $c['balance'];
+    if ($b < 0) $enRojo++;
+    if ($c['tipo'] === 'efectivo') $enEfectivo += $b; else $enBanco += $b;
+}
+
+echo kpis([
+    ['label' => 'Balance total', 'valor' => money($balanceTotal), 'icono' => 'wallet',
+     'color' => $balanceTotal >= 0 ? 'blue' : 'rose', 'nota' => 'Solo cuentas activas'],
+    ['label' => 'En efectivo', 'valor' => money($enEfectivo), 'icono' => 'dollar', 'color' => 'emerald',
+     'nota' => 'Cajas de las sucursales'],
+    ['label' => 'En bancos y otras', 'valor' => money($enBanco), 'icono' => 'briefcase',
+     'color' => $enRojo > 0 ? 'amber' : 'sky',
+     'nota' => $enRojo > 0
+        ? number_format($enRojo) . ' cuenta' . ($enRojo === 1 ? '' : 's') . ' en negativo'
+        : 'Ninguna en negativo'],
+], 3);
+?>
 
 <div class="card overflow-hidden">
-  <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-    <?= search_box('Buscar cuenta...') ?>
-    <span class="text-sm text-slate-400"><?= count($cuentas) ?> cuenta(s)</span>
-  </div>
+  <?= toolbar(search_box('Buscar cuenta...'), toolbar_conteo(count($cuentas), 'cuenta')) ?>
 
   <?php if (!$cuentas): ?>
     <?= empty_state('Sin cuentas', 'Crea tu primera cuenta financiera (caja, banco, etc.).', 'wallet',
