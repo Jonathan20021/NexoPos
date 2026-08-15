@@ -224,24 +224,20 @@ echo rep_abrir('Flujo de efectivo', $p, ['sucursal' => true]);
 <?= rep_fin() ?>
 
 <!-- Caja -->
-<?php if ((int) $cajas['n'] > 0): ?>
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Cierres de caja del periodo</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format((int) $cajas['n']) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Efectivo cobrado en caja</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($cajas['efectivo']) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Diferencias de arqueo</p>
-    <p class="text-2xl font-extrabold mt-1 <?= abs((float) $cajas['diferencia']) < 0.01 ? 'text-emerald-600' : 'text-rose-600' ?>">
-      <?= money($cajas['diferencia']) ?>
-    </p>
-    <p class="text-xs text-slate-400 mt-1"><?= abs((float) $cajas['diferencia']) < 0.01 ? 'Cuadre perfecto' : 'Revisar cierres con faltante o sobrante' ?></p>
-  </div>
-</div>
-<?php endif; ?>
+<?php if ((int) $cajas['n'] > 0):
+    $dif = (float) $cajas['diferencia'];
+    $cuadra = abs($dif) < 0.01;
+    echo kpis([
+        ['label' => 'Cierres de caja del periodo', 'valor' => number_format((int) $cajas['n']),
+         'icono' => 'wallet', 'color' => 'slate'],
+        ['label' => 'Efectivo cobrado en caja', 'valor' => money($cajas['efectivo']),
+         'icono' => 'dollar', 'color' => 'emerald'],
+        // El arqueo es lo único de este bloque que puede ser un problema: un
+        // faltante repetido en la misma caja no es despiste, es otra cosa.
+        ['label' => 'Diferencias de arqueo', 'valor' => money($dif), 'icono' => 'alert',
+         'color' => $cuadra ? 'emerald' : 'rose',
+         'nota' => $cuadra ? 'Cuadre perfecto' : 'Revisar cierres con faltante o sobrante'],
+    ], 3);
+endif; ?>
 
 <?php layout_end(); ?>

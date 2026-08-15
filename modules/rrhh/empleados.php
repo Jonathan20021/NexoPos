@@ -169,21 +169,24 @@ $acciones = export_buttons() . (can('rrhh_empleados.crear') ? btn_nuevo('emp:new
 layout_start('Empleados', 'Gestiona la plantilla de personal y la nómina', $acciones);
 ?>
 
-<!-- KPIs -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><?= icon('users', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Empleados activos</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($totalActivos) ?></p></div>
-  </div>
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><?= icon('wallet', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Nómina mensual</p><p class="text-2xl font-extrabold text-slate-800"><?= money($nominaMensual) ?></p></div>
-  </div>
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0"><?= icon('briefcase', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Departamentos</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($nDepartamentos) ?></p></div>
-  </div>
-</div>
+<?php
+// Estas tres se pintaron a mano porque RRHH se hizo ANTES de que existiera
+// kpi(). Mismo dato, misma tarjeta que el resto del sistema.
+//
+// Y la cuarta es la que el dueño necesita ver: lo que cuesta la plantilla NO es
+// la nómina. Encima van AFP, SFS, riesgos laborales, INFOTEP y la doceava de
+// la regalía —un 24.62% más— y eso no aparecía en ninguna pantalla de personal.
+$costo = costoEmpleadorRD($nominaMensual);
+
+echo kpis([
+    ['label' => 'Empleados activos', 'valor' => number_format($totalActivos), 'icono' => 'users', 'color' => 'emerald'],
+    ['label' => 'Nómina mensual', 'valor' => money($nominaMensual), 'icono' => 'wallet', 'color' => 'blue',
+     'nota' => 'Sueldos brutos'],
+    ['label' => 'Costo para la empresa', 'valor' => money($costo['total']), 'icono' => 'briefcase', 'color' => 'violet',
+     'nota' => '+' . number_format($costo['recargo'], 2) . '% en aportes y regalía'],
+    ['label' => 'Departamentos', 'valor' => number_format($nDepartamentos), 'icono' => 'building', 'color' => 'slate'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">

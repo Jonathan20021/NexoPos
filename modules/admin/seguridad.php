@@ -200,24 +200,23 @@ layout_start('Seguridad de acceso',
     </div>
   <?php endif; ?>
 
-  <!-- KPIs -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-    <?php foreach ([
-        ['Cuentas protegidas', $kpi['con2fa'], 'shield', 'emerald', 'con verificación en dos pasos'],
-        ['Cuentas exentas',    $kpi['sin2fa'], 'alert',  $kpi['sin2fa'] > 0 ? 'amber' : 'slate', 'entran solo con contraseña'],
-        ['Equipos de confianza', $kpi['equipos'], 'lock', 'blue', 'no piden código'],
-        ['Fallos de contraseña', $kpi['fallos'], 'x', $kpi['fallos'] > 10 ? 'rose' : 'slate', 'en las últimas 24 horas'],
-    ] as [$titulo, $valor, $ico, $color, $pie]): ?>
-      <div class="card p-5">
-        <div class="flex items-center justify-between">
-          <span class="text-[12.5px] font-semibold text-slate-500"><?= e($titulo) ?></span>
-          <span class="w-9 h-9 rounded-xl bg-<?= $color ?>-50 text-<?= $color ?>-600 flex items-center justify-center"><?= icon($ico, 'w-4 h-4') ?></span>
-        </div>
-        <p class="text-3xl font-extrabold text-slate-800 mt-2 tabular-nums"><?= number_format($valor) ?></p>
-        <p class="text-[11.5px] text-slate-400 mt-1"><?= e($pie) ?></p>
-      </div>
-    <?php endforeach; ?>
-  </div>
+  <?php
+  echo kpis([
+      ['label' => 'Cuentas protegidas', 'valor' => number_format($kpi['con2fa']), 'icono' => 'shield',
+       'color' => 'emerald', 'nota' => 'Con verificación en dos pasos'],
+      ['label' => 'Cuentas exentas', 'valor' => number_format($kpi['sin2fa']), 'icono' => 'alert',
+       'color' => $kpi['sin2fa'] > 0 ? 'amber' : 'slate', 'nota' => 'Entran solo con contraseña'],
+      ['label' => 'Equipos de confianza', 'valor' => number_format($kpi['equipos']), 'icono' => 'lock',
+       'color' => 'blue', 'nota' => 'No piden código'],
+      // Diez fallos en 24 horas ya no son dedos torpes: o alguien olvidó su
+      // contraseña y nadie le ayudó, o están probando a entrar.
+      ['label' => 'Fallos de contraseña', 'valor' => number_format($kpi['fallos']), 'icono' => 'x',
+       'color' => $kpi['fallos'] > 10 ? 'rose' : 'slate',
+       'nota' => $kpi['fallos'] > 10
+          ? 'Demasiados en 24 horas: conviene mirar quién'
+          : 'En las últimas 24 horas'],
+  ], 4);
+  ?>
 
   <div class="grid grid-cols-1 xl:grid-cols-5 gap-5">
 

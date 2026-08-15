@@ -58,27 +58,23 @@ layout_start(
   </div>
 <?php else: ?>
 
-<!-- Resumen por prioridad -->
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <?php
-  $tarjetas = [
+<?php
+// Cuatro prioridades, cuatro tarjetas. Cuando una está en cero se apaga a gris:
+// un «0 críticas» en rojo se lee como alarma cuando es justo lo contrario.
+//
+// No llevan enlace a propósito: esta pantalla filtra por CATEGORÍA y por «no
+// leídas», no por prioridad. Una tarjeta que no lleva a ninguna parte es peor
+// que una tarjeta quieta.
+echo kpis(array_map(fn($t) => [
+    'label' => $t[0], 'valor' => number_format((int) $t[1]), 'icono' => $t[2],
+    'color' => (int) $t[1] > 0 ? $t[3] : 'slate', 'nota' => $t[4],
+], [
     ['Críticas', $resumen['critica'], 'alert', 'rose', 'Detienen la operación'],
     ['Altas', $resumen['alta'], 'trending', 'amber', 'Requieren acción hoy'],
     ['Medias', $resumen['media'], 'bell', 'blue', 'Para esta semana'],
-    ['Informativas', $resumen['baja'], 'check', 'slate', 'Solo para enterarte'],
-  ];
-  $bg = ['rose' => 'bg-rose-50 text-rose-600', 'amber' => 'bg-amber-50 text-amber-600', 'blue' => 'bg-blue-50 text-blue-600', 'slate' => 'bg-slate-100 text-slate-500'];
-  foreach ($tarjetas as $t): ?>
-    <div class="card p-4 flex items-center gap-3.5">
-      <div class="w-11 h-11 rounded-xl <?= $bg[$t[3]] ?> flex items-center justify-center shrink-0"><?= icon($t[2], 'w-5 h-5') ?></div>
-      <div class="min-w-0">
-        <p class="text-2xl font-extrabold text-slate-800 leading-none"><?= (int) $t[1] ?></p>
-        <p class="text-xs font-semibold text-slate-600 mt-1"><?= e($t[0]) ?></p>
-        <p class="text-[11px] text-slate-400 truncate"><?= e($t[4]) ?></p>
-      </div>
-    </div>
-  <?php endforeach; ?>
-</div>
+    ['Informativas', $resumen['baja'], 'check', 'emerald', 'Solo para enterarte'],
+]), 4);
+?>
 
 <div class="card overflow-hidden">
   <!-- Filtros -->
