@@ -139,21 +139,26 @@ $acciones = export_buttons() . (can('clientes.crear') ? btn_nuevo('cli:new', 'Nu
 layout_start('Clientes', 'Administra los clientes y sus cuentas por cobrar', $acciones);
 ?>
 
-<!-- KPIs -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><?= icon('users', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Total de clientes</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($totalClientes) ?></p></div>
-  </div>
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0"><?= icon('id', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Clientes a crédito</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($clientesCredito) ?></p></div>
-  </div>
-  <div class="card p-5 flex items-center gap-4">
-    <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0"><?= icon('wallet', 'w-5 h-5') ?></div>
-    <div><p class="text-sm text-slate-500">Balance por cobrar</p><p class="text-2xl font-extrabold text-slate-800"><?= money($balanceTotal) ?></p></div>
-  </div>
-</div>
+<?php
+// Un cliente sin RNC ni cédula no puede recibir crédito fiscal: al facturarle,
+// el POS cae a consumidor final. Con el e-CF encendido eso deja de ser un
+// detalle del fichero y pasa a decidir qué comprobante se puede emitir.
+$sinDocumento = (int) qVal(
+    "SELECT COUNT(*) FROM clientes WHERE activo = 1 AND id <> 1 AND (rnc_cedula IS NULL OR rnc_cedula = '')");
+
+echo kpis([
+    ['label' => 'Total de clientes', 'valor' => number_format($totalClientes), 'icono' => 'users', 'color' => 'blue'],
+    ['label' => 'Clientes a crédito', 'valor' => number_format($clientesCredito), 'icono' => 'id', 'color' => 'violet',
+     'nota' => 'Con límite asignado'],
+    ['label' => 'Balance por cobrar', 'valor' => money($balanceTotal), 'icono' => 'wallet',
+     'color' => $balanceTotal > 0 ? 'amber' : 'emerald',
+     'nota' => $balanceTotal > 0 ? 'Lo que deben los clientes' : 'Nadie debe nada',
+     'href' => $balanceTotal > 0 ? url('modules/pos/cuentas_cobrar.php') : ''],
+    ['label' => 'Sin RNC ni cédula', 'valor' => number_format($sinDocumento), 'icono' => 'alert',
+     'color' => $sinDocumento > 0 ? 'amber' : 'slate',
+     'nota' => $sinDocumento > 0 ? 'No se les puede dar crédito fiscal' : 'Todos identificados'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">

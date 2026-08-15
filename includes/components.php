@@ -467,9 +467,13 @@ function toolbar_conteo(int $n, string $singular, string $plural = ''): string
 /**
  * Botón-icono de una fila de tabla.
  *
- * $o: icono, titulo, href | onclick, color (blue por defecto), target.
+ * $o: icono, titulo, href | onclick, color (blue por defecto), target, aria.
  * El `title` es obligatorio de hecho: son botones sin texto, y sin él la fila
  * es indescifrable para quien use lector de pantalla.
+ *
+ * `aria` sirve para distinguir la fila cuando el título se repite: veinticinco
+ * botones que anuncian «Anular» son indistinguibles con lector de pantalla.
+ * Con `aria` se anuncia «Anular la venta VTA-000012». Por defecto es el título.
  */
 function btn_icono(array $o): string
 {
@@ -481,7 +485,7 @@ function btn_icono(array $o): string
     $cls = 'p-2 rounded-lg text-slate-400 transition ' . ($colores[$o['color'] ?? 'blue'] ?? $colores['blue']);
     $titulo = $o['titulo'] ?? '';
     $ico = icon($o['icono'] ?? 'eye', 'w-4 h-4');
-    $attrs = ' class="' . $cls . '" title="' . e($titulo) . '" aria-label="' . e($titulo) . '"';
+    $attrs = ' class="' . $cls . '" title="' . e($titulo) . '" aria-label="' . e($o['aria'] ?? $titulo) . '"';
 
     if (!empty($o['href'])) {
         $t = !empty($o['target']) ? ' target="' . e($o['target']) . '" rel="noopener"' : '';
@@ -497,7 +501,7 @@ function btn_icono(array $o): string
  * script de footer.php lo intercepta y lo cambia por el modal de la casa. Hay
  * que emitirlo con esa forma exacta o la fila se queda con el confirm nativo.
  *
- * $o: id, pregunta, accion ('eliminar'), campo ('id'), icono, titulo, extra (campos ocultos).
+ * $o: id, pregunta, accion ('eliminar'), campo ('id'), icono, titulo, aria, extra (campos ocultos).
  */
 function btn_eliminar(array $o): string
 {
@@ -513,7 +517,7 @@ function btn_eliminar(array $o): string
         . '<input type="hidden" name="' . e($o['campo'] ?? 'id') . '" value="' . e($o['id'] ?? '') . '">'
         . $extra
         . '<button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"'
-        . ' title="' . e($titulo) . '" aria-label="' . e($titulo) . '">' . icon($o['icono'] ?? 'trash', 'w-4 h-4') . '</button>'
+        . ' title="' . e($titulo) . '" aria-label="' . e($o['aria'] ?? $titulo) . '">' . icon($o['icono'] ?? 'trash', 'w-4 h-4') . '</button>'
         . '</form>';
 }
 

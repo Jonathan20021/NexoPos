@@ -72,11 +72,19 @@ if (export_solicitado()) {
 layout_start('Cuentas por Cobrar', 'Clientes con crédito pendiente y registro de abonos', export_buttons());
 ?>
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5 flex items-center gap-4"><div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center"><?= icon('wallet', 'w-5 h-5') ?></div><div><p class="text-sm text-slate-500">Total por cobrar</p><p class="text-2xl font-extrabold text-slate-800"><?= money($totalCobrar) ?></p></div></div>
-  <div class="card p-5 flex items-center gap-4"><div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center"><?= icon('users', 'w-5 h-5') ?></div><div><p class="text-sm text-slate-500">Clientes con deuda</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($nDeudores) ?></p></div></div>
-  <div class="card p-5 flex items-center gap-4"><div class="w-11 h-11 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center"><?= icon('alert', 'w-5 h-5') ?></div><div><p class="text-sm text-slate-500">Exceden su límite</p><p class="text-2xl font-extrabold text-slate-800"><?= number_format($nExcedidos) ?></p></div></div>
-</div>
+<?php
+echo kpis([
+    ['label' => 'Total por cobrar', 'valor' => money($totalCobrar), 'icono' => 'wallet',
+     'color' => $totalCobrar > 0 ? 'amber' : 'emerald',
+     'nota' => $totalCobrar > 0 ? 'Crédito pendiente de cobro' : 'Nada pendiente'],
+    ['label' => 'Clientes con deuda', 'valor' => number_format($nDeudores), 'icono' => 'users', 'color' => 'blue'],
+    // Un cliente por encima de su límite es el que puede dejar de pagar: se le
+    // siguió vendiendo a crédito más allá de lo que se le autorizó.
+    ['label' => 'Exceden su límite', 'valor' => number_format($nExcedidos), 'icono' => 'alert',
+     'color' => $nExcedidos > 0 ? 'rose' : 'emerald',
+     'nota' => $nExcedidos > 0 ? 'Se les vendió por encima de lo autorizado' : 'Todos dentro de su límite'],
+], 3);
+?>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
   <div class="card overflow-hidden lg:col-span-2">

@@ -148,14 +148,45 @@ $totVendido = (float) qVal(
       WHERE $where AND v.estado='completada'", $params);
 
 $total = $pg['total'];   // total del filtro actual, no de la página
-layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format($total) . ' registros' : ''), export_buttons());
-?>
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5"><p class="text-sm text-slate-400">Total vendido (filtro)</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($totVendido) ?></p></div>
-  <div class="card p-5"><p class="text-sm text-slate-400">Transacciones</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format($total) ?></p></div>
-  <div class="card p-5"><p class="text-sm text-slate-400">Ticket promedio</p><p class="text-2xl font-extrabold text-slate-800 mt-1"><?= money($total > 0 ? $totVendido / max(1, $total) : 0) ?></p></div>
-</div>
+// Con el e-CF encendido, una factura rechazada por la DGII NO es una factura:
+// el cliente se llevó un papel que fiscalmente no existe. Eso tiene que verse
+// desde el listado, no solo desde la consola de facturación electrónica.
+$ecfMal = 0; $ecfEnCola = 0;
+if (function_exists('ecfActivo') && ecfActivo()) {
+    $e = qOne(
+        "SELECT COALESCE(SUM(d.estado IN ('rechazado','error')), 0) mal,
+                COALESCE(SUM(d.estado NOT IN ('rechazado','error','aceptado','aceptado_condicional')), 0) cola
+           FROM ventas v
+           LEFT JOIN clientes cl ON cl.id = v.cliente_id
+           JOIN ecf_documentos d ON d.origen = 'venta' AND d.origen_id = v.id
+          WHERE $where", $params);
+    $ecfMal = (int) ($e['mal'] ?? 0);
+    $ecfEnCola = (int) ($e['cola'] ?? 0);
+}
+
+layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format($total) . ' registros' : ''), export_buttons());
+
+// Estos totales SÍ siguen al filtro, y por eso lo dicen en la etiqueta: un
+// historial de ventas se lee por tramos —este mes, esta sucursal, este
+// vendedor— y el resumen tiene que hablar del tramo que se está mirando.
+$tarjetas = [
+    ['label' => 'Vendido en el filtro', 'valor' => money($totVendido), 'icono' => 'dollar', 'color' => 'emerald',
+     'nota' => 'Solo ventas completadas'],
+    ['label' => 'Transacciones', 'valor' => number_format($total), 'icono' => 'receipt', 'color' => 'blue'],
+    ['label' => 'Ticket promedio', 'valor' => money($total > 0 ? $totVendido / max(1, $total) : 0),
+     'icono' => 'chart', 'color' => 'violet'],
+];
+if (function_exists('ecfActivo') && ecfActivo()) {
+    $tarjetas[] = ['label' => 'e-CF con problema', 'valor' => number_format($ecfMal), 'icono' => 'alert',
+        'color' => $ecfMal > 0 ? 'rose' : 'emerald',
+        'nota' => $ecfMal > 0
+            ? 'Rechazados por la DGII'
+            : ($ecfEnCola > 0 ? number_format($ecfEnCola) . ' esperando acuse' : 'Todos aceptados'),
+        'href' => $ecfMal > 0 ? url('modules/finanzas/ecf.php') : ''];
+}
+echo kpis($tarjetas, count($tarjetas));
+?>
 
 <div class="card overflow-hidden">
   <?php $selSuc = selectSucursalFiltro(); ?>
@@ -184,16 +215,18 @@ layout_start('Ventas', 'Historial de ventas' . ($total ? ' · ' . number_format(
               <td class="text-right font-bold text-slate-800"><?= money($v['total']) ?></td>
               <td><?= badgeFor($v['estado']) ?></td>
               <td>
-                <div class="flex items-center justify-end gap-1">
-                  <a href="?ver=<?= (int) $v['id'] ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Ver"><?= icon('eye', 'w-4 h-4') ?></a>
-                  <a href="<?= e(url('modules/pos/ticket.php?id=' . (int) $v['id'])) ?>" target="_blank" class="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100" title="Ticket"><?= icon('print', 'w-4 h-4') ?></a>
-                  <?php if (can('ventas.anular') && $v['estado'] === 'completada'): ?>
-                    <button type="button"
-                            onclick="<?= jsEvent('venta:anular', ['id' => (int) $v['id'], 'numero' => $v['numero'], 'ncf' => $v['ncf'] ?? '']) ?>"
-                            class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
-                            title="Anular" aria-label="Anular la venta <?= e($v['numero']) ?>"><?= icon('x', 'w-4 h-4') ?></button>
-                  <?php endif; ?>
-                </div>
+                <?= acciones([
+                    btn_icono(['icono' => 'eye', 'titulo' => 'Ver el detalle', 'href' => '?ver=' . (int) $v['id']]),
+                    btn_icono(['icono' => 'print', 'titulo' => 'Imprimir el ticket', 'color' => 'slate',
+                               'href' => url('modules/pos/ticket.php?id=' . (int) $v['id']), 'target' => '_blank']),
+                    // Anular abre un modal propio (pide el tipo de anulación
+                    // para el 608), no el confirm genérico.
+                    (can('ventas.anular') && $v['estado'] === 'completada') ? btn_icono([
+                        'icono' => 'x', 'color' => 'rose', 'titulo' => 'Anular',
+                        'aria' => 'Anular la venta ' . $v['numero'],
+                        'onclick' => jsEvent('venta:anular', ['id' => (int) $v['id'], 'numero' => $v['numero'], 'ncf' => $v['ncf'] ?? '']),
+                    ]) : '',
+                ]) ?>
               </td>
             </tr>
           <?php endforeach; ?>

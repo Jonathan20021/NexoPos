@@ -215,8 +215,40 @@ $joinBase = "FROM devoluciones d JOIN ventas v ON v.id=d.venta_id JOIN sucursale
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM devoluciones d JOIN ventas v ON v.id=d.venta_id WHERE $where", $params), 25);
 $devs = qAll("SELECT d.*, v.numero AS venta_numero, su.nombre AS sucursal, u.nombre AS usuario $joinBase ORDER BY d.id DESC LIMIT {$pg['porPagina']} OFFSET {$pg['offset']}", $params);
 
+// El indicador que importa no es cuántas devoluciones hay, sino qué proporción
+// de lo vendido se está devolviendo: un 1% es normal, un 15% es un problema de
+// producto, de precio o de quien vende.
+[$scopeV, $spV] = sucursalFiltro('v.sucursal_id');
+$mes = date('Y-m-01');
+$resumen = qOne(
+    "SELECT (SELECT COUNT(*) FROM devoluciones d2 JOIN ventas v2 ON v2.id = d2.venta_id
+              WHERE d2.created_at >= ? AND " . str_replace('v.', 'v2.', $scopeV) . ") n_mes,
+            (SELECT COALESCE(SUM(d2.total), 0) FROM devoluciones d2 JOIN ventas v2 ON v2.id = d2.venta_id
+              WHERE d2.created_at >= ? AND " . str_replace('v.', 'v2.', $scopeV) . ") monto_mes,
+            (SELECT COALESCE(SUM(v.total), 0) FROM ventas v
+              WHERE v.fecha >= ? AND v.estado <> 'anulada' AND $scopeV) vendido_mes",
+    array_merge([$mes], $spV, [$mes], $spV, [$mes], $spV)
+) ?: ['n_mes' => 0, 'monto_mes' => 0, 'vendido_mes' => 0];
+
+$vendido = (float) $resumen['vendido_mes'];
+$devuelto = (float) $resumen['monto_mes'];
+$pct = $vendido > 0 ? round($devuelto / $vendido * 100, 1) : 0.0;
+
 $acciones = can('devoluciones.crear') ? btn_nuevo('dev:new', 'Nueva devolución') : '';
 layout_start('Devoluciones', 'Registro de devoluciones de mercancía', $acciones);
+
+echo kpis([
+    ['label' => 'Devoluciones del mes', 'valor' => number_format((int) $resumen['n_mes']), 'icono' => 'undo',
+     'color' => 'slate', 'nota' => 'Desde el día 1'],
+    ['label' => 'Reembolsado este mes', 'valor' => money($devuelto), 'icono' => 'wallet',
+     'color' => $devuelto > 0 ? 'amber' : 'slate', 'nota' => 'Dinero que salió de vuelta'],
+    ['label' => 'Sobre lo vendido', 'valor' => $pct . '%', 'icono' => 'trending',
+     // Por encima del 5% deja de ser ruido y pasa a ser una señal que hay que mirar.
+     'color' => $pct >= 5 ? 'rose' : ($pct > 0 ? 'amber' : 'emerald'),
+     'nota' => $vendido > 0 ? 'De ' . money($vendido) . ' facturados' : 'Sin ventas este mes'],
+    ['label' => 'Total histórico', 'valor' => number_format($pg['total']), 'icono' => 'history', 'color' => 'blue',
+     'nota' => 'En el filtro actual'],
+], 4);
 ?>
 
 <div class="card overflow-hidden">

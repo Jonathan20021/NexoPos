@@ -283,25 +283,22 @@ if ($tab === 'ajustes') {
 }
 ?>
 
-<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-5">
-  <?php
-  $tarjetas = [
-      ['Cotizaciones', number_format((int) ($kpi['total'] ?? 0)), 'file', 'slate', 'en total'],
-      ['Abiertas', money((float) ($kpi['abiertas'] ?? 0)), 'clock', 'sky', number_format((int) ($kpi['n_abiertas'] ?? 0)) . ' esperando respuesta'],
-      ['Ganado', money((float) ($kpi['ganado'] ?? 0)), 'check', 'emerald', number_format((int) ($kpi['n_facturadas'] ?? 0)) . ' facturadas'],
-      ['Tasa de cierre', $tasaCierre . '%', 'trending', 'violet', 'de cotizado a facturado'],
-  ];
-  foreach ($tarjetas as [$lbl, $val, $ic, $col, $sub]): ?>
-    <div class="card p-5">
-      <div class="flex items-start justify-between mb-3">
-        <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold"><?= e($lbl) ?></p>
-        <div class="w-9 h-9 rounded-xl bg-<?= $col ?>-50 text-<?= $col ?>-600 flex items-center justify-center"><?= icon($ic, 'w-4 h-4') ?></div>
-      </div>
-      <p class="text-2xl font-bold text-slate-800"><?= e($val) ?></p>
-      <p class="text-xs text-slate-400 mt-1"><?= e($sub) ?></p>
-    </div>
-  <?php endforeach; ?>
-</div>
+<?php
+echo kpis([
+    ['label' => 'Cotizaciones', 'valor' => number_format((int) ($kpi['total'] ?? 0)), 'icono' => 'file',
+     'color' => 'slate', 'nota' => 'En total'],
+    ['label' => 'Abiertas', 'valor' => money((float) ($kpi['abiertas'] ?? 0)), 'icono' => 'clock',
+     'color' => (int) ($kpi['n_abiertas'] ?? 0) > 0 ? 'sky' : 'slate',
+     'nota' => number_format((int) ($kpi['n_abiertas'] ?? 0)) . ' esperando respuesta',
+     'href' => (int) ($kpi['n_abiertas'] ?? 0) > 0 ? '?estado=enviada' : ''],
+    ['label' => 'Ganado', 'valor' => money((float) ($kpi['ganado'] ?? 0)), 'icono' => 'check', 'color' => 'emerald',
+     'nota' => number_format((int) ($kpi['n_facturadas'] ?? 0)) . ' facturadas', 'href' => '?estado=facturada'],
+    // La tasa de cierre es la pregunta comercial: de todo lo que se ofertó,
+    // cuánto acabó en factura.
+    ['label' => 'Tasa de cierre', 'valor' => $tasaCierre . '%', 'icono' => 'trending', 'color' => 'violet',
+     'nota' => 'De cotizado a facturado'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
