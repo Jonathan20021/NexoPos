@@ -100,7 +100,35 @@ foreach (qAll("SELECT rp.rol_id, p.clave FROM rol_permisos rp JOIN permisos p ON
 }
 
 $acciones = can('roles.crear') ? btn_nuevo('rol:new', 'Nuevo rol') : '';
+// Un permiso que ningún rol tiene es una función que, en la práctica, solo
+// pueden usar los super administradores. No falla ni avisa: simplemente la
+// opción no le aparece a nadie más, y eso se descubre el día que alguien la
+// necesita. Los super admin pasan por encima de los permisos, así que ni
+// siquiera se nota mientras solo la use quien montó el sistema.
+$sinAsignar = (int) qVal(
+    "SELECT COUNT(*) FROM permisos p
+      WHERE NOT EXISTS (SELECT 1 FROM rol_permisos rp
+                         JOIN roles r ON r.id = rp.rol_id AND r.activo = 1 AND r.es_super = 0
+                        WHERE rp.permiso_id = p.id)");
+$totalPermisos = (int) qVal("SELECT COUNT(*) FROM permisos");
+$rolesActivos  = (int) qVal("SELECT COUNT(*) FROM roles WHERE activo = 1");
+$sinUsuarios   = (int) qVal(
+    "SELECT COUNT(*) FROM roles r WHERE r.activo = 1
+       AND NOT EXISTS (SELECT 1 FROM usuarios u WHERE u.rol_id = r.id AND u.activo = 1)");
+
 layout_start('Roles y Permisos', 'Define qué puede hacer cada tipo de usuario', $acciones);
+
+echo kpis([
+    ['label' => 'Roles activos', 'valor' => number_format($rolesActivos), 'icono' => 'shield', 'color' => 'blue',
+     'nota' => $sinUsuarios > 0
+        ? number_format($sinUsuarios) . ' sin ningún usuario' : 'Todos con usuarios'],
+    ['label' => 'Permisos definidos', 'valor' => number_format($totalPermisos), 'icono' => 'key', 'color' => 'slate'],
+    ['label' => 'Sin asignar a nadie', 'valor' => number_format($sinAsignar), 'icono' => 'alert',
+     'color' => $sinAsignar > 0 ? 'amber' : 'emerald',
+     'nota' => $sinAsignar > 0
+        ? 'Solo los super admin pueden usarlos'
+        : 'Todos repartidos'],
+], 3);
 ?>
 
 <div class="card overflow-hidden">

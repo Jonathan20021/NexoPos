@@ -116,8 +116,39 @@ $usuarios = qAll(
     $params
 );
 
+// Una cuenta activa que nadie usa desde hace tres meses es una puerta abierta
+// sin vigilar: casi siempre es alguien que ya no está en la empresa y a quien
+// nadie dio de baja. Y la segunda verificación es la diferencia entre perder
+// una contraseña y perder el sistema.
+$seg = qOne(
+    "SELECT COALESCE(SUM(activo = 1), 0) activos,
+            COALESCE(SUM(activo = 0), 0) inactivos,
+            COALESCE(SUM(activo = 1 AND otp_activo = 1), 0) con_otp,
+            COALESCE(SUM(activo = 1 AND (ultimo_acceso IS NULL
+                     OR ultimo_acceso < DATE_SUB(NOW(), INTERVAL 90 DAY))), 0) dormidos
+       FROM usuarios"
+) ?: ['activos' => 0, 'inactivos' => 0, 'con_otp' => 0, 'dormidos' => 0];
+
 $acciones = can('usuarios.crear') ? btn_nuevo('usr:new', 'Nuevo usuario') : '';
 layout_start('Usuarios', 'Gestiona el acceso del personal al sistema', $acciones);
+
+echo kpis([
+    ['label' => 'Cuentas activas', 'valor' => number_format((int) $seg['activos']), 'icono' => 'users',
+     'color' => 'blue',
+     'nota' => (int) $seg['inactivos'] > 0
+        ? number_format((int) $seg['inactivos']) . ' desactivada' . ((int) $seg['inactivos'] === 1 ? '' : 's')
+        : 'Ninguna desactivada'],
+    ['label' => 'Sin entrar en 90 días', 'valor' => number_format((int) $seg['dormidos']), 'icono' => 'clock',
+     'color' => (int) $seg['dormidos'] > 0 ? 'amber' : 'emerald',
+     'nota' => (int) $seg['dormidos'] > 0
+        ? 'Accesos abiertos que nadie usa'
+        : 'Todas en uso reciente'],
+    ['label' => 'Con segundo factor', 'valor' => number_format((int) $seg['con_otp']), 'icono' => 'shield',
+     'color' => (int) $seg['con_otp'] > 0 ? 'emerald' : 'amber',
+     'nota' => (int) $seg['activos'] > 0
+        ? 'De ' . number_format((int) $seg['activos']) . ' cuentas activas'
+        : ''],
+], 3);
 ?>
 
 <div class="card overflow-hidden">

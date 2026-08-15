@@ -54,7 +54,31 @@ $modulos = qCol("SELECT DISTINCT modulo FROM auditoria ORDER BY modulo");
 // Colores de badge por acción.
 $colorAccion = ['crear' => 'emerald', 'editar' => 'blue', 'eliminar' => 'rose', 'anular' => 'amber', 'login' => 'indigo', 'logout' => 'slate'];
 
+// Lo que se busca en una auditoría no es el volumen: son los borrados y las
+// anulaciones. El resto del registro es ruido de operación normal. Estos
+// totales siguen al filtro, porque una auditoría se lee por tramos.
+$aud = qOne(
+    "SELECT COUNT(*) n,
+            COUNT(DISTINCT a.usuario_nombre) usuarios,
+            COALESCE(SUM(a.accion IN ('eliminar','anular')), 0) destructivas,
+            COALESCE(SUM(a.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)), 0) hoy
+       FROM auditoria a $where", $params
+) ?: ['n' => 0, 'usuarios' => 0, 'destructivas' => 0, 'hoy' => 0];
+
 layout_start('Auditoría', 'Registro de actividad del sistema', export_buttons());
+
+echo kpis([
+    ['label' => 'Movimientos', 'valor' => number_format((int) $aud['n']), 'icono' => 'history', 'color' => 'slate',
+     'nota' => 'En el tramo filtrado'],
+    ['label' => 'Últimas 24 horas', 'valor' => number_format((int) $aud['hoy']), 'icono' => 'clock', 'color' => 'blue'],
+    ['label' => 'Borrados y anulaciones', 'valor' => number_format((int) $aud['destructivas']), 'icono' => 'alert',
+     'color' => (int) $aud['destructivas'] > 0 ? 'rose' : 'emerald',
+     'nota' => (int) $aud['destructivas'] > 0
+        ? 'Lo que de verdad hay que revisar'
+        : 'Nadie borró ni anuló nada'],
+    ['label' => 'Usuarios distintos', 'valor' => number_format((int) $aud['usuarios']), 'icono' => 'users',
+     'color' => 'violet', 'nota' => 'Con actividad en el tramo'],
+], 4);
 ?>
 
 <div class="card overflow-hidden">
