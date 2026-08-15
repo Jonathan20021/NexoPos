@@ -190,12 +190,20 @@ $hayTiendas = tiendas_hay();
 // el catálogo que todavía no se ha repartido entre las marcas.
 $sinTienda  = $hayTiendas && get('sin_tienda') === '1';
 $tieFiltro  = $hayTiendas && !$sinTienda ? (int) (tiendaFiltroActual() ?? 0) : 0;
+// Filtros de salud del catálogo. No son adorno: con 300 referencias cargadas de
+// golpe desde un PDF, «cuáles quedan sin precio» y «cuáles están bajo mínimo»
+// son las dos preguntas que se hacen a diario, y sin esto había que ir a ojo.
+$estadoF = in_array(get('estado'), ['sin_precio', 'bajo_minimo', 'inactivos'], true) ? get('estado') : '';
+
 $cond = ['p.activo IN (0,1)'];
 $params = [];
 if ($q !== '') { $cond[] = "(p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; $params[] = "%$q%"; }
 if ($catFiltro > 0) { $cond[] = "p.categoria_id = ?"; $params[] = $catFiltro; }
 if ($tieFiltro > 0) { $cond[] = "p.tienda_id = ?"; $params[] = $tieFiltro; }
 if ($sinTienda)     { $cond[] = "p.tienda_id IS NULL"; }
+if ($estadoF === 'sin_precio')  $cond[] = "p.precio_venta <= 0 AND p.activo = 1";
+if ($estadoF === 'bajo_minimo') $cond[] = "p.tipo = 'producto' AND p.stock_minimo > 0 AND $stockExpr < p.stock_minimo";
+if ($estadoF === 'inactivos')   $cond[] = "p.activo = 0";
 $where = 'WHERE ' . implode(' AND ', $cond);
 
 if (export_solicitado()) {
@@ -230,6 +238,24 @@ $unidades = qAll("SELECT id, nombre, abreviatura FROM unidades ORDER BY nombre")
 // en cada carga de página quemaría un correlativo por visita.
 $sigCodigo = previewNumero('productos', 'codigo', 'SKU', 5);
 
+// Salud del catálogo. Se mide sobre TODO el catálogo, no sobre lo filtrado: son
+// indicadores de estado, y si cambiaran al buscar dejarían de servir para saber
+// cuánto falta por hacer.
+$salud = qOne(
+    "SELECT COUNT(*) AS total,
+            COALESCE(SUM(p.activo = 1), 0) AS activos,
+            COALESCE(SUM(p.precio_venta <= 0 AND p.activo = 1), 0) AS sin_precio,
+            COALESCE(SUM(p.tipo = 'producto' AND p.stock_minimo > 0 AND $stockExpr < p.stock_minimo), 0) AS bajo_minimo,
+            COALESCE(SUM($stockExpr * p.precio_compra), 0) AS valor
+       FROM productos p"
+) ?: ['total' => 0, 'activos' => 0, 'sin_precio' => 0, 'bajo_minimo' => 0, 'valor' => 0];
+
+$urlEstado = function (string $estado) use ($q, $catFiltro): string {
+    return '?' . http_build_query(array_filter([
+        'q' => $q ?: null, 'categoria_id' => $catFiltro ?: null, 'estado' => $estado ?: null,
+    ]));
+};
+
 $acciones = export_buttons()
     . (can('productos.etiquetas')
         ? '<a href="' . e(url('modules/inventario/etiquetas.php')) . '" class="btn btn-ghost">' . icon('barcode', 'w-4 h-4') . ' Etiquetas</a>'
@@ -239,17 +265,38 @@ $acciones = export_buttons()
         : '')
     . (can('productos.crear') ? btn_nuevo('prod:new', 'Nuevo producto') : '');
 layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
-?>
 
-<div class="card overflow-hidden">
-  <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-    <div class="flex items-center gap-2 flex-wrap">
-      <?= search_box('Buscar por nombre, SKU o código de barras...', $catFiltro ? ['categoria_id' => $catFiltro] : []) ?>
-      <form method="get" class="flex items-center gap-2">
+echo kpis([
+    ['label' => 'Productos activos', 'valor' => number_format((int) $salud['activos']), 'icono' => 'box', 'color' => 'blue',
+     'nota' => (int) $salud['total'] > (int) $salud['activos']
+        ? number_format((int) $salud['total'] - (int) $salud['activos']) . ' inactivos' : ''],
+    ['label' => 'Valor del inventario', 'valor' => money($salud['valor']), 'icono' => 'wallet', 'color' => 'emerald',
+     'nota' => 'A precio de compra' . (current_sucursal_id() !== null ? ' · sucursal actual' : ' · todas las sucursales')],
+    ['label' => 'Sin precio de venta', 'valor' => number_format((int) $salud['sin_precio']),
+     'icono' => 'tag', 'color' => (int) $salud['sin_precio'] > 0 ? 'amber' : 'slate',
+     'nota' => (int) $salud['sin_precio'] > 0 ? 'No se pueden vender' : 'Todo el catálogo tiene precio',
+     'href' => (int) $salud['sin_precio'] > 0 ? $urlEstado('sin_precio') : ''],
+    ['label' => 'Bajo el mínimo', 'valor' => number_format((int) $salud['bajo_minimo']),
+     'icono' => 'alert', 'color' => (int) $salud['bajo_minimo'] > 0 ? 'rose' : 'slate',
+     'nota' => (int) $salud['bajo_minimo'] > 0 ? 'Conviene reponer' : 'Nada por reponer',
+     'href' => (int) $salud['bajo_minimo'] > 0 ? $urlEstado('bajo_minimo') : ''],
+], 4);
+
+$filtros = search_box('Buscar por nombre, SKU o código de barras...', array_filter([
+        'categoria_id' => $catFiltro ?: null, 'estado' => $estadoF ?: null,
+    ]));
+ob_start(); ?>
+      <form method="get" class="flex items-center gap-2 flex-wrap">
         <?php if ($q !== ''): ?><input type="hidden" name="q" value="<?= e($q) ?>"><?php endif; ?>
         <select name="categoria_id" onchange="this.form.submit()" class="select w-48">
           <option value="0">Todas las categorías</option>
           <?php foreach ($categorias as $c): ?><option value="<?= (int) $c['id'] ?>" <?= $catFiltro === (int) $c['id'] ? 'selected' : '' ?>><?= e($c['nombre']) ?></option><?php endforeach; ?>
+        </select>
+        <select name="estado" onchange="this.form.submit()" class="select w-44" aria-label="Filtrar por estado del producto">
+          <option value="">Todo el catálogo</option>
+          <option value="sin_precio"  <?= $estadoF === 'sin_precio'  ? 'selected' : '' ?>>Sin precio de venta</option>
+          <option value="bajo_minimo" <?= $estadoF === 'bajo_minimo' ? 'selected' : '' ?>>Bajo el mínimo</option>
+          <option value="inactivos"   <?= $estadoF === 'inactivos'   ? 'selected' : '' ?>>Inactivos</option>
         </select>
         <?php if ($hayTiendas): ?>
           <select name="tienda_id" onchange="this.form.submit()" class="select w-48" aria-label="Filtrar por tienda">
@@ -258,14 +305,15 @@ layout_start('Productos', 'Catálogo de productos por categoría', $acciones);
               <option value="<?= (int) $t['id'] ?>" <?= $tieFiltro === (int) $t['id'] ? 'selected' : '' ?>><?= e($t['nombre']) ?></option>
             <?php endforeach; ?>
           </select>
-          <a href="?<?= e(http_build_query(array_filter(['q' => $q, 'categoria_id' => $catFiltro ?: null, 'sin_tienda' => $sinTienda ? null : '1']))) ?>"
+          <a href="?<?= e(http_build_query(array_filter(['q' => $q, 'categoria_id' => $catFiltro ?: null, 'estado' => $estadoF ?: null, 'sin_tienda' => $sinTienda ? null : '1']))) ?>"
              class="btn btn-sm <?= $sinTienda ? 'btn-primary' : 'btn-ghost' ?> whitespace-nowrap"
              title="Productos que todavía no tienen marca asignada">Sin marca</a>
         <?php endif; ?>
       </form>
-    </div>
-    <span class="text-sm text-slate-400"><?= number_format($pg['total']) ?> productos</span>
-  </div>
+<?php $filtros .= ob_get_clean(); ?>
+
+<div class="card overflow-hidden">
+  <?= toolbar($filtros, toolbar_conteo($pg['total'], 'producto')) ?>
 
   <?php if (!$productos): ?>
     <?= empty_state('Sin productos', 'Crea tu primer producto para comenzar a vender.', 'box', can('productos.crear') ? btn_nuevo('prod:new', 'Nuevo producto') : '') ?>
