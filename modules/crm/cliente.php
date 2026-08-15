@@ -97,7 +97,7 @@ $scT = sucursalScope('t.sucursal_id')[0];
 $paramsCli = array_merge([$id], $scParams);
 
 // Ventas del cliente
-$ventasKpi = qOne("SELECT COUNT(*) n, COALESCE(SUM(total),0) t FROM ventas
+$ventasKpi = qOne("SELECT COUNT(*) n, COALESCE(SUM(total),0) t, MAX(fecha) ultima FROM ventas
                    WHERE cliente_id = ? AND estado = 'completada' AND $scV", $paramsCli);
 $ventas = qAll("SELECT id, numero, fecha, total, estado FROM ventas
                 WHERE cliente_id = ? AND $scV ORDER BY fecha DESC LIMIT 8", $paramsCli);
@@ -154,14 +154,28 @@ layout_start('Ficha 360° · ' . $cliente['nombre'], 'Vista integral del cliente
   </div>
 </div>
 
-<!-- KPIs -->
-<div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
-  <div class="card p-4"><p class="text-xs text-slate-500">Total comprado</p><p class="text-xl font-extrabold text-slate-800"><?= money((float) $ventasKpi['t']) ?></p></div>
-  <div class="card p-4"><p class="text-xs text-slate-500">Compras</p><p class="text-xl font-extrabold text-slate-800"><?= number_format((int) $ventasKpi['n']) ?></p></div>
-  <div class="card p-4"><p class="text-xs text-slate-500">Balance por cobrar</p><p class="text-xl font-extrabold <?= $cliente['balance'] > 0 ? 'text-amber-600' : 'text-slate-800' ?>"><?= money($cliente['balance']) ?></p></div>
-  <div class="card p-4"><p class="text-xs text-slate-500">Oport. abiertas</p><p class="text-xl font-extrabold text-slate-800"><?= (int) $opoKpi['n'] ?></p></div>
-  <div class="card p-4"><p class="text-xs text-slate-500">Valor pipeline</p><p class="text-xl font-extrabold text-blue-600"><?= money((float) $opoKpi['v']) ?></p></div>
-</div>
+<?php
+// «Hace cuánto que no compra» es el dato que decide si hay que llamarlo, y era
+// justo el que no estaba en la ficha. Sale de la misma consulta de ventas.
+$ultima = $ventasKpi['ultima'] ?? null;
+$diasSin = $ultima ? (int) ((time() - strtotime($ultima)) / 86400) : null;
+$ticketMedio = (int) $ventasKpi['n'] > 0 ? (float) $ventasKpi['t'] / (int) $ventasKpi['n'] : 0.0;
+
+echo kpis([
+    ['label' => 'Total comprado', 'valor' => money((float) $ventasKpi['t']), 'icono' => 'dollar', 'color' => 'emerald',
+     'nota' => $ticketMedio > 0 ? money($ticketMedio) . ' por compra' : 'Nunca ha comprado'],
+    ['label' => 'Compras', 'valor' => number_format((int) $ventasKpi['n']), 'icono' => 'receipt', 'color' => 'blue',
+     'nota' => $diasSin === null
+        ? 'Sin historial'
+        : ($diasSin === 0 ? 'La última, hoy' : 'Hace ' . number_format($diasSin) . ' día' . ($diasSin === 1 ? '' : 's'))],
+    ['label' => 'Balance por cobrar', 'valor' => money($cliente['balance']), 'icono' => 'wallet',
+     'color' => $cliente['balance'] > 0 ? 'amber' : 'slate',
+     'nota' => $cliente['balance'] > 0 ? 'Crédito pendiente' : 'Al día'],
+    ['label' => 'Oportunidades abiertas', 'valor' => number_format((int) $opoKpi['n']), 'icono' => 'briefcase',
+     'color' => (int) $opoKpi['n'] > 0 ? 'violet' : 'slate',
+     'nota' => (float) $opoKpi['v'] > 0 ? money((float) $opoKpi['v']) . ' en juego' : 'Nada en el embudo'],
+], 4);
+?>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
   <!-- Columna principal -->

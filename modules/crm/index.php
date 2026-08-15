@@ -41,28 +41,27 @@ $acciones = can('crm.crear') ? '<a href="' . e(url('modules/crm/oportunidades.ph
 layout_start('Embudo de Ventas', 'Tablero del pipeline por etapa', $acciones);
 ?>
 
-<!-- KPIs -->
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('dollar', 'w-4 h-4') ?> Valor del pipeline</div>
-    <p class="text-2xl font-extrabold text-blue-600"><?= money((float) $abiertas['v']) ?></p>
-    <p class="text-xs text-slate-400 mt-1"><?= (int) $abiertas['n'] ?> oportunidad(es) abierta(s)</p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('check', 'w-4 h-4') ?> Ganadas este mes</div>
-    <p class="text-2xl font-extrabold text-emerald-600"><?= (int) $ganadasMes['n'] ?></p>
-    <p class="text-xs text-slate-400 mt-1"><?= money((float) $ganadasMes['v']) ?> cerrados</p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('x', 'w-4 h-4') ?> Perdidas este mes</div>
-    <p class="text-2xl font-extrabold text-rose-500"><?= $perdidasMes ?></p>
-  </div>
-  <a href="<?= e(url('modules/crm/tareas.php?estado=vencidas')) ?>" class="card p-5 hover:border-amber-300 transition">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('clock', 'w-4 h-4') ?> Tareas vencidas</div>
-    <p class="text-2xl font-extrabold <?= $tareasVencidas > 0 ? 'text-amber-600' : 'text-slate-800' ?>"><?= $tareasVencidas ?></p>
-    <p class="text-xs text-slate-400 mt-1">Ver agenda →</p>
-  </a>
-</div>
+<?php
+// «Perdidas este mes» a secas no dice nada: 3 perdidas es bueno si se ganaron
+// 30 y malo si se ganaron 2. Lo que importa es la proporción entre las dos.
+$cerradas = (int) $ganadasMes['n'] + $perdidasMes;
+$tasaGane = $cerradas > 0 ? round((int) $ganadasMes['n'] / $cerradas * 100) : 0;
+
+echo kpis([
+    ['label' => 'Valor del pipeline', 'valor' => money((float) $abiertas['v']), 'icono' => 'dollar', 'color' => 'blue',
+     'nota' => (int) $abiertas['n'] . ' oportunidad' . ((int) $abiertas['n'] === 1 ? '' : 'es') . ' abierta'
+        . ((int) $abiertas['n'] === 1 ? '' : 's')],
+    ['label' => 'Ganadas este mes', 'valor' => number_format((int) $ganadasMes['n']), 'icono' => 'check',
+     'color' => 'emerald', 'nota' => money((float) $ganadasMes['v']) . ' cerrados'],
+    ['label' => 'Perdidas este mes', 'valor' => number_format($perdidasMes), 'icono' => 'x',
+     'color' => $perdidasMes > 0 ? 'rose' : 'slate',
+     'nota' => $cerradas > 0 ? 'Se gana el ' . $tasaGane . '% de lo que se cierra' : 'Nada cerrado todavía'],
+    ['label' => 'Tareas vencidas', 'valor' => number_format($tareasVencidas), 'icono' => 'clock',
+     'color' => $tareasVencidas > 0 ? 'amber' : 'emerald',
+     'nota' => $tareasVencidas > 0 ? 'Compromisos que ya pasaron de fecha' : 'La agenda está al día',
+     'href' => url('modules/crm/tareas.php?estado=vencidas')],
+], 4);
+?>
 
 <!-- Tablero Kanban -->
 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">

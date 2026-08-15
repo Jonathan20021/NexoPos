@@ -161,24 +161,29 @@ $probJs = json_encode(array_map(fn($e) => $e[2], $etapas));
 ?>
 
 <!-- KPIs -->
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('briefcase', 'w-4 h-4') ?> Oportunidades abiertas</div>
-    <p class="text-2xl font-extrabold text-slate-800"><?= number_format((int) $abiertas['n']) ?></p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('dollar', 'w-4 h-4') ?> Valor del pipeline</div>
-    <p class="text-2xl font-extrabold text-blue-600"><?= money((float) $abiertas['v']) ?></p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('check', 'w-4 h-4') ?> Ganadas este mes</div>
-    <p class="text-2xl font-extrabold text-emerald-600"><?= number_format($ganadasMes) ?></p>
-  </div>
-  <div class="card p-5">
-    <div class="flex items-center gap-2 text-slate-500 text-sm mb-1"><?= icon('pie', 'w-4 h-4') ?> Tasa de conversión</div>
-    <p class="text-2xl font-extrabold text-slate-800"><?= $conversion ?>%</p>
-  </div>
-</div>
+<?php
+// Una oportunidad abierta que lleva un mes sin tocarse no está abierta: está
+// olvidada. Sigue inflando el valor del pipeline y haciendo creer que hay más
+// negocio del que hay. Por eso se cuentan aparte.
+$estancadas = (int) qVal(
+    "SELECT COUNT(*) FROM crm_oportunidades o $kpiWhere AND etapa NOT IN ('ganada','perdida')
+       AND o.updated_at < DATE_SUB(NOW(), INTERVAL 30 DAY)", $kpiParams);
+$ticket = (int) $abiertas['n'] > 0 ? (float) $abiertas['v'] / (int) $abiertas['n'] : 0.0;
+
+echo kpis([
+    ['label' => 'Oportunidades abiertas', 'valor' => number_format((int) $abiertas['n']), 'icono' => 'briefcase',
+     'color' => 'slate',
+     'nota' => $estancadas > 0
+        ? number_format($estancadas) . ' sin moverse hace más de 30 días'
+        : 'Todas con movimiento reciente'],
+    ['label' => 'Valor del pipeline', 'valor' => money((float) $abiertas['v']), 'icono' => 'dollar', 'color' => 'blue',
+     'nota' => $ticket > 0 ? money($ticket) . ' por oportunidad' : ''],
+    ['label' => 'Ganadas este mes', 'valor' => number_format($ganadasMes), 'icono' => 'check', 'color' => 'emerald',
+     'href' => '?etapa=ganada'],
+    ['label' => 'Tasa de conversión', 'valor' => $conversion . '%', 'icono' => 'pie', 'color' => 'violet',
+     'nota' => 'Histórico de lo cerrado'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">

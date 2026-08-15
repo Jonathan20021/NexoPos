@@ -118,8 +118,39 @@ $tareas = qAll(
 
 $filtros = ['pendientes' => 'Pendientes', 'vencidas' => 'Vencidas', 'completadas' => 'Completadas', 'canceladas' => 'Canceladas', 'todas' => 'Todas'];
 
+// Una agenda comercial se lee por urgencia, no por volumen: lo que hay que
+// saber al abrirla es qué se pasó de fecha y qué vence hoy. El total de tareas
+// pendientes no le dice a nadie por dónde empezar.
+$ag = qOne(
+    "SELECT COALESCE(SUM(t.estado = 'pendiente' AND t.vence_at IS NOT NULL AND t.vence_at < NOW()), 0) vencidas,
+            COALESCE(SUM(t.estado = 'pendiente' AND DATE(t.vence_at) = CURDATE()), 0) hoy,
+            COALESCE(SUM(t.estado = 'pendiente'), 0) pendientes,
+            COALESCE(SUM(t.estado = 'pendiente' AND t.vence_at IS NULL), 0) sin_fecha,
+            COALESCE(SUM(t.estado = 'completada'
+                         AND t.completada_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) hechas_mes
+       FROM crm_tareas t WHERE $scope", $scopeParams
+) ?: ['vencidas' => 0, 'hoy' => 0, 'pendientes' => 0, 'sin_fecha' => 0, 'hechas_mes' => 0];
+
 $acciones = can('crm.crear') ? btn_nuevo('tar:new', 'Nueva tarea') : '';
 layout_start('Tareas y Seguimientos', 'Agenda comercial de tu equipo', $acciones);
+
+echo kpis([
+    ['label' => 'Vencidas', 'valor' => number_format((int) $ag['vencidas']), 'icono' => 'alert',
+     'color' => (int) $ag['vencidas'] > 0 ? 'rose' : 'emerald',
+     'nota' => (int) $ag['vencidas'] > 0 ? 'Compromisos que ya pasaron de fecha' : 'Nada atrasado',
+     'href' => '?estado=vencidas'],
+    ['label' => 'Vencen hoy', 'valor' => number_format((int) $ag['hoy']), 'icono' => 'clock',
+     'color' => (int) $ag['hoy'] > 0 ? 'amber' : 'slate', 'nota' => 'Para cerrar antes de irse'],
+    ['label' => 'Pendientes', 'valor' => number_format((int) $ag['pendientes']), 'icono' => 'clipboard',
+     'color' => 'blue',
+     // Una tarea sin fecha no entra en ninguna agenda: nadie la va a ver venir.
+     'nota' => (int) $ag['sin_fecha'] > 0
+        ? number_format((int) $ag['sin_fecha']) . ' sin fecha de vencimiento'
+        : 'Todas con fecha',
+     'href' => '?estado=pendientes'],
+    ['label' => 'Completadas este mes', 'valor' => number_format((int) $ag['hechas_mes']), 'icono' => 'check',
+     'color' => 'emerald', 'href' => '?estado=completadas'],
+], 4);
 ?>
 
 <div class="card overflow-hidden">

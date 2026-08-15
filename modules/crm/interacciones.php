@@ -105,8 +105,35 @@ $items = qAll(
     $params
 );
 
+// Una bitácora de contactos vale por su constancia, no por su tamaño. Lo que
+// hay que ver es si se sigue tocando a los clientes este mes y a cuántos
+// DISTINTOS: 40 llamadas a la misma persona no son cobertura comercial.
+$bit = qOne(
+    "SELECT COALESCE(SUM(i.fecha >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) mes,
+            COUNT(DISTINCT CASE WHEN i.fecha >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                                THEN i.cliente_id END) clientes_mes,
+            COALESCE(SUM(i.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)), 0) semana,
+            COUNT(*) total
+       FROM crm_interacciones i WHERE $scope", $scopeParams
+) ?: ['mes' => 0, 'clientes_mes' => 0, 'semana' => 0, 'total' => 0];
+
 $acciones = export_buttons() . (can('crm.crear') ? btn_nuevo('int:new', 'Registrar interacción') : '');
 layout_start('Interacciones', 'Bitácora de contactos con los clientes', $acciones);
+
+echo kpis([
+    ['label' => 'Contactos este mes', 'valor' => number_format((int) $bit['mes']), 'icono' => 'phone',
+     'color' => (int) $bit['mes'] > 0 ? 'blue' : 'slate',
+     'nota' => (int) $bit['clientes_mes'] > 0
+        ? 'A ' . number_format((int) $bit['clientes_mes']) . ' cliente'
+          . ((int) $bit['clientes_mes'] === 1 ? '' : 's') . ' distinto'
+          . ((int) $bit['clientes_mes'] === 1 ? '' : 's')
+        : 'Nadie contactado todavía'],
+    ['label' => 'Últimos 7 días', 'valor' => number_format((int) $bit['semana']), 'icono' => 'clock',
+     'color' => (int) $bit['semana'] > 0 ? 'emerald' : 'amber',
+     'nota' => (int) $bit['semana'] > 0 ? 'La bitácora está viva' : 'Nadie ha registrado nada'],
+    ['label' => 'Total registrado', 'valor' => number_format((int) $bit['total']), 'icono' => 'history',
+     'color' => 'slate', 'nota' => 'Histórico completo'],
+], 3);
 ?>
 
 <div class="card overflow-hidden">
