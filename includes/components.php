@@ -372,6 +372,157 @@ function paginacion(array $pg): string
     return $h . '</div></nav>';
 }
 
+/* ==========================================================================
+ *  Piezas de listado
+ *
+ *  Todo lo de aquí abajo existía ya, pero copiado a mano en decenas de
+ *  páginas: 51 tarjetas de KPI, 59 formularios de borrado, 95 botones de
+ *  acción y 40 barras de filtro, cada copia con su propia deriva. Un tono de
+ *  gris distinto aquí, un `title` que falta allá, un borrado sin confirmar.
+ *
+ *  Tenerlo en un solo sitio no es limpieza: es la única forma de que la
+ *  aplicación se vea igual en todas partes cuando alguien toque una página
+ *  suelta dentro de seis meses.
+ * ========================================================================== */
+
+/** Fondos de icono por color. Compartidos por kpi(), rep_kpi() y rep_seccion(). */
+function ui_tono(string $color = 'blue'): string
+{
+    $tonos = [
+        'blue' => 'bg-blue-50 text-blue-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
+        'violet' => 'bg-violet-50 text-violet-600', 'amber' => 'bg-amber-50 text-amber-600',
+        'rose' => 'bg-rose-50 text-rose-600', 'indigo' => 'bg-indigo-50 text-indigo-600',
+        'cyan' => 'bg-cyan-50 text-cyan-600', 'slate' => 'bg-slate-100 text-slate-500',
+        'sky' => 'bg-sky-50 text-sky-600', 'pink' => 'bg-pink-50 text-pink-600',
+    ];
+    return $tonos[$color] ?? $tonos['blue'];
+}
+
+/**
+ * Tarjeta de indicador.
+ *
+ * $o: valor, label, icono, color, delta (float|null), nota, invertir, href.
+ *
+ * `valor` entra como HTML ya formateado (viene de money(), number_format()…);
+ * `label` y `nota` se escapan. `href` la convierte en enlace: un KPI que dice
+ * «12 productos bajo mínimo» debería poder llevarte a esos 12.
+ */
+function kpi(array $o): string
+{
+    $h = '<div class="flex items-start justify-between gap-3">';
+    $h .= '<div class="w-11 h-11 rounded-xl ' . ui_tono($o['color'] ?? 'blue') . ' flex items-center justify-center shrink-0">'
+        . icon($o['icono'] ?? 'chart', 'w-5 h-5') . '</div>';
+
+    $delta = $o['delta'] ?? null;
+    if ($delta !== null) {
+        // `invertir` para las magnitudes donde bajar es la buena noticia (gastos,
+        // devoluciones, morosidad): sin esto, un −20% de gastos se pintaría rojo.
+        $bueno = !empty($o['invertir']) ? $delta <= 0 : $delta >= 0;
+        $h .= '<span class="badge ' . ($bueno ? 'stat-trend-up' : 'stat-trend-down') . '" title="Contra el periodo anterior">'
+            . icon($delta >= 0 ? 'arrow-up' : 'arrow-down', 'w-3 h-3') . ' ' . number_format(abs($delta), 1) . '%</span>';
+    }
+    $h .= '</div>';
+    $h .= '<p class="text-sm text-slate-500 mt-4">' . e($o['label'] ?? '') . '</p>';
+    $h .= '<p class="text-[26px] leading-tight font-extrabold text-slate-800 mt-0.5 tabular-nums">' . ($o['valor'] ?? '—') . '</p>';
+    if (!empty($o['nota'])) $h .= '<p class="text-xs text-slate-400 mt-1.5">' . $o['nota'] . '</p>';
+
+    if (!empty($o['href'])) {
+        return '<a href="' . e($o['href']) . '" class="card p-5 print-break block hover:border-blue-300 hover:shadow-pop transition">' . $h . '</a>';
+    }
+    return '<div class="card p-5 print-break">' . $h . '</div>';
+}
+
+/** Rejilla de indicadores. */
+function kpis(array $lista, int $cols = 4): string
+{
+    $c = [
+        '2' => 'sm:grid-cols-2', '3' => 'sm:grid-cols-2 xl:grid-cols-3',
+        '4' => 'sm:grid-cols-2 xl:grid-cols-4', '5' => 'sm:grid-cols-2 xl:grid-cols-5',
+    ];
+    $h = '<div class="grid grid-cols-1 ' . ($c[(string) $cols] ?? $c['4']) . ' gap-4 mb-5">';
+    foreach ($lista as $k) $h .= $k ? kpi($k) : '';
+    return $h . '</div>';
+}
+
+/**
+ * Cabecera de una tarjeta de listado: buscador y filtros a la izquierda,
+ * contador o acciones a la derecha. Va DENTRO de `.card overflow-hidden`.
+ */
+function toolbar(string $izquierda, string $derecha = ''): string
+{
+    return '<div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">'
+        . '<div class="flex items-center gap-2 flex-wrap min-w-0">' . $izquierda . '</div>'
+        . ($derecha ? '<div class="flex items-center gap-2 flex-wrap shrink-0">' . $derecha . '</div>' : '')
+        . '</div>';
+}
+
+/** Contador para la derecha de una toolbar: «1,204 productos». */
+function toolbar_conteo(int $n, string $singular, string $plural = ''): string
+{
+    $plural = $plural ?: $singular . 's';
+    return '<span class="text-sm text-slate-400 whitespace-nowrap tabular-nums">'
+        . number_format($n) . ' ' . e($n === 1 ? $singular : $plural) . '</span>';
+}
+
+/**
+ * Botón-icono de una fila de tabla.
+ *
+ * $o: icono, titulo, href | onclick, color (blue por defecto), target.
+ * El `title` es obligatorio de hecho: son botones sin texto, y sin él la fila
+ * es indescifrable para quien use lector de pantalla.
+ */
+function btn_icono(array $o): string
+{
+    $colores = [
+        'blue' => 'hover:text-blue-600 hover:bg-blue-50', 'rose' => 'hover:text-rose-600 hover:bg-rose-50',
+        'emerald' => 'hover:text-emerald-600 hover:bg-emerald-50', 'amber' => 'hover:text-amber-600 hover:bg-amber-50',
+        'violet' => 'hover:text-violet-600 hover:bg-violet-50', 'slate' => 'hover:text-slate-700 hover:bg-slate-100',
+    ];
+    $cls = 'p-2 rounded-lg text-slate-400 transition ' . ($colores[$o['color'] ?? 'blue'] ?? $colores['blue']);
+    $titulo = $o['titulo'] ?? '';
+    $ico = icon($o['icono'] ?? 'eye', 'w-4 h-4');
+    $attrs = ' class="' . $cls . '" title="' . e($titulo) . '" aria-label="' . e($titulo) . '"';
+
+    if (!empty($o['href'])) {
+        $t = !empty($o['target']) ? ' target="' . e($o['target']) . '" rel="noopener"' : '';
+        return '<a href="' . e($o['href']) . '"' . $t . $attrs . '>' . $ico . '</a>';
+    }
+    return '<button type="button" onclick="' . ($o['onclick'] ?? '') . '"' . $attrs . '>' . $ico . '</button>';
+}
+
+/**
+ * Borrado de una fila: formulario POST con CSRF y confirmación.
+ *
+ * El `onsubmit="return confirm(…)"` NO es el diálogo feo del navegador: el
+ * script de footer.php lo intercepta y lo cambia por el modal de la casa. Hay
+ * que emitirlo con esa forma exacta o la fila se queda con el confirm nativo.
+ *
+ * $o: id, pregunta, accion ('eliminar'), campo ('id'), icono, titulo, extra (campos ocultos).
+ */
+function btn_eliminar(array $o): string
+{
+    $pregunta = $o['pregunta'] ?? '¿Eliminar este registro?';
+    $extra = '';
+    foreach (($o['extra'] ?? []) as $k => $v) {
+        $extra .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+    }
+    $titulo = $o['titulo'] ?? 'Eliminar';
+    return '<form method="post" class="inline" onsubmit="return confirm(\'' . e($pregunta) . '\')">'
+        . csrf_field()
+        . '<input type="hidden" name="accion" value="' . e($o['accion'] ?? 'eliminar') . '">'
+        . '<input type="hidden" name="' . e($o['campo'] ?? 'id') . '" value="' . e($o['id'] ?? '') . '">'
+        . $extra
+        . '<button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"'
+        . ' title="' . e($titulo) . '" aria-label="' . e($titulo) . '">' . icon($o['icono'] ?? 'trash', 'w-4 h-4') . '</button>'
+        . '</form>';
+}
+
+/** Agrupa los botones de la columna de acciones, alineados a la derecha. */
+function acciones(array $botones): string
+{
+    return '<div class="flex items-center justify-end gap-1">' . implode('', array_filter($botones)) . '</div>';
+}
+
 /** Inicia una página completa (head + layout + cabecera). */
 function layout_start(string $titulo, string $subtitulo = '', string $acciones = ''): void
 {

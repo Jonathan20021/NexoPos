@@ -220,44 +220,15 @@ function rep_delta(float $actual, float $anterior): ?float
 }
 
 /**
- * Tarjeta de KPI.
- * $opts: valor, label, icono, color, delta (float|null), nota, invertir (true si bajar es bueno).
+ * Tarjeta de KPI y su rejilla.
+ *
+ * La implementación vive en components.php: un informe y un listado no pueden
+ * enseñar dos tarjetas distintas del mismo dato. Se conservan los nombres
+ * `rep_*` porque los usan los 27 informes.
  */
-function rep_kpi(array $o): string
-{
-    $col = $o['color'] ?? 'blue';
-    $fondos = [
-        'blue' => 'bg-blue-50 text-blue-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
-        'violet' => 'bg-violet-50 text-violet-600', 'amber' => 'bg-amber-50 text-amber-600',
-        'rose' => 'bg-rose-50 text-rose-600', 'indigo' => 'bg-indigo-50 text-indigo-600',
-        'cyan' => 'bg-cyan-50 text-cyan-600', 'slate' => 'bg-slate-100 text-slate-500',
-    ];
-    $h = '<div class="card p-5 print-break">';
-    $h .= '<div class="flex items-start justify-between gap-3">';
-    $h .= '<div class="w-11 h-11 rounded-xl ' . ($fondos[$col] ?? $fondos['blue']) . ' flex items-center justify-center shrink-0">'
-        . icon($o['icono'] ?? 'chart', 'w-5 h-5') . '</div>';
+function rep_kpi(array $o): string { return kpi($o); }
 
-    $delta = $o['delta'] ?? null;
-    if ($delta !== null) {
-        $bueno = !empty($o['invertir']) ? $delta <= 0 : $delta >= 0;
-        $h .= '<span class="badge ' . ($bueno ? 'stat-trend-up' : 'stat-trend-down') . '" title="Contra el periodo anterior">'
-            . icon($delta >= 0 ? 'arrow-up' : 'arrow-down', 'w-3 h-3') . ' ' . number_format(abs($delta), 1) . '%</span>';
-    }
-    $h .= '</div>';
-    $h .= '<p class="text-sm text-slate-500 mt-4">' . e($o['label'] ?? '') . '</p>';
-    $h .= '<p class="text-[26px] leading-tight font-extrabold text-slate-800 mt-0.5 tabular-nums">' . ($o['valor'] ?? '—') . '</p>';
-    if (!empty($o['nota'])) $h .= '<p class="text-xs text-slate-400 mt-1.5">' . $o['nota'] . '</p>';
-    return $h . '</div>';
-}
-
-/** Rejilla de KPIs. */
-function rep_kpis(array $kpis, int $cols = 4): string
-{
-    $c = ['2' => 'sm:grid-cols-2', '3' => 'sm:grid-cols-2 xl:grid-cols-3', '4' => 'sm:grid-cols-2 xl:grid-cols-4', '5' => 'sm:grid-cols-2 xl:grid-cols-5'];
-    $h = '<div class="grid grid-cols-1 ' . ($c[(string) $cols] ?? $c['4']) . ' gap-4 mb-5">';
-    foreach ($kpis as $k) $h .= rep_kpi($k);
-    return $h . '</div>';
-}
+function rep_kpis(array $kpis, int $cols = 4): string { return kpis($kpis, $cols); }
 
 /**
  * Cabecera de una sección/tarjeta de reporte. Se cierra con rep_fin().
@@ -267,17 +238,11 @@ function rep_kpis(array $kpis, int $cols = 4): string
  */
 function rep_seccion(string $titulo, string $sub = '', string $icono = '', string $color = 'blue', string $extra = ''): string
 {
-    $fondos = [
-        'blue' => 'bg-blue-50 text-blue-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
-        'violet' => 'bg-violet-50 text-violet-600', 'amber' => 'bg-amber-50 text-amber-600',
-        'rose' => 'bg-rose-50 text-rose-600', 'indigo' => 'bg-indigo-50 text-indigo-600',
-        'cyan' => 'bg-cyan-50 text-cyan-600', 'slate' => 'bg-slate-100 text-slate-500',
-    ];
     $h  = '<section class="card overflow-hidden mb-5 print-break h-full flex flex-col">';
     $h .= '<div class="flex items-start justify-between gap-3 p-5 pb-4">';
     $h .= '<div class="flex items-start gap-3 min-w-0">';
     if ($icono) {
-        $h .= '<span class="w-10 h-10 rounded-xl ' . ($fondos[$color] ?? $fondos['blue']) . ' flex items-center justify-center shrink-0">'
+        $h .= '<span class="w-10 h-10 rounded-xl ' . ui_tono($color) . ' flex items-center justify-center shrink-0">'
             . icon($icono, 'w-5 h-5') . '</span>';
     }
     $h .= '<div class="min-w-0"><h3 class="font-bold text-slate-800 leading-tight">' . e($titulo) . '</h3>';
@@ -376,35 +341,54 @@ function rep_color_nombre(?string $nombre): string
 /**
  * Barra de filtros estándar de los reportes: periodo + sucursal + acciones.
  * $opts: sucursal (bool), extra (HTML de campos adicionales), acciones (HTML)
+ *
+ * NO todos los informes tienen periodo. «Control de vencimientos», «Registros
+ * sanitarios» y «Proveedores con registro» son fotos del día de hoy: preguntan
+ * cómo está el inventario AHORA, no qué pasó entre dos fechas. Esos pasan un
+ * `$p` con solo `label`, y hasta ahora se les pintaba igual el selector de
+ * periodo —que no hacía nada— mientras PHP avisaba de seis claves inexistentes
+ * en cada carga. Si no hay periodo, no se dibuja: el filtro que miente es peor
+ * que el filtro que falta.
  */
 function rep_filtros(array $p, array $opts = []): string
 {
     $base = $_GET;
     unset($base['periodo'], $base['desde'], $base['hasta'], $base['export'], $base['p']);
 
-    $h  = '<div class="card p-4 mb-5 no-print" x-data="{avanzado:' . ($p['preset'] === 'personalizado' ? 'true' : 'false') . '}">';
+    $conPeriodo = isset($p['preset']);
+    $abierto = $conPeriodo && $p['preset'] === 'personalizado';
+
+    $h  = '<div class="card p-4 mb-5 no-print" x-data="{avanzado:' . ($abierto ? 'true' : 'false') . '}">';
     $h .= '<div class="flex flex-wrap items-center gap-2">';
 
     // Presets como segmentos.
-    $h .= '<div class="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-xl">';
-    foreach (rep_presets() as $k => $lbl) {
-        $qs = array_merge($base, ['periodo' => $k]);
-        $act = $p['preset'] === $k;
-        $h .= '<a href="?' . e(http_build_query($qs)) . '" class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition '
-            . ($act ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800') . '">' . e($lbl) . '</a>';
+    if ($conPeriodo) {
+        $h .= '<div class="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-xl">';
+        foreach (rep_presets() as $k => $lbl) {
+            $qs = array_merge($base, ['periodo' => $k]);
+            $act = $p['preset'] === $k;
+            $h .= '<a href="?' . e(http_build_query($qs)) . '" class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition '
+                . ($act ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800') . '">' . e($lbl) . '</a>';
+        }
+        $h .= '<button type="button" @click="avanzado=!avanzado" :class="avanzado ? \'bg-white text-blue-700 shadow-sm\' : \'text-slate-500 hover:text-slate-800\'"'
+            . ' class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition inline-flex items-center gap-1.5">'
+            . icon('calendar', 'w-3.5 h-3.5') . ' Personalizado</button>';
+        $h .= '</div>';
+    } elseif (!empty($p['label'])) {
+        // Sin periodo, la barra dice de cuándo es la foto.
+        $h .= '<span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-[13px] font-semibold text-slate-600">'
+            . icon('calendar', 'w-3.5 h-3.5') . ' ' . e($p['label']) . '</span>';
     }
-    $h .= '<button type="button" @click="avanzado=!avanzado" :class="avanzado ? \'bg-white text-blue-700 shadow-sm\' : \'text-slate-500 hover:text-slate-800\'"'
-        . ' class="px-3 py-1.5 rounded-lg text-[13px] font-semibold transition inline-flex items-center gap-1.5">'
-        . icon('calendar', 'w-3.5 h-3.5') . ' Personalizado</button>';
-    $h .= '</div>';
 
     $selSuc = !empty($opts['sucursal']) ? selectSucursalFiltro() : '';
     if ($selSuc || !empty($opts['extra'])) {
         $h .= '<form method="get" class="flex flex-wrap items-center gap-2">';
-        $h .= '<input type="hidden" name="periodo" value="' . e($p['preset']) . '">';
-        if ($p['preset'] === 'personalizado') {
-            $h .= '<input type="hidden" name="desde" value="' . e($p['desde']) . '">'
-                . '<input type="hidden" name="hasta" value="' . e($p['hasta']) . '">';
+        if ($conPeriodo) {
+            $h .= '<input type="hidden" name="periodo" value="' . e($p['preset']) . '">';
+            if ($p['preset'] === 'personalizado') {
+                $h .= '<input type="hidden" name="desde" value="' . e($p['desde']) . '">'
+                    . '<input type="hidden" name="hasta" value="' . e($p['hasta']) . '">';
+            }
         }
         // Conserva los filtros propios del reporte (vista, cuenta_id, estado...)
         // que no se envían en este formulario; si no, cambiar de sucursal los borra.
@@ -423,15 +407,17 @@ function rep_filtros(array $p, array $opts = []): string
     $h .= '<div class="ml-auto flex items-center gap-2">' . ($opts['acciones'] ?? rep_acciones()) . '</div>';
     $h .= '</div>';
 
-    // Rango personalizado (se despliega).
-    $h .= '<form method="get" x-show="avanzado" x-cloak x-transition class="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-slate-100">';
-    foreach ($base as $k => $v) {
-        if (is_scalar($v)) $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+    // Rango personalizado (se despliega). Sin periodo no hay rango que elegir.
+    if ($conPeriodo) {
+        $h .= '<form method="get" x-show="avanzado" x-cloak x-transition class="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-slate-100">';
+        foreach ($base as $k => $v) {
+            if (is_scalar($v)) $h .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
+        }
+        $h .= '<div><label class="label">Desde</label><input type="date" name="desde" value="' . e($p['desde']) . '" class="input w-auto"></div>';
+        $h .= '<div><label class="label">Hasta</label><input type="date" name="hasta" value="' . e($p['hasta']) . '" class="input w-auto"></div>';
+        $h .= '<button type="submit" class="btn btn-primary">' . icon('check', 'w-4 h-4') . ' Aplicar rango</button>';
+        $h .= '</form>';
     }
-    $h .= '<div><label class="label">Desde</label><input type="date" name="desde" value="' . e($p['desde']) . '" class="input w-auto"></div>';
-    $h .= '<div><label class="label">Hasta</label><input type="date" name="hasta" value="' . e($p['hasta']) . '" class="input w-auto"></div>';
-    $h .= '<button type="submit" class="btn btn-primary">' . icon('check', 'w-4 h-4') . ' Aplicar rango</button>';
-    $h .= '</form>';
 
     return $h . '</div>';
 }
@@ -454,9 +440,14 @@ function rep_acciones(bool $excel = true, bool $pdf = true): string
 /** Encabezado que solo aparece al imprimir / exportar a PDF desde el navegador. */
 function rep_encabezado_impresion(string $titulo, array $p): string
 {
+    // Los informes sin periodo (fotos del día) llevan su etiqueta en vez del rango.
+    $cuando = isset($p['desde'], $p['hasta'])
+        ? 'Periodo: ' . fechaCorta($p['desde']) . ' al ' . fechaCorta($p['hasta'])
+        : (string) ($p['label'] ?? fechaLarga(date('Y-m-d')));
+
     return '<div class="print-only mb-4">'
         . '<h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0">' . e(setting('nombre', APP_NAME)) . ' — ' . e($titulo) . '</h2>'
-        . '<p style="font-size:12px;color:#475569;margin:2px 0 0">Periodo: ' . fechaCorta($p['desde']) . ' al ' . fechaCorta($p['hasta'])
+        . '<p style="font-size:12px;color:#475569;margin:2px 0 0">' . e($cuando)
         . ' · ' . e(rep_alcance_sucursal()) . ' · Generado ' . fechaHora(date('Y-m-d H:i:s')) . '</p></div>';
 }
 
