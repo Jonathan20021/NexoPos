@@ -332,7 +332,21 @@ $pedidos = qAll(
 
 $metodos = qAll("SELECT id, nombre, es_credito FROM metodos_pago WHERE activo = 1 ORDER BY id");
 
-$pendientes = (int) qVal("SELECT COUNT(*) FROM pedidos p WHERE $scope AND p.estado = 'pendiente'", $sp);
+// Un pedido en línea se enfría. El cliente lo puso desde el móvil esperando
+// respuesta, y a las tres horas sin confirmar ya está llamando o se fue a otro
+// sitio. Por eso no basta con contar pendientes: hay que separar los que llevan
+// demasiado tiempo esperando.
+$resumen = qOne(
+    "SELECT COALESCE(SUM(p.estado = 'pendiente'), 0) pendientes,
+            COALESCE(SUM(p.estado = 'pendiente' AND p.created_at < DATE_SUB(NOW(), INTERVAL 3 HOUR)), 0) frios,
+            COALESCE(SUM(p.estado = 'listo'), 0) listos,
+            COALESCE(SUM(CASE WHEN p.estado = 'entregado'
+                               AND p.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                              THEN p.total ELSE 0 END), 0) vendido_mes,
+            COALESCE(SUM(p.estado = 'entregado' AND p.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) n_mes
+       FROM pedidos p WHERE $scope", $sp
+) ?: ['pendientes' => 0, 'frios' => 0, 'listos' => 0, 'vendido_mes' => 0, 'n_mes' => 0];
+$pendientes = (int) $resumen['pendientes'];
 
 $estadoBadge = [
     'pendiente'  => ['Pendiente', 'bg-amber-50 text-amber-700 border-amber-200'],
@@ -383,27 +397,35 @@ function mensajePedido(array $p, array $emp): string
     return $msg;
 }
 
-$acciones = '';
+// El enlace de la tienda ocupaba media tira de tarjetas siendo lo que es: un
+// enlace. Su sitio es la cabecera, junto a las acciones de la pantalla.
+//
+// La tarjeta se titulaba «Enlace público de la tienda» y enseñaba lo que
+// devuelve url(): «./tienda/». Eso no se le puede mandar a un cliente. El
+// título del botón lleva la dirección completa, que es la que sí se comparte.
+$tiendaAbs = mkt_url_abs('tienda/index.php');
+$acciones = '<a href="' . e(url('tienda/index.php')) . '" target="_blank" rel="noopener" class="btn btn-ghost"'
+    . ' title="' . e($tiendaAbs) . '">' . icon('store', 'w-4 h-4') . ' Ver la tienda</a>';
 layout_start('Pedidos en línea', 'Órdenes recibidas desde la tienda pública', $acciones);
-?>
 
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Pendientes de confirmar</p>
-    <p class="text-2xl font-extrabold <?= $pendientes ? 'text-amber-600' : 'text-slate-800' ?> mt-1"><?= number_format($pendientes) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-sm text-slate-500">Pedidos que coinciden</p>
-    <p class="text-2xl font-extrabold text-slate-800 mt-1"><?= number_format($pg['total']) ?></p>
-  </div>
-  <div class="card p-5 col-span-2">
-    <p class="text-sm text-slate-500">Enlace público de la tienda</p>
-    <a href="<?= e(url('tienda/index.php')) ?>" target="_blank" rel="noopener"
-       class="mt-1 inline-flex items-center gap-1.5 font-semibold text-blue-600 hover:text-blue-700 transition-colors duration-200 cursor-pointer break-all">
-      <?= icon('store', 'w-4 h-4') ?> <?= e(url('tienda/index.php')) ?>
-    </a>
-  </div>
-</div>
+echo kpis([
+    ['label' => 'Pendientes de confirmar', 'valor' => number_format($pendientes), 'icono' => 'clock',
+     'color' => $pendientes > 0 ? 'amber' : 'emerald',
+     'nota' => (int) $resumen['frios'] > 0
+        ? number_format((int) $resumen['frios']) . ' llevan más de 3 horas esperando'
+        : ($pendientes > 0 ? 'Todos recientes' : 'Nada en cola'),
+     'href' => $pendientes > 0 ? '?estado=pendiente' : ''],
+    ['label' => 'Listos para retirar', 'valor' => number_format((int) $resumen['listos']), 'icono' => 'check',
+     'color' => (int) $resumen['listos'] > 0 ? 'sky' : 'slate',
+     'nota' => 'Esperando al cliente',
+     'href' => (int) $resumen['listos'] > 0 ? '?estado=listo' : ''],
+    ['label' => 'Entregado este mes', 'valor' => money((float) $resumen['vendido_mes']), 'icono' => 'dollar',
+     'color' => 'emerald',
+     'nota' => number_format((int) $resumen['n_mes']) . ' pedido' . ((int) $resumen['n_mes'] === 1 ? '' : 's'),
+     'href' => '?estado=entregado'],
+    ['label' => 'En el filtro', 'valor' => number_format($pg['total']), 'icono' => 'cart', 'color' => 'blue'],
+], 4);
+?>
 
 <div class="card overflow-hidden">
   <?php $selSuc = selectSucursalFiltro(); ?>
