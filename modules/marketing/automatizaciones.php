@@ -122,23 +122,22 @@ $activas   = count(array_filter($autos, fn($a) => (int) $a['activo'] === 1));
 layout_start('Automatizaciones', 'Mensajes que salen solos cuando el cliente cumple una condición');
 ?>
 
-<div class="grid sm:grid-cols-3 gap-4 mb-5">
-  <div class="card p-5">
-    <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold">Encendidas</p>
-    <p class="text-3xl font-bold text-slate-800 mt-1"><?= $activas ?> <span class="text-lg text-slate-400">/ <?= count($autos) ?></span></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold">Mensajes encolados</p>
-    <p class="text-3xl font-bold text-slate-800 mt-1"><?= number_format(array_sum(array_map(fn($a) => (int) $a['enviados'], $autos))) ?></p>
-  </div>
-  <div class="card p-5">
-    <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold">Motor</p>
-    <p class="text-sm text-slate-600 mt-2 leading-snug">
-      Corre solo cada <?= MKT_TICK_MINUTOS ?> min mientras alguien use el sistema.
-      Para que salga aunque nadie entre, configura el cron.
-    </p>
-  </div>
-</div>
+<?php
+$encolados = array_sum(array_map(fn($a) => (int) $a['enviados'], $autos));
+
+echo kpis([
+    ['label' => 'Encendidas', 'valor' => $activas . ' / ' . count($autos), 'icono' => 'pulse',
+     'color' => $activas > 0 ? 'emerald' : 'slate',
+     'nota' => $activas > 0 ? 'Trabajando solas' : 'Ninguna activa'],
+    ['label' => 'Mensajes encolados', 'valor' => number_format($encolados), 'icono' => 'mail', 'color' => 'blue',
+     'nota' => 'Generados por las reglas'],
+    // El motor es la letra pequeña de este módulo: sin cron, las
+    // automatizaciones solo corren cuando alguien tiene el sistema abierto.
+    // De madrugada o un domingo no sale nada, y eso hay que decirlo aquí.
+    ['label' => 'Motor', 'valor' => 'Cada ' . MKT_TICK_MINUTOS . ' min', 'icono' => 'clock', 'color' => 'amber',
+     'nota' => 'Solo si alguien usa el sistema; con cron, siempre'],
+], 3);
+?>
 
 <?php if (!mail_configurado()): ?>
   <div class="card p-4 mb-5 flex items-start gap-3 border-amber-200 bg-amber-50">

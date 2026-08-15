@@ -135,6 +135,33 @@ $filas = qAll(
       LIMIT 500", [$campanaId]
 );
 
+// Esta pantalla es una lista de trabajo manual: el avance es lo único que
+// importa mientras se recorre. Sin él hay que contar filas a ojo para saber
+// cuánto falta.
+$nPend = 0; $nEnv = 0; $nOmit = 0; $nClic = 0;
+foreach ($filas as $f) {
+    if ($f['estado'] === 'pendiente') $nPend++;
+    elseif ($f['estado'] === 'omitido') $nOmit++;
+    else $nEnv++;
+    if ($f['clic_at']) $nClic++;
+}
+$totalCola = $nPend + $nEnv + $nOmit;
+
+echo kpis([
+    ['label' => 'Por mandar', 'valor' => number_format($nPend), 'icono' => 'phone',
+     'color' => $nPend > 0 ? 'amber' : 'emerald',
+     'nota' => $totalCola > 0
+        ? 'De ' . number_format($totalCola) . ' en la cola'
+        : 'La cola está vacía'],
+    ['label' => 'Ya enviados', 'valor' => number_format($nEnv), 'icono' => 'check', 'color' => 'emerald',
+     'nota' => $totalCola > 0 ? round($nEnv / $totalCola * 100) . '% de la cola' : ''],
+    ['label' => 'Omitidos', 'valor' => number_format($nOmit), 'icono' => 'x',
+     'color' => $nOmit > 0 ? 'slate' : 'slate', 'nota' => 'Saltados a propósito'],
+    ['label' => 'Han hecho clic', 'valor' => number_format($nClic), 'icono' => 'target',
+     'color' => $nClic > 0 ? 'violet' : 'slate',
+     'nota' => $nEnv > 0 ? round($nClic / $nEnv * 100) . '% de los enviados' : 'Nada enviado todavía'],
+], 4);
+
 // Mensaje y enlace ya resueltos para cada destinatario: el navegador no calcula nada.
 $cola = [];
 foreach ($filas as $f) {

@@ -116,32 +116,28 @@ layout_start('Panel de Marketing', 'Últimos ' . $dias . ' días', $acciones);
   </div>
 <?php endif; ?>
 
-<!-- KPIs -->
-<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-5">
-  <?php
-  $kpis = [
-      ['Mensajes enviados', number_format($r['enviados']), 'mail', 'blue',
-       $r['contactables'] . ' clientes contactables'],
-      ['Aperturas', $r['tasa_apertura'] . '%', 'eye', 'emerald',
-       number_format($r['aperturas']) . ' de ' . number_format($r['enviados'])],
-      ['Clics', $r['tasa_clic'] . '%', 'target', 'indigo',
-       number_format($r['clics']) . ' clics registrados'],
-      ['Ventas atribuidas', money($r['monto']), 'trending', 'violet',
-       number_format($r['ventas']) . ' venta(s) tras el envío'],
-  ];
-  foreach ($kpis as [$lbl, $val, $ic, $col, $sub]): ?>
-    <div class="card p-5">
-      <div class="flex items-start justify-between mb-3">
-        <p class="text-xs uppercase tracking-wide text-slate-400 font-semibold"><?= e($lbl) ?></p>
-        <div class="w-9 h-9 rounded-xl bg-<?= $col ?>-50 text-<?= $col ?>-600 flex items-center justify-center">
-          <?= icon($ic, 'w-4.5 h-4.5') ?>
-        </div>
-      </div>
-      <p class="text-3xl font-bold text-slate-800"><?= e($val) ?></p>
-      <p class="text-xs text-slate-400 mt-1"><?= e($sub) ?></p>
-    </div>
-  <?php endforeach; ?>
-</div>
+<?php
+// Una tasa de apertura sin nada enviado es 0% y parece un fracaso, cuando lo
+// que pasa es que no se ha mandado nada. Se distinguen los dos casos.
+$sinEnvios = (int) $r['enviados'] === 0;
+
+echo kpis([
+    ['label' => 'Mensajes enviados', 'valor' => number_format($r['enviados']), 'icono' => 'mail', 'color' => 'blue',
+     'nota' => number_format($r['contactables']) . ' clientes contactables'],
+    ['label' => 'Aperturas', 'valor' => $sinEnvios ? '—' : $r['tasa_apertura'] . '%', 'icono' => 'eye',
+     'color' => $sinEnvios ? 'slate' : 'emerald',
+     'nota' => $sinEnvios
+        ? 'Todavía no se ha enviado nada'
+        : number_format($r['aperturas']) . ' de ' . number_format($r['enviados'])],
+    ['label' => 'Clics', 'valor' => $sinEnvios ? '—' : $r['tasa_clic'] . '%', 'icono' => 'target',
+     'color' => $sinEnvios ? 'slate' : 'violet',
+     'nota' => $sinEnvios ? '' : number_format($r['clics']) . ' clics registrados'],
+    // Lo atribuido es lo único que convierte el marketing en algo defendible
+    // ante la dirección: ventas ocurridas DESPUÉS de recibir el envío.
+    ['label' => 'Ventas atribuidas', 'valor' => money($r['monto']), 'icono' => 'trending', 'color' => 'emerald',
+     'nota' => number_format($r['ventas']) . ' venta' . ((int) $r['ventas'] === 1 ? '' : 's') . ' tras el envío'],
+], 4);
+?>
 
 <div class="grid lg:grid-cols-5 gap-5 mb-5 items-start">
 

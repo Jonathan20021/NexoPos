@@ -151,8 +151,36 @@ $preSeg = (int) get('segmento');
 $prePlt = (int) get('plantilla');
 $abrirNueva = get('nueva') === '1';
 
+// Los envíos de WhatsApp NO salen solos: wa.me abre la conversación y alguien
+// tiene que pulsar «enviar». Un pendiente ahí no es una cola que se vaciará
+// sola, es trabajo humano sin hacer, y por eso va en su propia tarjeta.
+$res = qOne(
+    "SELECT COALESCE(SUM(c.estado = 'borrador'), 0) borradores,
+            COALESCE(SUM(c.estado = 'programada'), 0) programadas,
+            COALESCE(SUM(c.estado = 'enviada'), 0) enviadas,
+            (SELECT COUNT(*) FROM campana_envios e
+              WHERE e.canal = 'whatsapp' AND e.estado = 'pendiente') wa_pendientes
+       FROM campanas c"
+) ?: ['borradores' => 0, 'programadas' => 0, 'enviadas' => 0, 'wa_pendientes' => 0];
+
 $acciones = can('campanas.crear') ? btn_nuevo('camp:new', 'Nueva campaña') : '';
 layout_start('Campañas', 'Promociones por correo y WhatsApp, con resultados medidos', $acciones);
+
+echo kpis([
+    ['label' => 'Enviadas', 'valor' => number_format((int) $res['enviadas']), 'icono' => 'mail', 'color' => 'emerald',
+     'nota' => 'Ya salieron', 'href' => '?estado=enviada'],
+    ['label' => 'Programadas', 'valor' => number_format((int) $res['programadas']), 'icono' => 'clock',
+     'color' => (int) $res['programadas'] > 0 ? 'sky' : 'slate', 'nota' => 'Esperando su fecha',
+     'href' => '?estado=programada'],
+    ['label' => 'Borradores', 'valor' => number_format((int) $res['borradores']), 'icono' => 'file',
+     'color' => (int) $res['borradores'] > 0 ? 'amber' : 'slate', 'nota' => 'Sin terminar',
+     'href' => '?estado=borrador'],
+    ['label' => 'WhatsApp por mandar', 'valor' => number_format((int) $res['wa_pendientes']), 'icono' => 'phone',
+     'color' => (int) $res['wa_pendientes'] > 0 ? 'rose' : 'emerald',
+     'nota' => (int) $res['wa_pendientes'] > 0
+        ? 'Hay que abrirlos y pulsar enviar a mano'
+        : 'Nada pendiente de mandar'],
+], 4);
 ?>
 
 <?php if (!mail_configurado()): ?>
