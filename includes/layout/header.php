@@ -78,6 +78,51 @@ tailwind.config = {
     .data-table thead th { @apply text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-4 py-3 bg-slate-50/60; }
     .data-table tbody td { @apply px-4 py-3.5 border-t border-slate-100 align-middle; }
     .data-table tbody tr:hover { @apply bg-slate-50/50; }
+
+    /* ------------------------------------------------------------------
+       Rejilla ancha: la barra horizontal a mano, no al final de la página
+
+       Una tabla de captura con quince columnas y cincuenta y ocho filas
+       tiene un problema que no se ve al programarla: su barra de scroll
+       horizontal vive al FINAL de la tabla, así que para mover las
+       columnas hay que bajar cincuenta y ocho filas primero, arrastrar, y
+       volver a subir. Con `.tabla-ancha` el contenedor se queda del alto
+       de la pantalla y sus DOS barras caen siempre dentro de la vista.
+
+       Al acotar la altura hacen falta las dos cabeceras pegajosas, o se
+       pierde el rumbo: la fila de títulos (¿qué columna es esta?) y la
+       primera columna (¿de quién es esta fila?). El cruce de las dos
+       necesita el z-index más alto de los tres, o el título del empleado
+       se le mete por debajo a la primera celda.
+       ------------------------------------------------------------------ */
+    /* Los guiones bajos son espacios: `calc(100vh-17rem)` sin espacios
+       alrededor del menos NO es CSS válido y la regla se descarta en silencio. */
+    .tabla-ancha { @apply overflow-auto max-h-[calc(100vh_-_17rem)] min-h-[24rem]; }
+    .tabla-ancha .data-table thead th { @apply sticky top-0 z-20; }
+    /* El fondo TIENE que ser opaco: con bg-slate-50/60 se transparenta y se
+       leen las filas por debajo al desplazarse. */
+    .tabla-ancha .data-table thead th { background-color: #F8FAFC; }
+    .tabla-ancha .data-table thead th:first-child,
+    .tabla-ancha .data-table tbody td:first-child { @apply sticky left-0; }
+    .tabla-ancha .data-table thead th:first-child { @apply z-30; }
+    .tabla-ancha .data-table tbody td:first-child { @apply z-10 bg-white; }
+    /* Una línea que separa la columna fija de lo que se desliza por detrás;
+       sin ella el nombre y las cifras se ven pegados al cruzarse. */
+    .tabla-ancha .data-table thead th:first-child::after,
+    .tabla-ancha .data-table tbody td:first-child::after {
+      content: ''; @apply absolute top-0 bottom-0 -right-px w-px bg-slate-200;
+    }
+    /* La fila resaltada (tocada) debe pintar TAMBIÉN su celda fija, o el
+       nombre se queda en blanco mientras el resto de la fila va en ámbar.
+       Se engancha al `data-tocada` que pone tocar(), no a la clase ámbar: un
+       selector con la barra escapada (`.bg-amber-50\/60`) es frágil de más. */
+    .tabla-ancha .data-table tbody tr[data-tocada] td:first-child { background-color: #FFFBEB; }
+    .tabla-ancha .data-table tbody tr:hover td:first-child { @apply bg-slate-50; }
+    /* El pie de totales también se pega, abajo: son las cifras que hay que
+       cuadrar contra la TSS y la DGII, y con el contenedor acotado se irían
+       fuera de la vista en la fila cinco de cincuenta y ocho. */
+    .tabla-ancha .data-table tfoot td { @apply sticky bottom-0 z-20; background-color: #F1F5F9; }
+    .tabla-ancha .data-table tfoot td:first-child { @apply left-0 z-30; }
     .nav-link { @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13.5px] font-medium text-slate-500 hover:bg-slate-100/70 hover:text-slate-800 transition relative; }
     .nav-active { @apply bg-blue-50 text-blue-700 hover:bg-blue-50 hover:text-blue-700 font-semibold; }
     .nav-active::before { content:''; @apply absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-r-full bg-blue-600; }

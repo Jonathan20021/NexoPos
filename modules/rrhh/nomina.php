@@ -443,7 +443,7 @@ if ($verId) {
           </div>
           <div class="flex items-center gap-3">
             <p class="text-sm" :class="tocadas > 0 ? 'text-amber-700 font-semibold' : 'text-slate-400'">
-              <span x-show="tocadas === 0">Sin cambios sin guardar</span>
+              <span x-show="tocadas === 0">Sin cambios pendientes</span>
               <span x-show="tocadas > 0" x-cloak><span x-text="tocadas"></span> fila(s) modificada(s)</span>
             </p>
             <?php if (can('rrhh_nomina.procesar')): ?>
@@ -454,14 +454,17 @@ if ($verId) {
           </div>
         </div>
       <?php endif; ?>
-      <div class="overflow-x-auto">
+      <div class="<?= $editable ? 'tabla-ancha' : 'overflow-x-auto' ?>">
         <table class="data-table">
           <?php /* En BORRADOR la tabla es un formulario: aquí se capturan los
                    conceptos que el módulo antes no tenía dónde recoger. Cerrada,
-                   se muestra en solo lectura. */ ?>
+                   se muestra en solo lectura.
+
+                   `tabla-ancha` solo en borrador: es la única versión con quince
+                   columnas de captura. Cerrada tiene seis y cabe sin más. */ ?>
           <thead>
             <tr>
-              <th>Empleado</th>
+              <th class="min-w-[15rem]">Empleado</th>
               <?php if ($editable): ?>
                 <th class="text-center" title="Días pagados del período">Días</th>
                 <th class="text-center" title="Feriado y horas extra (col. H)">Feriado/H.E.</th>
@@ -496,7 +499,11 @@ if ($verId) {
             ?>
             <?php foreach ($det as $d): ?>
               <tr <?= $editable ? 'x-show="visible($el)" data-busca="' . e(mb_strtolower($d['nombre'] . ' ' . $d['apellido'] . ' ' . $d['cedula'])) . '" :class="$el.dataset.tocada ? \'bg-amber-50/60\' : \'\'"' : '' ?>>
-                <td><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?> · <?= money($d['salario_base']) ?></p></div></div></td>
+                <?php /* `whitespace-nowrap`: «Annie Charline Rodríguez Navarro»
+                         se partía en cuatro líneas y estiraba TODA la fila a
+                         cuatro veces su alto, con las quince casillas de captura
+                         flotando en el centro de un hueco enorme. */ ?>
+                <td class="whitespace-nowrap"><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8 shrink-0') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?> · <?= money($d['salario_base']) ?></p></div></div></td>
                 <?php if ($editable): ?>
                   <td class="text-center"><?= $campoNum('dias_trabajados', $d, 'w-16') ?></td>
                   <td class="text-center"><?= $campoNum('monto_horas_extra', $d) ?></td>
