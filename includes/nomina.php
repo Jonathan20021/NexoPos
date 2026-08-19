@@ -276,10 +276,22 @@ function nominaLineasAgrupadas(int $nominaId): array
     return qAll(
         "SELECT nd.*, e.nombre, e.apellido, e.cedula, e.salario AS _sueldo_mensual,
                 e.cuenta_bancaria, e.banco,
-                COALESCE(s.nombre, 'SIN SUCURSAL') AS grupo
+                /* La CEO lo dijo en una frase: «no hay oficina, la distribución
+                   administrativa es por departamento». Una tienda SÍ es un grupo
+                   real —L'Occitane Punta Cana vende y factura— pero «Oficina Santo
+                   Domingo» no es un centro de costo, es un edificio. Para la gente
+                   de oficina el grupo es su DEPARTAMENTO.
+
+                   Se distingue por dato, no por nombre ni por id: una tienda tiene
+                   marca (tienda_id) y una oficina no. */
+                COALESCE(
+                    CASE WHEN s.tienda_id IS NULL THEN dep.nombre ELSE s.nombre END,
+                    s.nombre, dep.nombre, 'SIN UBICACIÓN'
+                ) AS grupo
            FROM nomina_detalles nd
            JOIN empleados e   ON e.id = nd.empleado_id
-           LEFT JOIN sucursales s ON s.id = e.sucursal_id
+           LEFT JOIN sucursales s   ON s.id = e.sucursal_id
+           LEFT JOIN departamentos dep ON dep.id = e.departamento_id
           WHERE nd.nomina_id = ?
           ORDER BY grupo, e.nombre, e.apellido",
         [$nominaId]
