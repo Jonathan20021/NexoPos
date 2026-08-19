@@ -213,6 +213,133 @@ if (isPost()) {
 
     // Captura de conceptos y recálculo. Solo en borrador: una nómina cerrada
     // no se toca, porque ya se declaró y se pagó con esos números.
+    /* ---------------------------------------------------------------------
+     *  Volver a leer el padrón SIN perder lo capturado
+     *
+     *  Una nómina en borrador es una foto del padrón del momento en que se
+     *  generó. Si después entra alguien, se va otro, cambia un sueldo o —como
+     *  pasó con la reorganización por departamentos— se mueve gente de sitio,
+     *  el borrador se queda viejo. La única salida era borrarlo y volver a
+     *  generarlo, tirando a la basura la captura de horas extra, comisiones,
+     *  préstamos y días de cincuenta y ocho personas.
+     *
+     *  Esto lo pone al día CONSERVANDO esa captura. Solo en borrador: una
+     *  nómina confirmada es un documento cerrado y no se toca.
+     * ------------------------------------------------------------------ */
+    if ($accion === 'regenerar') {
+        require_perm('rrhh_nomina.procesar');
+        $nid = postInt('id');
+        $n = qOne("SELECT * FROM nominas WHERE id = ?", [$nid]);
+        if (!$n)                         { flash('error', 'Nómina no encontrada.'); redirect('modules/rrhh/nomina.php'); }
+        if ($n['estado'] !== 'borrador') { flash('error', 'Solo se puede actualizar una nómina en borrador.'); redirect('modules/rrhh/nomina.php?ver=' . $nid); }
+        require_sucursal_access($n['sucursal_id']);
+
+        // MISMO criterio de pertenencia al período que al generarla. Si aquí se
+        // usara otro, actualizar cambiaría la plantilla sin que nadie lo pida.
+        $cond = [
+            'fecha_ingreso <= ?',
+            '(fecha_salida IS NULL OR fecha_salida >= ?)',
+            "(estado = 'activo' OR fecha_salida IS NOT NULL)",
+        ];
+        $params = [$n['fecha_hasta'], $n['fecha_desde']];
+        if ($n['sucursal_id']) { $cond[] = 'sucursal_id = ?'; $params[] = (int) $n['sucursal_id']; }
+        $deben = [];
+        foreach (qAll("SELECT * FROM empleados WHERE " . implode(' AND ', $cond), $params) as $emp) {
+            $deben[(int) $emp['id']] = $emp;
+        }
+        if (!$deben) {
+            flash('error', 'Ningún empleado corresponde a ese período. No se actualizó nada.');
+            redirect('modules/rrhh/nomina.php?ver=' . $nid);
+        }
+
+        $factor   = $n['tipo'] === 'quincenal' ? 0.5 : ($n['tipo'] === 'semanal' ? (1 / 4.33) : 1);
+        $diasBase = nominaDiasBase($n['tipo']);
+        // Los conceptos que se capturan a mano. Se conservan tal cual.
+        $capturados = ['dias_trabajados', 'horas_extra', 'monto_horas_extra', 'prima_vacacional',
+                       'otros_ingresos', 'comisiones', 'reembolso', 'vacaciones_diferencial',
+                       'bonificaciones', 'descuento_dias', 'per_capita', 'otras_deducciones'];
+
+        try {
+            $r = txReintentable(function () use ($nid, $deben, $factor, $diasBase, $capturados) {
+                $pendientes = $deben;
+                $altas = []; $bajas = []; $recalculados = [];
+
+                foreach (qAll("SELECT nd.*, e.nombre, e.apellido FROM nomina_detalles nd
+                                 LEFT JOIN empleados e ON e.id = nd.empleado_id
+                                WHERE nd.nomina_id = ?", [$nid]) as $d) {
+                    $eid = (int) $d['empleado_id'];
+                    if (!isset($pendientes[$eid])) {
+                        q("DELETE FROM nomina_detalles WHERE id = ?", [(int) $d['id']]);
+                        $bajas[] = trim(($d['nombre'] ?? '') . ' ' . ($d['apellido'] ?? '')) ?: ('#' . $eid);
+                        continue;
+                    }
+                    $emp = $pendientes[$eid];
+                    unset($pendientes[$eid]);   // lo que sobre al final son altas
+
+                    // Se recalcula con el sueldo VIGENTE, pero con los conceptos
+                    // que ya estaban capturados en la pantalla.
+                    $vals = [];
+                    foreach ($capturados as $k) $vals[$k] = (float) $d[$k];
+                    $vals['dias_base'] = (float) $d['dias_base'] ?: $diasBase;
+                    $c = calcNominaRD((float) $emp['salario'], $vals, $factor);
+
+                    // «Recalculado», no «le subieron el sueldo»: el importe del
+                    // período también se mueve si cambiaron los días capturados.
+                    // Decir lo segundo sería afirmar algo que esta comparación
+                    // no sabe.
+                    if (round((float) $d['salario_base'], 2) !== round($c['salarioPeriodo'], 2)) {
+                        $recalculados[] = trim($emp['nombre'] . ' ' . $emp['apellido']);
+                    }
+                    dbUpdate('nomina_detalles', $vals + [
+                        'salario_base'      => $c['salarioPeriodo'],
+                        'total_ingresos'    => $c['totalIngresos'],
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'],
+                        'total_deducciones' => $c['totalDeducciones'],
+                        'salario_neto'      => $c['neto'],
+                    ], 'id = ?', [(int) $d['id']]);
+                }
+
+                foreach ($pendientes as $emp) {
+                    $c = calcNominaRD((float) $emp['salario'],
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase], $factor);
+                    dbInsert('nomina_detalles', [
+                        'nomina_id' => $nid, 'empleado_id' => (int) $emp['id'], 'salario_base' => $c['salarioPeriodo'],
+                        'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                        'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
+                        'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
+                        'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
+                        'total_ingresos' => $c['totalIngresos'],
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => 0,
+                        'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
+                    ]);
+                    $altas[] = trim($emp['nombre'] . ' ' . $emp['apellido']);
+                }
+
+                nominaRecalcularTotales($nid);
+                return ['altas' => $altas, 'bajas' => $bajas, 'recalculados' => $recalculados];
+            });
+
+            // Se dice QUIÉN entró y quién salió, no cuántos: si el resultado
+            // sorprende, quien lea sabrá dónde mirar sin abrir el padrón.
+            $lista = fn(array $x) => implode(', ', array_slice($x, 0, 6))
+                   . (count($x) > 6 ? ' y ' . (count($x) - 6) . ' más' : '');
+            $partes = [];
+            if ($r['altas'])   $partes[] = count($r['altas']) . ' añadido(s): ' . $lista($r['altas']);
+            if ($r['bajas'])   $partes[] = count($r['bajas']) . ' retirado(s): ' . $lista($r['bajas']);
+            if ($r['recalculados']) $partes[] = count($r['recalculados']) . ' con el importe recalculado: ' . $lista($r['recalculados']);
+
+            audit('rrhh_nomina', 'editar',
+                  'Nómina actualizada contra el padrón: ' . ($partes ? implode(' · ', $partes) : 'sin cambios'),
+                  ['tabla' => 'nominas', 'registro_id' => $nid]);
+            flash($partes ? 'success' : 'info', $partes
+                ? 'Nómina actualizada. ' . implode('. ', $partes) . '. Lo capturado a mano se conservó.'
+                : 'La nómina ya estaba al día con el padrón: no hubo nada que cambiar.');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/rrhh/nomina.php?ver=' . $nid);
+    }
+
     if ($accion === 'guardar_conceptos') {
         require_perm('rrhh_nomina.procesar');
         $nid = postInt('id');
@@ -334,6 +461,17 @@ if ($verId) {
     if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
         $acc .= '<button type="button" onclick="' . jsEvent('nom:edit') . '" class="btn btn-ghost">'
               . icon('edit', 'w-4 h-4') . ' Editar período</button>';
+    }
+    if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
+        // Dice lo que se conserva, no solo lo que cambia: el miedo al pulsarlo
+        // es perder la captura de las 58 filas, y justo eso es lo que NO pasa.
+        $avisoR = 'Se volverá a leer el padrón para el período '
+                . fechaCorta($n['fecha_desde']) . ' al ' . fechaCorta($n['fecha_hasta'])
+                . ': entra quien ahora corresponda, sale quien ya no, y se refresca el sueldo. '
+                . 'Las horas extra, comisiones, préstamos y días que ya capturaste SE CONSERVAN.';
+        $acc .= '<form method="post" class="inline" onsubmit="return confirm(\'' . e(addslashes($avisoR)) . '\')">'
+              . csrf_field() . '<input type="hidden" name="accion" value="regenerar"><input type="hidden" name="id" value="' . $verId . '">'
+              . '<button class="btn btn-soft">' . icon('history', 'w-4 h-4') . ' Actualizar contra el padrón</button></form>';
     }
     if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
         // El mensaje dice QUÉ se cierra y por cuánto, no solo que es irreversible.
