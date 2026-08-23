@@ -73,8 +73,14 @@ if (isPost()) {
                     //
                     // El salario mensual entra entero: es calcNominaRD() quien lo
                     // parte, porque el ISR necesita ver el mes completo.
+                    // Cuotas de préstamo que vencen dentro del período: entran
+                    // solas en la columna «préstamo». Antes había que acordarse
+                    // de teclearlas cada quincena, y la que se olvidaba no se
+                    // cobraba nunca.
+                    $cuota = presCuotaDelPeriodo((int) $e['id'], $desde, $hasta);
                     $c = calcNominaRD((float) $e['salario'],
-                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase], $factor);
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                         'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $c['salarioPeriodo'],
                         'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
@@ -82,7 +88,7 @@ if (isPost()) {
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                         'total_ingresos' => $c['totalIngresos'],
-                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => 0,
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
                         'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
                     ]);
                     $tb += $c['totalIngresos']; $td += $c['totalDeducciones']; $tn += $c['neto'];
@@ -188,7 +194,9 @@ if (isPost()) {
         } else {
             $factor = $n['tipo'] === 'quincenal' ? 0.5 : ($n['tipo'] === 'semanal' ? (1 / 4.33) : 1);
             $diasBase = nominaDiasBase($n['tipo']);
-            $c = calcNominaRD((float) $e['salario'], ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase], $factor);
+            $cuota = presCuotaDelPeriodo((int) $e['id'], $n['fecha_desde'], $n['fecha_hasta']);
+            $c = calcNominaRD((float) $e['salario'], ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                                                      'otras_deducciones' => $cuota], $factor);
             dbInsert('nomina_detalles', [
                 'nomina_id' => $nid, 'empleado_id' => (int) $e['id'], 'salario_base' => $c['salarioPeriodo'],
                 'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
@@ -196,7 +204,7 @@ if (isPost()) {
                 'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                 'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                 'total_ingresos' => $c['totalIngresos'],
-                'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => 0,
+                'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
                 'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
             ]);
             nominaRecalcularTotales($nid);
@@ -260,7 +268,7 @@ if (isPost()) {
                        'bonificaciones', 'descuento_dias', 'per_capita', 'otras_deducciones'];
 
         try {
-            $r = txReintentable(function () use ($nid, $deben, $factor, $diasBase, $capturados) {
+            $r = txReintentable(function () use ($nid, $n, $deben, $factor, $diasBase, $capturados) {
                 $pendientes = $deben;
                 $altas = []; $bajas = []; $recalculados = [];
 
@@ -300,8 +308,13 @@ if (isPost()) {
                 }
 
                 foreach ($pendientes as $emp) {
+                    // Solo las ALTAS traen su cuota de préstamo. A quien ya
+                    // estaba no se le toca la columna: puede haberla ajustado
+                    // alguien a mano y eso manda.
+                    $cuota = presCuotaDelPeriodo((int) $emp['id'], $n['fecha_desde'], $n['fecha_hasta']);
                     $c = calcNominaRD((float) $emp['salario'],
-                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase], $factor);
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                         'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => (int) $emp['id'], 'salario_base' => $c['salarioPeriodo'],
                         'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
@@ -309,7 +322,7 @@ if (isPost()) {
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                         'total_ingresos' => $c['totalIngresos'],
-                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => 0,
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
                         'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
                     ]);
                     $altas[] = trim($emp['nombre'] . ' ' . $emp['apellido']);
@@ -391,8 +404,25 @@ if (isPost()) {
         if ($n && $n['estado'] === 'borrador') {
             require_sucursal_access($n['sucursal_id']);
             dbUpdate('nominas', ['estado' => 'procesada'], 'id = ?', [$nid]);
-            audit('rrhh_nomina', 'procesar', "Nómina confirmada: {$n['descripcion']}", ['tabla' => 'nominas', 'registro_id' => $nid]);
-            flash('success', 'Nómina confirmada. Ya no se puede editar.');
+
+            // Las cuotas de préstamo se dan por cobradas AQUÍ, al confirmar, y
+            // no al generar el borrador. Un borrador se puede borrar, y una
+            // cuota marcada como cobrada por una nómina que nunca se pagó sería
+            // una deuda que se esfuma sin que nadie pagara nada.
+            $cuotas = 0;
+            if (function_exists('presAplicarCobro') && presDisponible()) {
+                foreach (qAll("SELECT id, empleado_id, otras_deducciones FROM nomina_detalles WHERE nomina_id = ?", [$nid]) as $d) {
+                    if ((float) $d['otras_deducciones'] <= 0) continue;
+                    $cuotas += presAplicarCobro((int) $d['empleado_id'], (int) $d['id'],
+                        $n['fecha_desde'], $n['fecha_hasta'], (float) $d['otras_deducciones']);
+                }
+            }
+
+            audit('rrhh_nomina', 'procesar', "Nómina confirmada: {$n['descripcion']}"
+                . ($cuotas ? " · $cuotas cuota(s) de préstamo cobradas" : ''),
+                ['tabla' => 'nominas', 'registro_id' => $nid]);
+            flash('success', 'Nómina confirmada. Ya no se puede editar.'
+                . ($cuotas ? ' Se dieron por cobradas ' . $cuotas . ' cuota(s) de préstamo.' : ''));
         } else {
             flash('error', 'Esta nómina no está en borrador.');
         }

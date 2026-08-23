@@ -49,6 +49,7 @@ function nav_groups(): array
             ['Asistencia', 'clock', url('modules/rrhh/asistencia.php'), 'rrhh_asistencia.ver'],
             ['Nómina', 'wallet', url('modules/rrhh/nomina.php'), 'rrhh_nomina.ver'],
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],
+            ['Préstamos', 'wallet', url('modules/rrhh/prestamos.php'), 'prestamos.ver'],
             ['TSS', 'shield', url('modules/rrhh/tss.php'), 'tss.ver'],
             ['Departamentos', 'building', url('modules/rrhh/departamentos.php'), 'rrhh_departamentos.ver'],
         ]],
