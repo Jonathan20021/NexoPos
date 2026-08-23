@@ -27,15 +27,33 @@ $atajos = buscar_atajos();
      class="sm:hidden w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition"
      aria-label="Buscar"><?= icon('search', 'w-5 h-5') ?></a>
 
-  <!-- Panel -->
+  <!-- Panel
+       ------------------------------------------------------------------
+       TELEPORTADO AL BODY, y no es por gusto.
+
+       Este buscador vive dentro del <header>, que lleva `backdrop-blur`.
+       `backdrop-filter` crea un BLOQUE CONTENEDOR para los descendientes
+       `position: fixed` —igual que `transform`—, así que `fixed inset-0` no
+       se anclaba a la ventana sino a la cabecera: 64 px de alto y empezando
+       después de la barra lateral.
+
+       El resultado era el que se veía: el panel descentrado hacia la derecha
+       y el fondo oscuro sin cubrir ni la barra lateral ni la página.
+
+       `x-teleport` mueve el nodo al final del body, donde `fixed` vuelve a
+       significar lo que significa. Alpine mantiene el scope, así que
+       `visible`, `x-ref` y los eventos siguen funcionando desde aquí.
+       ------------------------------------------------------------------ -->
+  <template x-teleport="body">
+  <!-- SIN animación de entrada, y es deliberado. Sobre un nodo teleportado ni
+       las transiciones de Alpine ni una animación CSS con `fill: both` llegan
+       a correr —arrancan dentro de un subárbol oculto— y el panel se quedaba
+       clavado en su primer fotograma, invisible, con el fondo ya pintado.
+       Una paleta de comandos se abre al instante de todos modos. -->
   <div x-show="visible" x-cloak style="display:none"
        class="fixed inset-0 z-[70] flex items-start justify-center p-4 sm:pt-24 bg-slate-900/40 backdrop-blur-[2px]"
        @click.self="cerrar()">
-    <div x-show="visible"
-         x-transition:enter="transition ease-out duration-150"
-         x-transition:enter-start="opacity-0 scale-95 -translate-y-2"
-         x-transition:enter-end="opacity-100 scale-100 translate-y-0"
-         class="w-full max-w-2xl bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden flex flex-col max-h-[min(80vh,620px)]">
+    <div class="w-full max-w-2xl bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden flex flex-col max-h-[min(80vh,620px)]">
 
       <!-- Entrada -->
       <div class="flex items-center gap-3 px-4 border-b border-slate-100 shrink-0">
@@ -122,6 +140,7 @@ $atajos = buscar_atajos();
       </div>
     </div>
   </div>
+  </template>
 </div>
 
 <script>

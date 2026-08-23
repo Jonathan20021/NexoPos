@@ -123,6 +123,14 @@ tailwind.config = {
        fuera de la vista en la fila cinco de cincuenta y ocho. */
     .tabla-ancha .data-table tfoot td { @apply sticky bottom-0 z-20; background-color: #F1F5F9; }
     .tabla-ancha .data-table tfoot td:first-child { @apply left-0 z-30; }
+
+    /* Buscador global (Ctrl/⌘+K): SIN animación de entrada, y es deliberado.
+       El panel va teleportado al body y arranca dentro de un subárbol oculto:
+       ahí ni las transiciones de Alpine ni una animación CSS con `fill: both`
+       llegan a correr, y el panel se queda clavado en su primer fotograma
+       —invisible— con el fondo ya pintado. Una paleta de comandos se abre al
+       instante de todos modos; perseguir la animación solo traía el bug de
+       vuelta. Ver includes/layout/buscador.php. */
     .nav-link { @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13.5px] font-medium text-slate-500 hover:bg-slate-100/70 hover:text-slate-800 transition relative; }
     .nav-active { @apply bg-blue-50 text-blue-700 hover:bg-blue-50 hover:text-blue-700 font-semibold; }
     .nav-active::before { content:''; @apply absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-r-full bg-blue-600; }
