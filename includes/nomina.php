@@ -58,7 +58,13 @@
  * @param array $c               Conceptos DEL PERÍODO, todos opcionales.
  * @param float $factor          1 mensual, 0.5 quincenal, 1/4.33 semanal.
  */
-function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0): array
+/**
+ * @param array|bool|null $tss Parámetros de la TSS a usar.
+ *                             null  = los vigentes en base (o ninguno si no hay);
+ *                             array = estos, para simular o recalcular un mes viejo;
+ *                             false = sin topes, modo función pura para las pruebas.
+ */
+function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0, array|bool|null $tss = null): array
 {
     $n = static fn(string $k): float => max(0.0, (float) ($c[$k] ?? 0));
 
@@ -80,13 +86,30 @@ function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0)
     );
     $base = max(0.0, $base);
 
-    $afp = round($base * 0.0287, 2);
-    $sfs = round($base * 0.0304, 2);
+    // Retenciones de la TSS, con los TOPES de la Ley 87-01 si están encendidos.
+    //
+    // Mientras `aplicar_topes` esté en 0 —que es como nace— tssAportes()
+    // devuelve exactamente base × 2.87% y base × 3.04%, o sea lo mismo que
+    // hacía esta función antes. Encenderlos es una decisión del contador, no un
+    // efecto secundario de desplegar. Ver includes/tss.php.
+    if ($tss === false || !function_exists('tssAportes')) {
+        $afp = round($base * 0.0287, 2);
+        $sfs = round($base * 0.0304, 2);
+    } else {
+        $ap  = tssAportes($base, $factor, is_array($tss) ? $tss : null);
+        $afp = $ap['empleado']['afp'];
+        $sfs = $ap['empleado']['sfs'];
+    }
 
     // 3) ISR sobre el equivalente MENSUAL de lo que se está ganando. Sin
     //    redondear la base: el redondeo va en la retención, no en la escala.
+    //
+    //    Se resta la TSS REALMENTE retenida, no un 5.91% teórico: con los topes
+    //    encendidos un sueldo alto cotiza menos, y si aquí se siguiera restando
+    //    el porcentaje entero se le calcularía de menos el ISR.
     $mensualEquivalente = $factor > 0 ? $base / $factor : $base;
-    $anual = ($mensualEquivalente - $mensualEquivalente * 0.0287 - $mensualEquivalente * 0.0304) * 12;
+    $tssMensual = $factor > 0 ? ($afp + $sfs) / $factor : ($afp + $sfs);
+    $anual = ($mensualEquivalente - $tssMensual) * 12;
 
     if     ($anual <= 416220.00) $isrAnual = 0;
     elseif ($anual <= 624329.00) $isrAnual = ($anual - 416220.00) * 0.15;
@@ -174,12 +197,27 @@ const COSTO_PENDIENTE_CONFIRMAR = ['topes de cotización TSS', 'provisión de ce
  * @param float $salarioMensual Salario ordinario del mes.
  * @param bool  $conRegalia     Incluir la provisión de la regalía pascual.
  */
-function costoEmpleadorRD(float $salarioMensual, bool $conRegalia = true): array
+function costoEmpleadorRD(float $salarioMensual, bool $conRegalia = true, array|bool|null $tss = null): array
 {
     $base = max(0.0, $salarioMensual);
-    $partes = [];
-    foreach (COSTO_EMPLEADOR as $k => $tasa) {
-        $partes[$k] = round($base * $tasa, 2);
+
+    // Con los topes encendidos, el aporte patronal se calcula sobre la base
+    // TOPADA de cada régimen. Aquí es donde más se nota: el tope de riesgos
+    // laborales son 4 salarios mínimos, mucho más bajo que el de salud o
+    // pensiones, así que un sueldo alto lo pasa de largo.
+    if ($tss !== false && function_exists('tssAportes')) {
+        $ap = tssAportes($base, 1.0, is_array($tss) ? $tss : null);
+        $partes = [
+            'afp'     => $ap['empleador']['afp'],
+            'sfs'     => $ap['empleador']['sfs'],
+            'riesgos' => $ap['empleador']['srl'],
+            'infotep' => $ap['empleador']['infotep'],
+        ];
+    } else {
+        $partes = [];
+        foreach (COSTO_EMPLEADOR as $k => $tasa) {
+            $partes[$k] = round($base * $tasa, 2);
+        }
     }
     $aportes = round(array_sum($partes), 2);
     $regalia = $conRegalia ? round($base * COSTO_REGALIA, 2) : 0.0;
