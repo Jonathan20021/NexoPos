@@ -25,6 +25,50 @@ function buscar_like(string $q): string
 }
 
 /**
+ * Minúsculas y sin tildes, para comparar lo que se escribe con lo que hay.
+ *
+ * ============================================================================
+ *  strtr CON DOS CADENAS TRABAJA BYTE A BYTE. Aquí eso destroza el UTF-8.
+ * ============================================================================
+ *
+ * La versión anterior hacía `strtr($s, 'áéíóú…', 'aeiou…')`. Las tildes ocupan
+ * DOS bytes cada una, así que la cadena de origen medía 24 bytes y la de
+ * destino 12: strtr recortaba al mínimo y mapeaba medios caracteres.
+ *
+ *     «Nómina»    →  «nnimina»
+ *     «Dirección» →  «direccinin»
+ *
+ * Resultado: **ninguna pantalla con tilde se podía encontrar escribiendo sin
+ * tilde**, que es justo como escribe todo el mundo. La forma de array de strtr
+ * sí entiende claves multibyte.
+ */
+function buscar_normalizar(string $s): string
+{
+    return strtr(mb_strtolower(trim($s)), [
+        'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+        'à' => 'a', 'è' => 'e', 'ì' => 'i', 'ò' => 'o', 'ù' => 'u',
+        'ä' => 'a', 'ë' => 'e', 'ï' => 'i', 'ö' => 'o', 'ü' => 'u',
+        'ñ' => 'n', 'ç' => 'c',
+    ]);
+}
+
+/**
+ * ¿El texto es un importe? Devuelve el número, o null si no lo es.
+ *
+ * Acepta lo que la gente escribe de verdad: «1180», «1,180.00», «RD$ 1180».
+ * Se descartan los números cortos —hasta dos cifras— porque «12» es casi
+ * siempre parte de un código y buscar todas las ventas de 12 pesos solo
+ * añade ruido.
+ */
+function buscar_importe(string $q): ?float
+{
+    $limpio = str_replace([',', ' ', 'RD$', 'rd$', '$'], '', trim($q));
+    if ($limpio === '' || !preg_match('/^\d+(\.\d{1,2})?$/', $limpio)) return null;
+    if (strlen(preg_replace('/\D/', '', $limpio)) < 3) return null;
+    return (float) $limpio;
+}
+
+/**
  * Ejecuta la búsqueda.
  *
  * @return array<int,array{grupo:string,icono:string,color:string,items:array}>
@@ -96,16 +140,23 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
         if ($items) $grupos[] = ['grupo' => 'Clientes', 'icono' => 'users', 'color' => 'cyan', 'items' => $items];
     }
 
-    /* ---------- Ventas ---------- */
+    /* ---------- Ventas ----------
+       También por IMPORTE. Quien llama a reclamar casi nunca trae el número de
+       factura: trae «una compra de mil ciento ochenta pesos». Se acepta el
+       número con o sin separadores —1180, 1,180.00, 1180.00— y se busca con un
+       centavo de holgura, porque nadie dicta los decimales igual. */
+    $importe = buscar_importe($q);
     if (can('ventas.ver')) {
         [$wv, $pv] = sucursalScope('v.sucursal_id');
+        $porImporte = $importe !== null ? ' OR (v.total BETWEEN ? AND ?)' : '';
+        $extra = $importe !== null ? [$importe - 0.01, $importe + 0.01] : [];
         $rows = qAll(
             "SELECT v.id, v.numero, v.ncf, v.fecha, v.total, v.estado,
                     COALESCE(cl.nombre,'Consumidor final') AS cliente
                FROM ventas v LEFT JOIN clientes cl ON cl.id = v.cliente_id
-              WHERE (v.numero LIKE ? OR v.ncf LIKE ?) AND $wv
+              WHERE (v.numero LIKE ? OR v.ncf LIKE ?$porImporte) AND $wv
               ORDER BY v.fecha DESC LIMIT $tope",
-            array_merge([$like, $like], $pv)
+            array_merge([$like, $like], $extra, $pv)
         );
         $items = [];
         foreach ($rows as $r) {
@@ -118,6 +169,128 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
             ];
         }
         if ($items) $grupos[] = ['grupo' => 'Ventas', 'icono' => 'receipt', 'color' => 'emerald', 'items' => $items];
+    }
+
+    /* ---------- Cotizaciones ---------- */
+    if (can('cotizaciones.ver') && cot_disponible()) {
+        [$wq, $pq] = sucursalScope('c.sucursal_id');
+        $rows = qAll(
+            "SELECT c.id, c.numero, c.fecha, c.total, c.estado,
+                    COALESCE(cl.nombre,'Sin cliente') AS cliente
+               FROM cotizaciones c LEFT JOIN clientes cl ON cl.id = c.cliente_id
+              WHERE (c.numero LIKE ? OR cl.nombre LIKE ?) AND $wq
+              ORDER BY c.fecha DESC LIMIT $tope",
+            array_merge([$like, $like], $pq)
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $est = cot_estados()[$r['estado']] ?? [$r['estado'], 'slate'];
+            $items[] = [
+                'titulo'    => $r['numero'],
+                'subtitulo' => $r['cliente'] . ' · ' . fechaCorta($r['fecha']),
+                'etiqueta'  => $est[0], 'etiqueta_color' => $est[1],
+                'url'       => url('modules/pos/cotizacion.php?id=' . (int) $r['id']),
+            ];
+        }
+        if ($items) $grupos[] = ['grupo' => 'Cotizaciones', 'icono' => 'file', 'color' => 'sky', 'items' => $items];
+    }
+
+    /* ---------- Pedidos en línea ----------
+       El teléfono es LO que se busca aquí: el cliente llama y dice su número,
+       no el del pedido. */
+    if (can('pedidos.ver')) {
+        [$wp, $pp] = sucursalScope('p.sucursal_id');
+        $rows = qAll(
+            "SELECT p.id, p.numero, p.cliente_nombre, p.cliente_telefono, p.total, p.estado, p.created_at
+               FROM pedidos p
+              WHERE (p.numero LIKE ? OR p.cliente_nombre LIKE ? OR p.cliente_telefono LIKE ?) AND $wp
+              ORDER BY p.id DESC LIMIT $tope",
+            array_merge([$like, $like, $like], $pp)
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $items[] = [
+                'titulo'    => $r['numero'] . ' · ' . $r['cliente_nombre'],
+                'subtitulo' => ($r['cliente_telefono'] ?: 'sin teléfono') . ' · ' . fechaCorta($r['created_at']),
+                'etiqueta'  => money($r['total']),
+                'etiqueta_color' => $r['estado'] === 'pendiente' ? 'amber' : ($r['estado'] === 'cancelado' ? 'slate' : 'emerald'),
+                'url'       => url('modules/pos/pedidos.php?q=' . urlencode($r['numero'])),
+            ];
+        }
+        if ($items) $grupos[] = ['grupo' => 'Pedidos', 'icono' => 'store', 'color' => 'emerald', 'items' => $items];
+    }
+
+    /* ---------- Comprobantes electrónicos ----------
+       Se busca por e-NCF porque es lo que trae el cliente cuando reclama, y
+       lo que pide la DGII cuando pregunta. */
+    if (can('ecf.ver') && function_exists('ecfActivo')) {
+        try {
+            $rows = qAll(
+                "SELECT id, encf, tipo_ecf, estado, total, fecha_emision, razon_social_comprador
+                   FROM ecf_documentos WHERE encf LIKE ? ORDER BY id DESC LIMIT $tope", [$like]);
+            $items = [];
+            $col = ['aceptado' => 'emerald', 'rechazado' => 'rose', 'error' => 'rose'];
+            foreach ($rows as $r) {
+                $items[] = [
+                    'titulo'    => $r['encf'],
+                    'subtitulo' => ($r['razon_social_comprador'] ?: 'Consumidor final') . ' · ' . fechaCorta($r['fecha_emision']),
+                    'etiqueta'  => $r['estado'], 'etiqueta_color' => $col[$r['estado']] ?? 'sky',
+                    'url'       => url('modules/finanzas/ecf.php?tab=documentos'),
+                ];
+            }
+            if ($items) $grupos[] = ['grupo' => 'Comprobantes e-CF', 'icono' => 'receipt', 'color' => 'violet', 'items' => $items];
+        } catch (Throwable $e) { /* sin módulo e-CF, se omite */ }
+    }
+
+    /* ---------- Préstamos a empleados ---------- */
+    if (can('prestamos.ver') && function_exists('presDisponible') && presDisponible()) {
+        $rows = qAll(
+            "SELECT p.id, p.numero, p.tipo, p.monto, p.saldo, p.estado,
+                    CONCAT(e.nombre,' ',e.apellido) AS empleado
+               FROM prestamos p JOIN empleados e ON e.id = p.empleado_id
+              WHERE p.numero LIKE ? OR e.nombre LIKE ? OR e.apellido LIKE ? OR e.cedula LIKE ?
+              ORDER BY p.estado = 'activo' DESC, p.id DESC LIMIT $tope",
+            [$like, $like, $like, $like]
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $est = presEstados()[$r['estado']] ?? [$r['estado'], 'slate'];
+            $items[] = [
+                'titulo'    => $r['numero'] . ' · ' . $r['empleado'],
+                'subtitulo' => (presTipos()[$r['tipo']] ?? $r['tipo']) . ' de ' . money($r['monto'], false)
+                             . ' · saldo ' . money($r['saldo'], false),
+                'etiqueta'  => $est[0], 'etiqueta_color' => $est[1],
+                'url'       => url('modules/rrhh/prestamos.php?ver=' . (int) $r['id']),
+            ];
+        }
+        if ($items) $grupos[] = ['grupo' => 'Préstamos', 'icono' => 'wallet', 'color' => 'amber', 'items' => $items];
+    }
+
+    /* ---------- Amonestaciones ----------
+       Se busca también dentro de los HECHOS: cuando alguien recuerda «lo de la
+       caja descuadrada» pero no el número ni la fecha. */
+    if (can('amonestaciones.ver') && function_exists('amonDisponible') && amonDisponible()) {
+        $rows = qAll(
+            "SELECT a.id, a.numero, a.tipo, a.gravedad, a.estado, a.fecha_emision, a.fecha_conocimiento,
+                    CONCAT(e.nombre,' ',e.apellido) AS empleado
+               FROM amonestaciones a JOIN empleados e ON e.id = a.empleado_id
+              WHERE a.numero LIKE ? OR e.nombre LIKE ? OR e.apellido LIKE ? OR a.hechos LIKE ?
+              ORDER BY a.fecha_emision DESC LIMIT $tope",
+            [$like, $like, $like, $like]
+        );
+        $items = [];
+        foreach ($rows as $r) {
+            $cad = amonCaducidad($r['fecha_conocimiento']);
+            $gra = amonGravedades()[$r['gravedad']] ?? [$r['gravedad'], 'slate'];
+            $items[] = [
+                'titulo'    => $r['numero'] . ' · ' . $r['empleado'],
+                'subtitulo' => (amonTipos()[$r['tipo']] ?? $r['tipo']) . ' · ' . fechaCorta($r['fecha_emision'])
+                             . ($r['estado'] !== 'anulada' && !$cad['caducado'] ? ' · ' . $cad['etiqueta'] : ''),
+                'etiqueta'  => $gra[0], 'etiqueta_color' => $gra[1],
+                'url'       => url('modules/rrhh/amonestaciones.php?ver=' . (int) $r['id']),
+            ];
+        }
+        if ($items) $grupos[] = ['grupo' => 'Amonestaciones', 'icono' => 'alert', 'color' => 'rose', 'items' => $items];
     }
 
     /* ---------- Proveedores ---------- */
@@ -247,14 +420,14 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
 /** Pantallas del sistema que coinciden con el texto (respeta permisos). */
 function buscar_navegacion(string $q, int $tope = 5): array
 {
-    $norm = static fn(string $s): string => mb_strtolower(strtr($s, 'áéíóúÁÉÍÓÚñÑ', 'aeiouAEIOUnN'));
-    $needle = $norm($q);
+    $needle = buscar_normalizar($q);
     $items = [];
 
     foreach (nav_groups() as [$grupo, $entradas]) {
         foreach ($entradas as [$label, $ico, $href, $perm]) {
             if ($perm !== null && !can($perm)) continue;
-            if (strpos($norm($label), $needle) === false && strpos($norm($grupo), $needle) === false) continue;
+            if (strpos(buscar_normalizar($label), $needle) === false
+                && strpos(buscar_normalizar($grupo), $needle) === false) continue;
             $items[] = ['titulo' => $label, 'subtitulo' => $grupo, 'url' => $href, 'icono' => $ico];
             if (count($items) >= $tope) return $items;
         }

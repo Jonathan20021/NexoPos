@@ -9,7 +9,7 @@
  */
 $atajos = buscar_atajos();
 ?>
-<div x-data="buscadorGlobal(<?= e(json_encode(url('modules/busqueda/api.php'))) ?>, <?= e(json_encode(url('modules/busqueda/index.php'))) ?>)"
+<div x-data="buscadorGlobal(<?= e(json_encode(url('modules/busqueda/api.php'))) ?>, <?= e(json_encode(url('modules/busqueda/index.php'))) ?>, <?= (int) (current_user()['id'] ?? 0) ?>)"
      @keydown.window.prevent.ctrl.k="abrir()" @keydown.window.prevent.meta.k="abrir()"
      @keydown.escape.window="cerrar()">
 
@@ -53,7 +53,13 @@ $atajos = buscar_atajos();
   <div x-show="visible" x-cloak style="display:none"
        class="fixed inset-0 z-[70] flex items-start justify-center p-4 sm:pt-24 bg-slate-900/40 backdrop-blur-[2px]"
        @click.self="cerrar()">
-    <div class="w-full max-w-2xl bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden flex flex-col max-h-[min(80vh,620px)]">
+    <!-- `role=dialog` + `aria-modal` para que un lector de pantalla anuncie que
+         se abrió una ventana y no siga leyendo la página de detrás. El foco se
+         queda dentro con @keydown.tab: sin eso, tabular saca al usuario al
+         menú que hay debajo sin que se entere. -->
+    <div role="dialog" aria-modal="true" aria-label="Buscar en todo el sistema"
+         @keydown.tab="atraparFoco($event)"
+         class="w-full max-w-2xl bg-white rounded-2xl shadow-pop border border-slate-100 overflow-hidden flex flex-col max-h-[min(80vh,620px)]">
 
       <!-- Entrada -->
       <div class="flex items-center gap-3 px-4 border-b border-slate-100 shrink-0">
@@ -62,8 +68,11 @@ $atajos = buscar_atajos();
                @keydown.arrow-down.prevent="mover(1)" @keydown.arrow-up.prevent="mover(-1)"
                @keydown.enter.prevent="abrirSeleccion()"
                type="text" autocomplete="off" spellcheck="false"
-               placeholder="Producto, cliente, factura, NCF, proveedor, empleado…"
+               placeholder="Producto, cliente, factura, e-NCF, importe, empleado…"
                aria-label="Buscar en todo el sistema"
+               role="combobox" aria-autocomplete="list" aria-controls="buscador-lista"
+               :aria-expanded="plano.length > 0"
+               :aria-activedescendant="indice >= 0 ? 'buscador-op-' + indice : null"
                class="flex-1 py-4 text-[15px] text-slate-700 placeholder:text-slate-400 outline-none bg-transparent">
         <span x-show="cargando" x-cloak class="shrink-0">
           <svg class="w-4 h-4 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -75,7 +84,29 @@ $atajos = buscar_atajos();
       </div>
 
       <!-- Resultados -->
-      <div class="overflow-y-auto overscroll-contain flex-1" x-ref="lista">
+      <div class="overflow-y-auto overscroll-contain flex-1" x-ref="lista" id="buscador-lista" role="listbox">
+
+        <!-- Vistos hace poco. Solo con el cuadro vacío: en cuanto se escribe,
+             manda lo que se busca. -->
+        <template x-if="!q.trim() && recientes.length">
+          <div class="p-2 pb-0">
+            <div class="flex items-center justify-between px-3 pt-2 pb-1.5">
+              <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Vistos hace poco</p>
+              <button type="button" @click="olvidarRecientes()"
+                      class="text-[11px] font-semibold text-slate-300 hover:text-rose-500 transition">Borrar</button>
+            </div>
+            <template x-for="(r, i) in recientes" :key="r.url + i">
+              <a :href="r.url" class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 transition group">
+                <span class="w-9 h-9 rounded-lg bg-slate-50 text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-600 flex items-center justify-center shrink-0 transition">
+                  <?= icon('history', 'w-4 h-4') ?></span>
+                <span class="min-w-0 flex-1">
+                  <span class="block text-[13.5px] font-semibold text-slate-700 truncate" x-text="r.titulo"></span>
+                  <span class="block text-[11.5px] text-slate-400 truncate" x-text="r.grupo"></span>
+                </span>
+              </a>
+            </template>
+          </div>
+        </template>
 
         <!-- Atajos (buscador vacío) -->
         <template x-if="!q.trim()">
@@ -109,13 +140,16 @@ $atajos = buscar_atajos();
               <div class="mb-1">
                 <p class="px-3 pt-2 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400" x-text="grupo.grupo"></p>
                 <template x-for="item in grupo.items" :key="item.url + item.titulo">
-                  <a :href="item.url"
+                  <a :href="item.url" @click="recordar(item, grupo.grupo)"
+                     role="option" :id="'buscador-op-' + plano.indexOf(item)" :aria-selected="esActivo(item)"
                      @mouseenter="indice = plano.findIndex(p => p.url === item.url && p.titulo === item.titulo)"
                      :class="esActivo(item) ? 'bg-blue-50 ring-1 ring-blue-100' : 'hover:bg-slate-50'"
                      class="flex items-center gap-3 px-3 py-2.5 rounded-xl transition group">
                     <span class="min-w-0 flex-1">
-                      <span class="block text-[13.5px] font-semibold text-slate-800 truncate" x-text="item.titulo"></span>
-                      <span x-show="item.subtitulo" class="block text-[11.5px] text-slate-400 truncate" x-text="item.subtitulo"></span>
+                      <!-- x-html es seguro aquí: resaltar() escapa el texto ANTES
+                           de meter el <mark>. Ver el método. -->
+                      <span class="block text-[13.5px] font-semibold text-slate-800 truncate" x-html="resaltar(item.titulo)"></span>
+                      <span x-show="item.subtitulo" class="block text-[11.5px] text-slate-400 truncate" x-html="resaltar(item.subtitulo)"></span>
                     </span>
                     <span x-show="item.etiqueta" class="badge shrink-0"
                           :class="'badge-' + (item.etiqueta_color || 'slate')" x-text="item.etiqueta"></span>
@@ -144,7 +178,7 @@ $atajos = buscar_atajos();
 </div>
 
 <script>
-function buscadorGlobal(apiUrl, paginaUrl) {
+function buscadorGlobal(apiUrl, paginaUrl, usuarioId) {
   return {
     visible: false,
     q: '',
@@ -153,16 +187,77 @@ function buscadorGlobal(apiUrl, paginaUrl) {
     indice: -1,
     cargando: false,
     peticion: 0,        // descarta respuestas que llegan tarde y desordenadas
+    recientes: [],
+    scrollAntes: '',
     urlTodo: paginaUrl + '?q=',
     tecla: (navigator.platform || '').indexOf('Mac') === 0 ? '⌘' : 'Ctrl',
 
     abrir() {
       this.visible = true;
+      this.recientes = this.leerRecientes();
+      // La página de detrás no debe moverse mientras el panel está abierto:
+      // rueda el ratón sobre el fondo y se pierde el sitio donde se estaba.
+      this.scrollAntes = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
       this.$nextTick(() => this.$refs.campo && this.$refs.campo.focus());
     },
     cerrar() {
       this.visible = false;
       this.indice = -1;
+      document.body.style.overflow = this.scrollAntes || '';
+      // Devolver el foco a donde estaba: quien navega con teclado no debe
+      // aparecer al principio de la página al cerrar.
+      var d = document.querySelector('[aria-label="Buscar en todo el sistema"][type=button], button[aria-label="Buscar en todo el sistema"]');
+      if (d && d.focus) d.focus();
+    },
+
+    /** Mantiene el tabulador dentro del panel mientras está abierto. */
+    atraparFoco(e) {
+      var f = e.currentTarget.querySelectorAll('a[href], button, input, [tabindex]:not([tabindex="-1"])');
+      if (!f.length) return;
+      var primero = f[0], ultimo = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
+      else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
+    },
+
+    /**
+     * Resalta lo buscado dentro del resultado.
+     *
+     * ESCAPA PRIMERO y mete el <mark> después. Al revés sería un XSS: los
+     * títulos salen de la base —nombres de producto, de cliente— y basta con
+     * que alguien guarde un producto llamado «<img onerror=…>» para ejecutarlo
+     * en la pantalla de quien busque.
+     */
+    resaltar(texto) {
+      var t = String(texto == null ? '' : texto);
+      var esc = t.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      var termino = this.q.trim();
+      if (termino.length < 2) return esc;
+      var patron = termino.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      try {
+        return esc.replace(new RegExp('(' + patron + ')', 'gi'),
+          '<mark class="bg-amber-100 text-inherit rounded-sm px-0.5">$1</mark>');
+      } catch (e) { return esc; }
+    },
+
+    /* ---- Vistos hace poco ----
+       La clave lleva el id del usuario: en una caja compartida, lo que abrió
+       un cajero no le aparece al siguiente. */
+    claveRecientes() { return 'nexopos.recientes.' + usuarioId; },
+    leerRecientes() {
+      try { return (JSON.parse(localStorage.getItem(this.claveRecientes()) || '[]') || []).slice(0, 5); }
+      catch (e) { return []; }
+    },
+    recordar(item, grupo) {
+      try {
+        var lista = this.leerRecientes().filter(r => r.url !== item.url);
+        lista.unshift({titulo: item.titulo, url: item.url, grupo: grupo});
+        localStorage.setItem(this.claveRecientes(), JSON.stringify(lista.slice(0, 5)));
+      } catch (e) { /* sin localStorage no pasa nada: es una comodidad */ }
+    },
+    olvidarRecientes() {
+      try { localStorage.removeItem(this.claveRecientes()); } catch (e) {}
+      this.recientes = [];
     },
 
     async buscar() {
