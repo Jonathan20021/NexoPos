@@ -69,6 +69,21 @@ function permission_catalog(): array
             'rrhh_asistencia'    => ['label' => 'Asistencia', 'acciones' => ['ver' => 'Ver', 'registrar' => 'Registrar']],
             'rrhh_nomina'        => ['label' => 'Nómina', 'acciones' => ['ver' => 'Ver', 'procesar' => 'Procesar', 'pagar' => 'Pagar']],
             'rrhh_vacaciones'    => ['label' => 'Vacaciones y Licencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'aprobar' => 'Aprobar']],
+            'tss'                => ['label' => 'TSS · Seguridad Social', 'acciones' => [
+                'ver'        => 'Ver aportes y novedades',
+                'configurar' => 'Cambiar el salario mínimo cotizable, tasas y topes',
+            ]],
+            'prestamos'          => ['label' => 'Préstamos a empleados', 'acciones' => [
+                'ver'        => 'Ver y consultar saldos',
+                'crear'      => 'Otorgar y autorizar el descuento',
+                'anular'     => 'Anular y condonar',
+                'configurar' => 'Cambiar el tope legal de descuento',
+            ]],
+            'amonestaciones'     => ['label' => 'Amonestaciones', 'acciones' => [
+                'ver'    => 'Ver el expediente disciplinario',
+                'crear'  => 'Levantar y notificar',
+                'anular' => 'Anular y dejar sin efecto',
+            ]],
         ],
         'Finanzas' => [
             'finanzas'   => ['label' => 'Ingresos y Gastos', 'acciones' => $crud],
