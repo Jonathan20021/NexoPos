@@ -129,25 +129,49 @@ $inventario[] = chk(
 
 $inventario[] = chk(
     'Existencias que no cuadran con el kardex',
-    'La cantidad guardada debe ser exactamente la suma de todos los movimientos del producto. Si no lo es, alguien tocó la existencia por fuera del sistema.',
+    'La cantidad guardada debe ser la misma con la que cerró el último movimiento del producto. Si no lo es, alguien tocó la existencia por fuera del sistema.',
     function () {
         /*
+         * Se compara contra el SALDO DE CIERRE del último movimiento, no contra
+         * la suma de los movimientos.
+         *
+         * Sumar los deltas solo vale si el producto empezó en cero y todo lo que
+         * tiene entró por el kardex. En cuanto se carga una existencia inicial
+         * —que es como arranca cualquier implantación— la suma deja de ser el
+         * stock para siempre: un artículo que abrió con 25 unidades, vendió y
+         * devolvió hasta quedar en 21 daba «suma de movimientos: −4» y la
+         * pantalla lo denunciaba eternamente, mandando a hacer un conteo físico
+         * que no hacía falta. Con 300 productos recién cargados, habría gritado
+         * por los 300.
+         *
+         * `ajustarStock()` escribe la existencia y el `stock_nuevo` del
+         * movimiento en la misma transacción, así que si difieren es justo lo
+         * que este chequeo busca: alguien editó la tabla por fuera.
+         *
          * El kardex se agrupa UNA vez y se cruza con las existencias. La versión
          * anterior lanzaba una subconsulta correlacionada por cada fila de stock
          * y además la repetía para el detalle: con 180.000 movimientos medimos
          * 4.255 ms; así son 200 ms, y de paso una sola consulta sirve para el
          * conteo y para el detalle.
+         *
+         * Los productos sin ningún movimiento quedan fuera (JOIN, no LEFT JOIN):
+         * su existencia es una apertura y el kardex no afirma nada sobre ella.
          */
         $rows = qAll(
-            "SELECT p.nombre, su.nombre sucursal, s.cantidad, COALESCE(m.k, 0) AS kardex
+            "SELECT p.nombre, su.nombre sucursal, s.cantidad, u.stock_nuevo AS kardex
                FROM inventario_stock s
                JOIN productos p   ON p.id  = s.producto_id
                JOIN sucursales su ON su.id = s.sucursal_id
-               LEFT JOIN (SELECT producto_id, sucursal_id, SUM(cantidad) k
-                            FROM movimientos_inventario
-                           GROUP BY producto_id, sucursal_id) m
-                      ON m.producto_id = s.producto_id AND m.sucursal_id = s.sucursal_id
-              WHERE ABS(s.cantidad - COALESCE(m.k, 0)) > 0.001"
+               JOIN (SELECT m.producto_id, m.sucursal_id, m.stock_nuevo
+                       FROM movimientos_inventario m
+                       JOIN (SELECT producto_id, sucursal_id, MAX(id) ult
+                               FROM movimientos_inventario
+                              GROUP BY producto_id, sucursal_id) x
+                         ON x.producto_id = m.producto_id
+                        AND x.sucursal_id = m.sucursal_id
+                        AND x.ult = m.id
+                    ) u ON u.producto_id = s.producto_id AND u.sucursal_id = s.sucursal_id
+              WHERE ABS(s.cantidad - u.stock_nuevo) > 0.001"
         );
         return [count($rows), array_slice($rows, 0, 10)];
     },
