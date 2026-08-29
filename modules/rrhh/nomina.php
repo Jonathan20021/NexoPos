@@ -450,18 +450,65 @@ if (isPost()) {
     if ($accion === 'pagar') {
         require_perm('rrhh_nomina.pagar');
         $id = postInt('id');
+        // De qué cuenta sale el dinero. Antes estaba FIJO en efectivo y no había
+        // forma de decir otra cosa: a 53 de los 58 se les paga por transferencia,
+        // así que una quincena entera salía de una caja que nunca tuvo ese
+        // dinero y la dejaba en −877.721,39. La cuenta ahora se elige al pagar.
+        $cuentaId = postInt('cuenta_id') ?: null;
         try {
-            tx(function () use ($id) {
+            $aviso = txReintentable(function () use ($id, $cuentaId) {
                 $n = qOne("SELECT * FROM nominas WHERE id=? FOR UPDATE", [$id]);
                 if (!$n || $n['estado'] !== 'procesada') throw new RuntimeException('La nómina no se puede pagar.');
                 if (!can_access_sucursal($n['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta nómina.');
-                dbUpdate('nominas', ['estado' => 'pagada'], 'id=?', [$id]);
-                if ((float) $n['total_neto'] > 0) {
-                    registrarTransaccion('gasto', (float) $n['total_neto'], ['sucursal_id' => $n['sucursal_id'], 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $n['sucursal_id'] !== null ? (int) $n['sucursal_id'] : null), 'categoria_id' => categoriaFinancieraId('gasto', 'Nómina'), 'descripcion' => 'Pago de nómina: ' . $n['descripcion'], 'referencia_tipo' => 'nomina', 'referencia_id' => $id]);
+
+                $sucId = $n['sucursal_id'] !== null ? (int) $n['sucursal_id'] : null;
+                $cuenta = null;
+                if ($cuentaId) {
+                    $cuenta = qOne("SELECT * FROM cuentas_financieras WHERE id = ? AND activo = 1 FOR UPDATE", [$cuentaId]);
+                    if (!$cuenta) throw new RuntimeException('La cuenta elegida para el pago no existe o está inactiva.');
+                    if ($cuenta['sucursal_id'] !== null && !can_access_sucursal($cuenta['sucursal_id'])) {
+                        throw new RuntimeException('No tienes acceso a la cuenta elegida.');
+                    }
+                } else {
+                    // Sin elección explícita se conserva el comportamiento de
+                    // siempre, para no cambiar nada a quien sí paga en efectivo.
+                    $auto = cuentaFinancieraIdPorTipo('efectivo', $sucId);
+                    $cuenta = $auto ? qOne("SELECT * FROM cuentas_financieras WHERE id = ? FOR UPDATE", [$auto]) : null;
                 }
+
+                dbUpdate('nominas', ['estado' => 'pagada'], 'id=?', [$id]);
+
+                $neto = (float) $n['total_neto'];
+                $aviso = '';
+                if ($neto > 0) {
+                    // Si el pago deja la cuenta en rojo se avisa, pero no se
+                    // bloquea: las dos causas posibles son legítimas y el
+                    // sistema no puede saber cuál es. Se nombran las dos en vez
+                    // de suponer una — el saldo de apertura sin cargar es tan
+                    // común como haber elegido la cuenta equivocada.
+                    if ($cuenta && (float) $cuenta['balance'] - $neto < -0.01) {
+                        $queda = money((float) $cuenta['balance'] - $neto);
+                        $aviso = 'La cuenta «' . $cuenta['nombre'] . '» queda en ' . $queda . '. '
+                               . ($cuenta['tipo'] === 'efectivo'
+                                   ? 'Una caja no debería quedar debiendo: si el pago salió del banco, anúlalo y vuelve a registrarlo contra la cuenta bancaria.'
+                                   : 'Revisa si falta cargar el saldo de apertura de esa cuenta.')
+                               . ' El saldo inicial se registra en Finanzas → Cuentas.';
+                    }
+                    registrarTransaccion('gasto', $neto, [
+                        'sucursal_id'     => $n['sucursal_id'],
+                        'cuenta_id'       => $cuenta ? (int) $cuenta['id'] : null,
+                        'categoria_id'    => categoriaFinancieraId('gasto', 'Nómina'),
+                        'descripcion'     => 'Pago de nómina: ' . $n['descripcion']
+                                           . ($cuenta ? ' (' . $cuenta['nombre'] . ')' : ''),
+                        'referencia_tipo' => 'nomina',
+                        'referencia_id'   => $id,
+                    ]);
+                }
+                return $aviso;
             });
             audit('rrhh_nomina', 'pagar', "Nómina pagada #$id", ['tabla' => 'nominas', 'registro_id' => $id]);
             flash('success', 'Nómina marcada como pagada y registrada en finanzas.');
+            if ($aviso) flash('warning', $aviso);
         } catch (Throwable $e) { flash('error', $e->getMessage()); }
         redirect('modules/rrhh/nomina.php?ver=' . $id);
     }
@@ -530,7 +577,30 @@ if ($verId) {
               . '<button class="btn btn-primary">' . icon('check', 'w-4 h-4') . ' Confirmar nómina</button></form>';
     }
     if ($n['estado'] === 'procesada' && can('rrhh_nomina.pagar')) {
-        $acc .= '<form method="post" class="inline" onsubmit="return confirm(\'¿Marcar esta nómina como pagada?\')">' . csrf_field() . '<input type="hidden" name="accion" value="pagar"><input type="hidden" name="id" value="' . $verId . '"><button class="btn btn-success">' . icon('check', 'w-4 h-4') . ' Marcar pagada</button></form>';
+        // De qué cuenta sale el dinero. Se pregunta porque la mayoría de la
+        // gente cobra por transferencia: dar por hecho «efectivo» dejaba una
+        // caja en rojo por el importe de la quincena entera.
+        $cuentas = qAll(
+            "SELECT id, nombre, tipo, balance FROM cuentas_financieras
+              WHERE activo = 1 AND (sucursal_id IS NULL OR sucursal_id = ?)
+              ORDER BY tipo = 'banco' DESC, sucursal_id IS NULL, nombre",
+            [$n['sucursal_id']]
+        );
+        $opts = '';
+        foreach ($cuentas as $cta) {
+            $opts .= '<option value="' . (int) $cta['id'] . '">'
+                   . e($cta['nombre']) . ' · ' . e(ucfirst($cta['tipo']))
+                   . ' · ' . money($cta['balance']) . '</option>';
+        }
+        $avisoP = '¿Marcar como pagada «' . $n['descripcion'] . '» por '
+                . money($n['total_neto'], false) . ' netos? Se registrará el gasto en la cuenta elegida.';
+        $acc .= '<form method="post" class="inline-flex items-center gap-2" onsubmit="return confirm(\'' . e(addslashes($avisoP)) . '\')">'
+              . csrf_field()
+              . '<input type="hidden" name="accion" value="pagar"><input type="hidden" name="id" value="' . $verId . '">'
+              . ($cuentas
+                  ? '<select name="cuenta_id" class="select py-1.5 text-sm max-w-[19rem]" aria-label="Cuenta de la que sale el pago">' . $opts . '</select>'
+                  : '')
+              . '<button class="btn btn-success">' . icon('check', 'w-4 h-4') . ' Marcar pagada</button></form>';
     }
     $editable = $n['estado'] === 'borrador' && can('rrhh_nomina.procesar');
     layout_start('Nómina · ' . e($n['descripcion']), 'Periodo ' . fechaCorta($n['fecha_desde']) . ' al ' . fechaCorta($n['fecha_hasta']) . ' · ' . ucfirst($n['tipo']), $acc);
