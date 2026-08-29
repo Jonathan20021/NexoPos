@@ -202,6 +202,41 @@ arreglo de `rep_catalogo()`: el hub y los permisos salen de ahí.
 abrevia los valores (`200K`, `1.25M`); la cifra exacta va en el tooltip de cada punto.
 No fijes márgenes a ojo: con cifras grandes el eje se recorta contra el borde.
 
+## ⚠ Interfaz: dos reglas que no se negocian
+
+**1. Responsive SIEMPRE, y comprobado, no supuesto.** Una pantalla no está
+terminada hasta que se ha mirado en 360, 390, 768, 1024 y 1440 px. Cuatro trampas
+que solo aparecen midiendo:
+
+- **Los campos de formulario van a 16 px en móvil.** Por debajo de eso, iOS hace
+  zoom al enfocar el campo y descuadra la pantalla entera. Del `sm` hacia arriba
+  ya se puede afinar el tamaño.
+- **`100vh` miente en el teléfono.** Cuenta la barra de direcciones que se
+  retrae, así que la pantalla queda ~60 px más alta de lo visible y aparece un
+  scroll que no lleva a ninguna parte. Usa `min-height:100vh` seguido de
+  `min-height:100dvh` (la primera línea es el respaldo).
+- **Áreas de toque de 44 px.** Un icono de 34 px se acierta con el ratón, no con
+  el pulgar. Vale sobre todo para botones metidos dentro de un campo.
+- **Toda tabla ancha va dentro de `overflow-x-auto`.** Nunca debe scrollear la
+  página en horizontal: scrollea la tabla dentro de su tarjeta. Comprobación
+  rápida en la consola del navegador:
+  `document.documentElement.scrollWidth - document.documentElement.clientWidth`
+  tiene que dar **0** en todos los anchos.
+
+Alturas fijas dentro de una rejilla son otra fuente de scroll fantasma: con
+`height` fija, la fila se sigue midiendo por el contenido. Usa `min-height`.
+
+**2. Cero datos de negocio inventados en la interfaz.** Ni de maqueta, ni de
+relleno, ni «para que se vea lleno». La pantalla de acceso llegó a mostrar una
+tarjeta con «ventas del mes RD$ 1,284,900», un margen y un ticket promedio
+falsos: en la puerta de un sistema contable eso hace dudar de todo lo demás, y si
+alguien lo tomara por real sería la facturación a la vista sin autenticarse.
+Cuando un espacio pide contenido visual, se llena con **capacidades** («Punto de
+venta con NCF», «Inventario por sucursal»), nunca con cifras.
+
+Un estado vacío se resuelve con `empty_state()`, que además ofrece la acción que
+lo llena — no con números de ejemplo.
+
 ## Distribución: nada de huecos en blanco
 - Toda tarjeta que sea **celda directa de un grid** se estira sola a la altura de la fila
   (regla `.grid > .card:not([class*="h-"])` en el layout). Si la tarjeta necesita otra

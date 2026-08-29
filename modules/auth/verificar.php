@@ -92,11 +92,11 @@ $empresa   = setting('nombre', APP_NAME);
 <html lang="es" class="h-full">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Verificación en dos pasos · <?= e(APP_NAME) ?></title>
 <link rel="icon" href="<?= e(asset('favicon.svg')) ?>" type="image/svg+xml">
-<meta name="theme-color" content="#0f172a">
+<meta name="theme-color" content="<?= e(marca_app(950)) ?>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -120,12 +120,20 @@ tailwind.config = { theme: { extend: {
 <style>
   [x-cloak]{display:none!important}
   body{font-family:'Inter',sans-serif}
+
+  /* Alto real de la ventana en móvil: `100vh` cuenta la barra de direcciones
+     que se retrae y deja un scroll que no lleva a ninguna parte. Igual que en
+     la pantalla de acceso. */
+  .alto-pantalla{ min-height:100vh; min-height:100dvh }
+  @media (min-width:1024px){ .lg-alto-min{ min-height:100vh; min-height:100dvh } }
+
   .trama{
     background-image:
       linear-gradient(rgba(255,255,255,.055) 1px, transparent 1px),
       linear-gradient(90deg, rgba(255,255,255,.055) 1px, transparent 1px);
     background-size: 46px 46px;
-    mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 40%, transparent 100%);
+            mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 40%, transparent 100%);
   }
   /* Casillas del código: monoespaciado y grandes, se leen de un vistazo. */
   .digito{
@@ -136,44 +144,45 @@ tailwind.config = { theme: { extend: {
     -moz-appearance:textfield;
   }
   .digito::-webkit-outer-spin-button,.digito::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-  .digito:focus{border-color:#47599E; box-shadow:0 0 0 4px rgba(71,89,158,.14)}
+  .digito:focus{border-color:<?= e(marca_app(500)) ?>; box-shadow:0 0 0 4px <?= e(marca_app(500)) ?>24}
   .digito.lleno{border-color:#B0BADD; background:#f8fbff}
   .digito.malo{border-color:#fda4af; background:#fff5f6; animation:sacudir .4s}
   @keyframes sacudir{10%,90%{transform:translateX(-2px)}30%,70%{transform:translateX(3px)}50%{transform:translateX(-3px)}}
   @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
 </style>
 </head>
-<body class="h-full bg-white text-slate-700">
-<div class="min-h-full lg:grid lg:grid-cols-[1.05fr_1fr] xl:grid-cols-[1.15fr_1fr]">
+<body class="h-full bg-slate-50 text-slate-700">
+<div class="alto-pantalla lg:grid lg:grid-cols-2 xl:grid-cols-[1.06fr_1fr]">
 
-  <!-- ============ Panel de marca ============ -->
-  <div class="relative hidden lg:flex flex-col justify-between p-12 xl:p-14 overflow-hidden
-              bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white">
-    <div class="absolute inset-0 trama"></div>
-    <div class="absolute -top-32 -right-28 w-[26rem] h-[26rem] bg-blue-500/25 rounded-full blur-3xl animate-brillo"></div>
-    <div class="absolute -bottom-40 -left-24 w-[28rem] h-[28rem] bg-emerald-500/15 rounded-full blur-3xl animate-brillo" style="animation-delay:2s"></div>
+  <!-- ============ Panel de marca (desde lg) ============ -->
+  <aside class="relative hidden lg:flex lg-alto-min flex-col justify-between overflow-hidden
+                p-8 xl:p-14 text-white
+                bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+    <div class="absolute inset-0 trama pointer-events-none"></div>
+    <div class="absolute -top-32 -right-28 w-[26rem] h-[26rem] bg-blue-500/25 rounded-full blur-3xl animate-brillo pointer-events-none"></div>
+    <div class="absolute -bottom-40 -left-24 w-[28rem] h-[28rem] bg-emerald-500/15 rounded-full blur-3xl animate-brillo pointer-events-none" style="animation-delay:2s"></div>
 
-    <div class="relative flex items-center gap-3 animate-entrar">
+    <!-- El logotipo ya dice el nombre: no se repite al lado ni debajo. -->
+    <div class="relative animate-entrar">
       <?php if ($tieneLogo): ?>
-        <div>
-          <span class="inline-flex items-center rounded-2xl bg-white px-3.5 py-2 shadow-lg shadow-blue-950/30">
-            <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-6 max-w-[172px] object-contain">
-          </span>
-          <span class="block mt-1.5 text-[11px] font-semibold uppercase tracking-[.12em] text-blue-200/70"><?= e(APP_NAME) ?></span>
-        </div>
+        <span class="inline-flex items-center rounded-2xl bg-white px-4 py-2.5 shadow-lg shadow-blue-950/30">
+          <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-7 max-w-[190px] object-contain">
+        </span>
       <?php else: ?>
-        <div class="w-11 h-11 rounded-2xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-900/40">N</div>
+        <span class="inline-flex items-center gap-3">
+          <span class="w-11 h-11 rounded-2xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-950/40">N</span>
+          <span class="text-xl font-extrabold tracking-tight"><?= e(APP_NAME) ?></span>
+        </span>
       <?php endif; ?>
-      <span class="text-xl font-extrabold tracking-tight"><?= e(APP_NAME) ?></span>
     </div>
 
-    <div class="relative animate-entrar" style="animation-delay:.08s">
+    <div class="relative animate-entrar py-6 xl:py-8" style="animation-delay:.08s">
       <span class="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 backdrop-blur px-3.5 py-1.5 text-[12.5px] font-semibold text-emerald-200 ring-1 ring-emerald-300/20">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-latir"></span>
         Paso 2 de 2 · Verificación de identidad
       </span>
 
-      <h1 class="mt-6 text-[2.6rem] xl:text-5xl font-extrabold leading-[1.08] tracking-tight">
+      <h1 class="mt-6 text-[2.15rem] xl:text-[2.75rem] font-extrabold leading-[1.1] tracking-tight">
         Tu contraseña sola<br>
         <span class="bg-gradient-to-r from-emerald-300 to-cyan-200 bg-clip-text text-transparent">ya no basta.</span>
       </h1>
@@ -183,7 +192,7 @@ tailwind.config = { theme: { extend: {
         contraseña, sin ese código no entra.
       </p>
 
-      <ul class="mt-9 space-y-3.5 max-w-md">
+      <ul class="mt-7 xl:mt-9 space-y-3 xl:space-y-3.5 max-w-md">
         <?php foreach ([
             ['El código vence en pocos minutos', 'Después deja de servir aunque alguien lo vea.'],
             ['Sirve una sola vez', 'En cuanto entras, ese código muere.'],
@@ -202,26 +211,43 @@ tailwind.config = { theme: { extend: {
       </ul>
     </div>
 
-    <div class="relative flex items-center gap-5 text-[12.5px] text-blue-200/60 animate-entrar" style="animation-delay:.16s">
+    <div class="relative flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-blue-200/60 animate-entrar" style="animation-delay:.16s">
       <span>© <?= date('Y') ?> <?= e(APP_NAME) ?></span>
       <span class="w-1 h-1 rounded-full bg-blue-200/30"></span>
       <span>Nunca te pediremos este código por teléfono ni por WhatsApp.</span>
     </div>
-  </div>
+  </aside>
 
   <!-- ============ Formulario ============ -->
-  <div class="flex items-center justify-center px-5 py-10 sm:px-10 lg:px-12 min-h-screen lg:min-h-full bg-slate-50 lg:bg-white"
-       x-data="verificacion(<?= (int) $segVence ?>, <?= (int) $segReenvio ?>, <?= $error ? 'true' : 'false' ?>)">
-    <div class="w-full max-w-[26rem] animate-entrar">
+  <main class="flex flex-col lg-alto-min bg-slate-50 lg:bg-white"
+        x-data="verificacion(<?= (int) $segVence ?>, <?= (int) $segReenvio ?>, <?= $error ? 'true' : 'false' ?>)">
 
-      <div class="lg:hidden flex items-center justify-center gap-3 mb-9">
+    <!-- Franja de marca en móvil y tablet: el mismo degradado del panel, para
+         que los dos pasos del acceso se vean como la misma pantalla. El logo
+         iba metido a la fuerza en un cuadrado de 44 px, que aplasta cualquier
+         logotipo apaisado. -->
+    <div class="lg:hidden relative overflow-hidden px-5 sm:px-8 pt-8 pb-7 text-white
+                bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+      <div class="absolute inset-0 trama pointer-events-none"></div>
+      <div class="absolute -top-24 -right-16 w-64 h-64 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="relative flex items-center gap-3">
         <?php if ($tieneLogo): ?>
-          <img src="<?= e(url($logo)) ?>" alt="" class="w-11 h-11 rounded-2xl object-contain bg-white border border-slate-200 p-1">
+          <span class="inline-flex items-center rounded-xl bg-white px-3 py-2 shadow-lg shadow-blue-950/30">
+            <img src="<?= e(url($logo)) ?>" alt="<?= e($empresa) ?>" class="h-6 max-w-[150px] object-contain">
+          </span>
         <?php else: ?>
-          <div class="w-11 h-11 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-extrabold text-xl shadow-lg shadow-blue-600/25">N</div>
+          <span class="w-10 h-10 rounded-xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-lg shrink-0">N</span>
+          <span class="text-lg font-extrabold tracking-tight"><?= e(APP_NAME) ?></span>
         <?php endif; ?>
-        <span class="text-2xl font-extrabold text-slate-800 tracking-tight"><?= e(APP_NAME) ?></span>
       </div>
+      <p class="relative mt-3.5 text-[12.5px] font-semibold text-emerald-200 inline-flex items-center gap-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        Paso 2 de 2 · Verificación de identidad
+      </p>
+    </div>
+
+    <div class="flex-1 flex items-center justify-center px-5 py-9 sm:px-8 lg:px-10 xl:px-14">
+    <div class="w-full max-w-[26rem] animate-entrar">
 
       <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-5">
         <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -350,7 +376,8 @@ tailwind.config = { theme: { extend: {
         en cuanto puedas.
       </p>
     </div>
-  </div>
+    </div>
+  </main>
 </div>
 
 <script>
