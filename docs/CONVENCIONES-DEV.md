@@ -503,3 +503,17 @@ La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
 - Escapa SIEMPRE con `e()` los datos dinámicos en el HTML.
 - Respeta los permisos por acción (ver/crear/editar/eliminar y especiales).
 - Sin dependencias externas nuevas (solo Tailwind CDN + Alpine, ya cargados).
+
+## Pruebas
+
+```bash
+php pruebas/nomina.php
+```
+
+`pruebas/nomina.php` cubre el cálculo de nómina dominicana (`includes/nomina.php`):
+tasas de AFP y SFS, la escala del ISR y sus bordes, el prorrateo por días y los
+casos que ya se rompieron una vez. Son funciones puras: no tocan la base ni
+necesitan sesión. Devuelve 0 si todo pasa.
+
+**Si tocas el cálculo de nómina, corre esto antes de commitear.** Un error ahí no
+se ve en pantalla: se ve cuando alguien cobra de menos.

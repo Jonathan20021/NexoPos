@@ -69,10 +69,18 @@ function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0,
     $n = static fn(string $k): float => max(0.0, (float) ($c[$k] ?? 0));
 
     // 1) Sueldo del período, prorrateado por los días realmente pagados.
+    //
+    // «No me pasaron los días» y «trabajó cero días» son cosas distintas y antes
+    // se trataban igual: `$dias > 0` mandaba las dos al sueldo completo. Como la
+    // rejilla deja teclear los días, a quien estuvo el período entero de licencia
+    // sin sueldo se le escribía 0 y el sistema le pagaba la quincena íntegra.
+    // Ahora decide la PRESENCIA de la clave, no su valor.
     $diasBase = (float) ($c['dias_base'] ?? 0);
-    $dias     = (float) ($c['dias_trabajados'] ?? 0);
+    $hayDias  = array_key_exists('dias_trabajados', $c)
+             && $c['dias_trabajados'] !== null && $c['dias_trabajados'] !== '';
+    $dias     = max(0.0, (float) ($c['dias_trabajados'] ?? 0));
     $completo = round($salarioMensual * $factor, 2);
-    $salarioPeriodo = ($diasBase > 0 && $dias > 0)
+    $salarioPeriodo = ($diasBase > 0 && $hayDias)
         ? round($salarioMensual * $factor / $diasBase * $dias, 2)
         : $completo;
 
@@ -123,7 +131,17 @@ function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0,
     $prima     = $n('prima_vacacional');
 
     $totalRetenciones = round($afp + $sfs + $isr + $perCapita, 2);
-    $neto = round($base - $totalRetenciones - $prestamo + $prima, 2);
+
+    // La cuota de préstamo se cobra hasta donde alcance el sueldo. Sin este
+    // tope, una cuota mayor que lo devengado daba un neto NEGATIVO: la nómina
+    // registraba que la persona «cobra» −4.000 y el total a pagar del período
+    // salía mal. Lo que no se pudo descontar se devuelve aparte para que la
+    // pantalla lo avise en vez de darlo por cobrado.
+    $disponible = max(0.0, round($base - $totalRetenciones + $prima, 2));
+    $prestamoAplicado = min($prestamo, $disponible);
+    $prestamoPendiente = round($prestamo - $prestamoAplicado, 2);
+
+    $neto = round($disponible - $prestamoAplicado, 2);
 
     return [
         'salarioPeriodo'    => $salarioPeriodo,
@@ -132,7 +150,8 @@ function calcNominaRD(float $salarioMensual, array $c = [], float $factor = 1.0,
         'sfs'               => $sfs,
         'isr'               => $isr,
         'perCapita'         => $perCapita,
-        'prestamo'          => $prestamo,
+        'prestamo'          => $prestamoAplicado,   // lo que de verdad se descontó
+        'prestamoPendiente' => $prestamoPendiente,  // lo que no cupo en este período
         'prima'             => $prima,
         'totalIngresos'     => $base,          // se guarda en total_ingresos
         'totalDeducciones'  => $totalRetenciones,

@@ -88,7 +88,7 @@ if (isPost()) {
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                         'total_ingresos' => $c['totalIngresos'],
-                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $c['prestamo'],
                         'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
                     ]);
                     $tb += $c['totalIngresos']; $td += $c['totalDeducciones']; $tn += $c['neto'];
@@ -204,7 +204,7 @@ if (isPost()) {
                 'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                 'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                 'total_ingresos' => $c['totalIngresos'],
-                'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
+                'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $c['prestamo'],
                 'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
             ]);
             nominaRecalcularTotales($nid);
@@ -322,7 +322,7 @@ if (isPost()) {
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
                         'total_ingresos' => $c['totalIngresos'],
-                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $cuota,
+                        'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'], 'otras_deducciones' => $c['prestamo'],
                         'total_deducciones' => $c['totalDeducciones'], 'salario_neto' => $c['neto'],
                     ]);
                     $altas[] = trim($emp['nombre'] . ' ' . $emp['apellido']);
@@ -367,9 +367,10 @@ if (isPost()) {
         $factor = $n['tipo'] === 'quincenal' ? 0.5 : ($n['tipo'] === 'semanal' ? (1 / 4.33) : 1);
 
         try {
-            txReintentable(function () use ($nid, $n, $campos, $factor) {
+            $sinCobrar = txReintentable(function () use ($nid, $n, $campos, $factor) {
                 $tb = 0; $td = 0; $tn = 0;
-                foreach (qAll("SELECT nd.*, e.salario FROM nomina_detalles nd JOIN empleados e ON e.id=nd.empleado_id WHERE nd.nomina_id = ?", [$nid]) as $d) {
+                $sinCobrar = [];
+                foreach (qAll("SELECT nd.*, e.nombre, e.apellido, e.salario FROM nomina_detalles nd JOIN empleados e ON e.id=nd.empleado_id WHERE nd.nomina_id = ?", [$nid]) as $d) {
                     $vals = [];
                     foreach ($campos as $k) {
                         $v = $_POST[$k][$d['id']] ?? $d[$k];
@@ -378,6 +379,16 @@ if (isPost()) {
                     $vals['dias_base'] = (float) $d['dias_base'] ?: nominaDiasBase($n['tipo']);
 
                     $c = calcNominaRD((float) $d['salario'], $vals, $factor);
+
+                    // Se guarda lo que de VERDAD se descontó. Si la cuota no cabía
+                    // en el sueldo del período, dejarla escrita entera haría que la
+                    // fila no cuadre (ingresos − deducciones ≠ neto) y daría por
+                    // cobrado un dinero que nadie cobró.
+                    $vals['otras_deducciones'] = $c['prestamo'];
+                    if ($c['prestamoPendiente'] > 0) {
+                        $sinCobrar[] = trim($d['nombre'] . ' ' . $d['apellido']) . ' (' . money($c['prestamoPendiente']) . ')';
+                    }
+
                     dbUpdate('nomina_detalles', $vals + [
                         'salario_base'      => $c['salarioPeriodo'],
                         'total_ingresos'    => $c['totalIngresos'],
@@ -388,8 +399,15 @@ if (isPost()) {
                     $tb += $c['totalIngresos']; $td += $c['totalDeducciones']; $tn += $c['neto'];
                 }
                 dbUpdate('nominas', ['total_bruto' => $tb, 'total_deducciones' => $td, 'total_neto' => $tn], 'id = ?', [$nid]);
+                return $sinCobrar;
             });
             flash('success', 'Conceptos guardados y nómina recalculada.');
+            if ($sinCobrar) {
+                flash('warning', 'La cuota de préstamo no cabía en el sueldo del período de: '
+                    . implode(', ', array_slice($sinCobrar, 0, 5))
+                    . (count($sinCobrar) > 5 ? ' y ' . (count($sinCobrar) - 5) . ' más' : '')
+                    . '. Se descontó solo hasta donde alcanzó; el resto sigue pendiente.');
+            }
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
