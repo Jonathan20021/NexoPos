@@ -61,17 +61,45 @@ $comprobantes[] = chk(
 $comprobantes[] = chk(
     'NCF consumidos sin comprobante emitido',
     'La secuencia avanzó más que los comprobantes realmente emitidos. Un hueco pequeño es normal si se anuló una venta; uno grande hay que justificarlo.',
+    /**
+     * El hueco se mide desde el PRIMER comprobante realmente emitido de la
+     * serie, no desde el número 1.
+     *
+     * Un NCF preimpreso empieza en 1, pero un e-CF arranca donde la DGII
+     * autorizó el rango: aquí, en 900001. Restando desde 1, la pantalla
+     * denunciaba «900.028 números consumidos sin comprobante» en una serie con
+     * tres facturas — 4,5 millones de hallazgos fantasma en total, que además
+     * tapaban los huecos de verdad.
+     *
+     * `ncf_secuencias` no guarda el inicio del rango, así que el primer número
+     * emitido es la mejor referencia disponible. Si la serie no tiene ningún
+     * comprobante todavía, no hay forma de saber dónde empezaba y no se inventa
+     * un hueco: se omite.
+     */
     function () {
         $d = [];
         $total = 0;
         foreach (qAll("SELECT tipo, secuencia_actual FROM ncf_secuencias WHERE activo = 1") as $s) {
-            $consumidos = (int) $s['secuencia_actual'] - 1;
-            $emitidos = (int) qVal("SELECT COUNT(*) FROM ventas WHERE ncf LIKE ?", [$s['tipo'] . '%'])
-                      + (int) qVal("SELECT COUNT(*) FROM devoluciones WHERE ncf LIKE ?", [$s['tipo'] . '%']);
+            $like = $s['tipo'] . '%';
+            // Los 3 primeros caracteres son la serie (B02, E31…); el resto, el número.
+            $primero = qVal(
+                "SELECT MIN(n) FROM (
+                     SELECT CAST(SUBSTRING(ncf, 4) AS UNSIGNED) n FROM ventas       WHERE ncf LIKE ?
+                     UNION ALL
+                     SELECT CAST(SUBSTRING(ncf, 4) AS UNSIGNED) n FROM devoluciones WHERE ncf LIKE ?
+                 ) x",
+                [$like, $like]
+            );
+            if ($primero === null) continue;   // serie sin estrenar: nada que contar
+
+            $emitidos = (int) qVal("SELECT COUNT(*) FROM ventas WHERE ncf LIKE ?", [$like])
+                      + (int) qVal("SELECT COUNT(*) FROM devoluciones WHERE ncf LIKE ?", [$like]);
+            $consumidos = (int) $s['secuencia_actual'] - (int) $primero;
             $hueco = $consumidos - $emitidos;
             if ($hueco > 0) {
                 $total += $hueco;
-                $d[] = $s['tipo'] . ': ' . $hueco . ' número(s) consumidos sin comprobante';
+                $d[] = $s['tipo'] . ': ' . number_format($hueco) . ' número(s) consumidos sin comprobante'
+                     . ' (desde el ' . $primero . ')';
             }
         }
         return [$total, $d];
@@ -263,9 +291,15 @@ $dinero[] = chk(
         );
         $malos = [];
         foreach ($rows as $r) {
-            $esperado = (float) $r['credito'] - (float) $r['abonos'] - (float) $r['devuelto'];
+            // El esperado se recorta a cero ANTES de comparar, no solo al
+            // imprimirlo: `clientes.balance` tiene un CHECK de no negativo, así
+            // que un cliente que devolvió más de lo que compró a crédito guarda
+            // 0 y eso es correcto. Comparando contra el crudo, la pantalla lo
+            // denunciaba y acto seguido imprimía «registra RD$ 0.00, debería ser
+            // RD$ 0.00»: una diferencia imposible de entender y de corregir.
+            $esperado = max(0.0, (float) $r['credito'] - (float) $r['abonos'] - (float) $r['devuelto']);
             if (abs((float) $r['balance'] - $esperado) > 0.05) {
-                $malos[] = $r['nombre'] . ': registra ' . money($r['balance']) . ', debería ser ' . money(max(0, $esperado));
+                $malos[] = $r['nombre'] . ': registra ' . money($r['balance']) . ', debería ser ' . money($esperado);
             }
         }
         return [count($malos), array_slice($malos, 0, 10)];

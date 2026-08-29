@@ -51,7 +51,7 @@ if (isPost()) {
                     redirect('modules/finanzas/index.php');
                 }
                 require_sucursal_access($orig['sucursal_id']);
-                tx(function () use ($orig, $id, $tipo, $catIdDb, $cuentaIdDb, $monto, $desc, $fecha) {
+                txReintentable(function () use ($orig, $id, $tipo, $catIdDb, $cuentaIdDb, $monto, $desc, $fecha) {
                     // 1) Revertir el efecto del movimiento anterior en su cuenta (si tenía)
                     if (!empty($orig['cuenta_id'])) {
                         $signoRev = $orig['tipo'] === 'ingreso' ? '-' : '+';   // revertir => inverso
@@ -76,7 +76,7 @@ if (isPost()) {
                 flash('success', 'Movimiento actualizado correctamente.');
             } else {
                 require_perm('finanzas.crear');
-                $nid = tx(function () use ($tipo, $monto, $sucId, $cuentaIdDb, $catIdDb, $desc, $fecha) {
+                $nid = txReintentable(function () use ($tipo, $monto, $sucId, $cuentaIdDb, $catIdDb, $desc, $fecha) {
                     return registrarTransaccion($tipo, $monto, [
                         'sucursal_id'     => $sucId,
                         'cuenta_id'       => $cuentaIdDb,
@@ -104,7 +104,7 @@ if (isPost()) {
             flash('error', 'Solo se pueden eliminar los movimientos manuales.');
         } else {
             require_sucursal_access($t['sucursal_id']);
-            tx(function () use ($t, $id) {
+            txReintentable(function () use ($t, $id) {
                 // Revertir el balance de la cuenta: ingreso resta, gasto suma
                 if (!empty($t['cuenta_id'])) {
                     $signo = $t['tipo'] === 'ingreso' ? '-' : '+';

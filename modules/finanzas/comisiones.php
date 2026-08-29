@@ -81,7 +81,7 @@ if (isPost()) {
         elseif ($accion === 'pagar') {
             require_perm('comisiones.pagar');
             $id = postInt('id');
-            tx(function () use ($id) {
+            txReintentable(function () use ($id) {
                 $c = qOne("SELECT * FROM comisiones WHERE id=? FOR UPDATE", [$id]);
                 if (!$c) throw new RuntimeException('Comisión no encontrada.');
                 if (!can_access_sucursal($c['sucursal_id'])) deny_access();

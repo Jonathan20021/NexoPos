@@ -92,8 +92,11 @@ $excedidos      = qAll(
 
 // Cobranza del periodo (para medir el ritmo de recuperación).
 $cobrado = (float) qVal(
-    "SELECT COALESCE(SUM(monto),0) FROM pagos_clientes WHERE DATE(fecha) BETWEEN ? AND ?",
-    [$p['desde'], $p['hasta']]
+    // Sobre la columna cruda, no `DATE(fecha)`: envolverla obliga a evaluar la
+    // función en cada abono del histórico. El límite superior lleva 23:59:59 o
+    // se pierden los cobros del último día.
+    "SELECT COALESCE(SUM(monto),0) FROM pagos_clientes WHERE fecha BETWEEN ? AND ?",
+    [$p['ini'], $p['fin']]
 );
 $facturadoCredito = (float) qVal(
     "SELECT COALESCE(SUM(vp.monto),0)

@@ -61,7 +61,7 @@ if (isPost()) {
         // cajeros pulsaban «Abrir» a la vez, los dos veían la caja libre y quedaban
         // DOS sesiones abiertas sobre el mismo cajón, con el arqueo descuadrado.
         try {
-            $nid = tx(function () use ($cajaId, $sid, $uid, $turno, $monto) {
+            $nid = txReintentable(function () use ($cajaId, $sid, $uid, $turno, $monto) {
                 q("SELECT id FROM cajas WHERE id = ? FOR UPDATE", [$cajaId]);
                 [$puede, $motivo] = validarAperturaCaja($cajaId, $uid);
                 if (!$puede) throw new RuntimeException($motivo);

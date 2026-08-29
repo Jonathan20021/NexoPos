@@ -99,11 +99,17 @@ for ($i = 0; $i < $dias; $i++) {
 }
 $ventasDia = function (array $fechas) use ($scope, $scopeP) {
     if (!$fechas) return [];
-    $ph = implode(',', array_fill(0, count($fechas), '?'));
+    // Las fechas salen de un bucle día a día, así que son contiguas: filtrar por
+    // el rango sobre la columna CRUDA devuelve exactamente las mismas filas que
+    // `DATE(v.fecha) IN (...)`, pero usa idx_v_fecha en vez de recorrer la tabla
+    // entera evaluando DATE() en cada venta del histórico. Ver el apartado de
+    // rendimiento en docs/CONVENCIONES-DEV.md.
     $rows = qAll(
         "SELECT DATE(v.fecha) d, COALESCE(SUM(v.subtotal - v.descuento),0) t
-           FROM ventas v WHERE v.estado='completada' AND DATE(v.fecha) IN ($ph) AND $scope GROUP BY d",
-        array_merge($fechas, $scopeP)
+           FROM ventas v
+          WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
+          GROUP BY DATE(v.fecha)",
+        array_merge([min($fechas) . ' 00:00:00', max($fechas) . ' 23:59:59'], $scopeP)
     );
     $m = [];
     foreach ($rows as $r) $m[$r['d']] = (float) $r['t'];

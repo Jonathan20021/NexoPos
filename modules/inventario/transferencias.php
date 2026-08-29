@@ -60,7 +60,7 @@ if (isPost()) {
         $id = postInt('id');
         try {
             $in = transferenciaValidarEntrada();
-            tx(function () use ($id, $in) {
+            txReintentable(function () use ($id, $in) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede editar un borrador.');
                 if (!can_access_sucursal($t['sucursal_origen_id'])) deny_access();
