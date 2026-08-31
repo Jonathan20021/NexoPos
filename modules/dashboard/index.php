@@ -44,7 +44,19 @@ $verSucursales = can_any(['reportes.ejecutivo', 'reportes.ver']);
 $verProductos  = can_any(['reportes.operacion', 'productos.ver', 'inventario.ver']);
 $verInventario = can_any(['inventario.ver', 'productos.ver']);
 $verMetas      = can('metas.ver');
-$verNada       = !$verVentas && !$verCaja && !$verProductos && !$verInventario && !$verMetas;
+// Recursos humanos: quien administra nómina y TSS también tiene un tablero.
+// Antes se le enseñaba la facturación de la empresa; después de taparla se le
+// quedó la pantalla en blanco, que tampoco es su tablero. Es el suyo el que
+// faltaba, no el de ventas el que sobraba.
+$verEmpleados  = can('rrhh_empleados.ver');
+$verNomina     = can('rrhh_nomina.ver');
+$verTss        = can('tss.ver');
+$verPrestamos  = can('prestamos.ver') && function_exists('presDisponible') && presDisponible();
+$verVacaciones = can('rrhh_vacaciones.ver');
+$verRRHH       = $verEmpleados || $verNomina || $verTss || $verPrestamos || $verVacaciones;
+
+$verNada       = !$verVentas && !$verCaja && !$verProductos && !$verInventario
+                 && !$verMetas && !$verRRHH;
 
 $hoy       = date('Y-m-d');
 $inicioMes = date('Y-m-01');
@@ -259,6 +271,42 @@ if ($sid === null && count(sucursales_visibles()) > 1) {
     usort($porSucursal, fn($a, $b) => $b['total'] <=> $a['total']);
 }
 $totalSuc = array_sum(array_column($porSucursal, 'total')) ?: 1;
+
+/* ============================================================
+ *  RECURSOS HUMANOS
+ * ============================================================ */
+$rrhh = [];
+if ($verRRHH) {
+    $scopeE = $sid === null ? '1=1' : '(e.sucursal_id = ' . (int) $sid . ' OR e.sucursal_id IS NULL)';
+    $scopeN = $sid === null ? '1=1' : '(n.sucursal_id = ' . (int) $sid . ' OR n.sucursal_id IS NULL)';
+
+    if ($verEmpleados) {
+        $rrhh['plantilla'] = qOne(
+            "SELECT COUNT(*) n, COALESCE(SUM(e.salario),0) masa
+               FROM empleados e WHERE e.estado='activo' AND $scopeE"
+        ) ?: ['n' => 0, 'masa' => 0];
+        // La cédula es lo que identifica a la persona en la TSS: si no cuadra,
+        // ese empleado no cotiza. Se avisa aquí porque es la pantalla de entrada.
+        $rrhh['cedulas'] = [];
+        foreach (qAll("SELECT e.nombre, e.apellido, e.cedula FROM empleados e
+                        WHERE e.estado='activo' AND $scopeE") as $e) {
+            if (!dgiiDocumentoValido($e['cedula'])) {
+                $rrhh['cedulas'][] = trim($e['nombre'] . ' ' . $e['apellido']);
+            }
+        }
+    }
+    if ($verNomina) {
+        $rrhh['nomina'] = qOne("SELECT n.* FROM nominas n WHERE $scopeN
+                                 ORDER BY n.fecha_hasta DESC, n.id DESC LIMIT 1");
+        $rrhh['por_pagar'] = (int) qVal("SELECT COUNT(*) FROM nominas n
+                                          WHERE n.estado <> 'pagada' AND $scopeN");
+    }
+    if ($verTss)       $rrhh['tss']  = tssDeclaracionMes(date('Y-m'));
+    if ($verPrestamos) $rrhh['pres'] = presResumen();
+    if ($verVacaciones) {
+        $rrhh['vacaciones'] = (int) qVal("SELECT COUNT(*) FROM vacaciones WHERE estado='solicitada'");
+    }
+}
 
 /* ============================================================
  *  METAS ACTIVAS
@@ -870,6 +918,88 @@ $verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
           <?php endforeach; ?>
         </tbody>
       </table>
+    </div>
+  <?php endif; ?>
+</section>
+<?php endif; ?>
+
+<!-- ============ RECURSOS HUMANOS ============ -->
+<?php if ($verRRHH): ?>
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-4">
+    <?= icon('users', 'w-5 h-5 text-slate-400') ?>
+    <h2 class="text-lg font-bold text-slate-800">Recursos humanos</h2>
+  </div>
+  <?php
+  $tarjetas = [];
+  if ($verEmpleados) {
+      $tarjetas[] = ['label' => 'Empleados activos', 'valor' => number_format((int) $rrhh['plantilla']['n']),
+          'icono' => 'users', 'color' => 'blue', 'href' => url('modules/rrhh/empleados.php'),
+          'nota' => 'Masa salarial ' . money((float) $rrhh['plantilla']['masa'], false) . ' al mes'];
+  }
+  if ($verNomina) {
+      $n = $rrhh['nomina'] ?? null;
+      $tarjetas[] = ['label' => 'Última nómina', 'valor' => $n ? money((float) $n['total_neto']) : '—',
+          'icono' => 'wallet', 'color' => $n && $n['estado'] === 'pagada' ? 'emerald' : 'amber',
+          'href' => url('modules/rrhh/nomina.php'),
+          'nota' => $n
+              ? e($n['descripcion']) . ' · ' . e(ucfirst($n['estado']))
+              : 'Todavía no hay ninguna generada'];
+  }
+  if ($verTss) {
+      $t = $rrhh['tss']['totales'] ?? [];
+      $tarjetas[] = ['label' => 'TSS de este mes', 'valor' => money((float) ($t['general'] ?? 0)),
+          'icono' => 'shield', 'color' => 'violet', 'href' => url('modules/rrhh/tss.php'),
+          'nota' => 'Empleado ' . money((float) ($t['empleado'] ?? 0), false)
+                  . ' · empresa ' . money((float) ($t['empleador'] ?? 0), false)];
+  }
+  if ($verPrestamos) {
+      $pr = $rrhh['pres'] ?? [];
+      $tarjetas[] = ['label' => 'Préstamos activos', 'valor' => number_format((int) ($pr['activos'] ?? 0)),
+          'icono' => 'cash', 'color' => 'cyan', 'href' => url('modules/rrhh/prestamos.php'),
+          'nota' => 'Saldo ' . money((float) ($pr['saldo'] ?? 0), false)
+                  . ' · cuota del mes ' . money((float) ($pr['cuota_mes'] ?? 0), false)];
+  }
+  echo kpis($tarjetas, min(4, max(2, count($tarjetas))));
+
+  // Solo lo que hay que hacer. Una tarjeta de pendientes vacía es ruido.
+  $pendientes = [];
+  if (!empty($rrhh['cedulas'])) {
+      $c = $rrhh['cedulas'];
+      $pendientes[] = ['icono' => 'alert', 'color' => 'amber',
+          'titulo' => count($c) . (count($c) === 1 ? ' cédula que no cuadra' : ' cédulas que no cuadran'),
+          'texto' => 'En la TSS la cédula identifica a la persona: así no cuadra y ese empleado se queda '
+                   . 'sin cotizar. ' . e(implode(', ', array_slice($c, 0, 4)))
+                   . (count($c) > 4 ? ' y ' . (count($c) - 4) . ' más' : '') . '.',
+          'href' => url('modules/rrhh/empleados.php')];
+  }
+  if (!empty($rrhh['por_pagar'])) {
+      $n = (int) $rrhh['por_pagar'];
+      $pendientes[] = ['icono' => 'clock', 'color' => 'blue',
+          'titulo' => $n . ($n === 1 ? ' nómina sin pagar' : ' nóminas sin pagar'),
+          'texto' => 'Quedan en borrador o procesadas, a la espera de marcarlas pagadas.',
+          'href' => url('modules/rrhh/nomina.php')];
+  }
+  if (!empty($rrhh['vacaciones'])) {
+      $n = (int) $rrhh['vacaciones'];
+      $pendientes[] = ['icono' => 'calendar', 'color' => 'indigo',
+          'titulo' => $n . ($n === 1 ? ' solicitud de vacaciones' : ' solicitudes de vacaciones'),
+          'texto' => 'Esperando aprobación.',
+          'href' => url('modules/rrhh/vacaciones.php')];
+  }
+  ?>
+  <?php if ($pendientes): ?>
+    <div class="grid grid-cols-1 lg:grid-cols-<?= min(3, count($pendientes)) ?> gap-4">
+      <?php foreach ($pendientes as $pd): ?>
+        <a href="<?= e($pd['href']) ?>"
+           class="card p-4 flex items-start gap-3 hover:border-<?= $pd['color'] ?>-300 hover:shadow-pop transition">
+          <?= icon($pd['icono'], 'w-5 h-5 text-' . $pd['color'] . '-500 mt-0.5 shrink-0') ?>
+          <div class="min-w-0">
+            <p class="font-semibold text-slate-800"><?= e($pd['titulo']) ?></p>
+            <p class="text-sm text-slate-500 leading-snug mt-0.5"><?= $pd['texto'] ?></p>
+          </div>
+        </a>
+      <?php endforeach; ?>
     </div>
   <?php endif; ?>
 </section>
