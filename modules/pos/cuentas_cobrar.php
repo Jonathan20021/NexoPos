@@ -33,14 +33,21 @@ if (isPost()) {
                     'descripcion' => 'Abono de ' . $cli['nombre'], 'referencia_tipo' => 'abono', 'referencia_id' => $clienteId,
                 ]);
                 if ((int) $metodo['afecta_caja'] === 1) {
+                    // Mismo caso que el reembolso, al revés: el billete entra en un
+                    // cajón. Sin caja abierta el ingreso no se apuntaba en ninguna
+                    // parte y al cierre salía un sobrante sin explicación.
                     $sesionCaja = cajaSesionAbierta($sid, (int) current_user()['id']);
-                    if ($sesionCaja) {
-                        dbInsert('caja_movimientos', [
-                            'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'ingreso',
-                            'concepto' => 'Abono de ' . $cli['nombre'], 'monto' => $monto,
-                            'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
-                        ]);
+                    if (!$sesionCaja) {
+                        throw new RuntimeException(
+                            'Abre tu caja antes de cobrar en efectivo: el dinero entra al cajón y el arqueo '
+                            . 'tiene que saberlo. Si prefieres no tocar caja, registra el abono por banco.'
+                        );
                     }
+                    dbInsert('caja_movimientos', [
+                        'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'ingreso',
+                        'concepto' => 'Abono de ' . $cli['nombre'], 'monto' => $monto,
+                        'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                    ]);
                 }
             });
             audit('clientes', 'editar', "Abono registrado al cliente #$clienteId por " . money($monto));

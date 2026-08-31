@@ -110,14 +110,24 @@ if (isPost()) {
                         'referencia_tipo' => 'devolucion', 'referencia_id' => $devId,
                     ]);
                     if ((int) $metodo['afecta_caja'] === 1) {
+                        // El reembolso en efectivo sale de un cajón concreto. Cuando
+                        // no había caja abierta este egreso se saltaba en silencio: el
+                        // dinero salía igual y al cierre aparecía un faltante que nadie
+                        // había causado. Vender ya exige caja abierta; entregar
+                        // efectivo, con más razón.
                         $sesionCaja = cajaSesionAbierta((int) $v['sucursal_id'], (int) current_user()['id']);
-                        if ($sesionCaja) {
-                            dbInsert('caja_movimientos', [
-                                'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'egreso',
-                                'concepto' => 'Reembolso ' . $numero, 'monto' => $totalDev,
-                                'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
-                            ]);
+                        if (!$sesionCaja) {
+                            throw new RuntimeException(
+                                'Abre tu caja antes de reembolsar en efectivo: el dinero sale del cajón y el '
+                                . 'arqueo tiene que saberlo. Si la caja de esta sucursal la tiene otra persona, '
+                                . 'que registre ella la devolución.'
+                            );
                         }
+                        dbInsert('caja_movimientos', [
+                            'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'egreso',
+                            'concepto' => 'Reembolso ' . $numero, 'monto' => $totalDev,
+                            'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                        ]);
                     }
                 }
                 // ¿Devolución total?
@@ -169,7 +179,33 @@ if ($ventaId && can('devoluciones.crear')) {
         redirect('modules/pos/devoluciones.php');
     }
     layout_start('Nueva devolución', 'Venta ' . e($v['numero']) . ' · ' . e($v['cliente'] ?: 'Cliente Genérico'), '<a href="' . url('modules/pos/devoluciones.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Cancelar</a>');
+    // Se avisa ANTES de llenar el formulario. Si el reembolso es en efectivo y
+    // quien devuelve no tiene caja abierta, al guardar se rechaza; enterarse
+    // aquí evita teclear las cantidades para nada.
+    $metodoVenta = qOne(
+        "SELECT m.nombre, m.afecta_caja, m.es_credito FROM venta_pagos vp
+           JOIN metodos_pago m ON m.id = vp.metodo_pago_id
+          WHERE vp.venta_id = ? ORDER BY vp.id LIMIT 1",
+        [$ventaId]
+    );
+    $reembolsoEnEfectivo = $metodoVenta
+        && (int) $metodoVenta['afecta_caja'] === 1 && (int) $metodoVenta['es_credito'] === 0;
+    $sinCajaAbierta = $reembolsoEnEfectivo
+        && !cajaSesionAbierta((int) $v['sucursal_id'], (int) current_user()['id']);
     ?>
+    <?php if ($sinCajaAbierta): ?>
+      <div class="card p-4 mb-4 max-w-3xl bg-amber-50 border-amber-200 flex items-start gap-3">
+        <?= icon('alert', 'w-5 h-5 text-amber-600 mt-0.5 shrink-0') ?>
+        <div class="text-sm text-amber-900">
+          <p class="font-semibold">Esta venta se cobró en efectivo y no tienes la caja abierta.</p>
+          <p class="mt-0.5 leading-snug">
+            El reembolso sale del cajón, así que hace falta una caja abierta donde apuntar el egreso.
+            <a href="<?= url('modules/pos/caja.php') ?>" class="underline font-medium">Abre tu caja</a>
+            o pide a quien la tenga que registre la devolución.
+          </p>
+        </div>
+      </div>
+    <?php endif; ?>
     <form method="post" class="card p-6 max-w-3xl">
       <?= csrf_field() ?><input type="hidden" name="accion" value="guardar"><input type="hidden" name="venta_id" value="<?= $ventaId ?>">
       <div class="overflow-x-auto border border-slate-200 rounded-xl mb-4">

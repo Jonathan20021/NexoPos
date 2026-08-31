@@ -8,23 +8,36 @@ $uid = (int) current_user()['id'];
 /** Calcula los totales de una sesión de caja en vivo. */
 function totalesSesion(int $sesionId): array
 {
+    // POR QUÉ ENTRAN LAS VENTAS «DEVUELTAS» Y NO LAS «ANULADAS»
+    //
+    // Son dos correcciones distintas. Anular BORRA la venta del cuadre: se
+    // eliminan sus transacciones, se devuelve el saldo a la cuenta y encima no
+    // se deja anular si la caja ya cerró. Como si nunca hubiera pasado.
+    //
+    // Devolver no borra nada: el dinero SÍ entró al cajón y luego salió como
+    // egreso de reembolso. Si además se descontara la venta —y una devolución
+    // total le pone estado 'devuelta'—, el mismo reembolso se restaría dos
+    // veces y el arqueo acusaría un sobrante que no existe.
+    //
+    // Las cuatro cifras usan el mismo criterio a propósito: un recuadro que
+    // dijera «Ventas 0» al lado de «Efectivo 2,891» se contradice solo.
     $row = qOne(
         "SELECT
-            COALESCE(SUM(CASE WHEN v.estado='completada' THEN v.total ELSE 0 END),0) AS total_ventas,
-            COUNT(CASE WHEN v.estado='completada' THEN 1 END) AS num_ventas
+            COALESCE(SUM(CASE WHEN v.estado IN ('completada','devuelta') THEN v.total ELSE 0 END),0) AS total_ventas,
+            COUNT(CASE WHEN v.estado IN ('completada','devuelta') THEN 1 END) AS num_ventas
          FROM ventas v WHERE v.caja_sesion_id = ?", [$sesionId]
     );
     $efectivo = (float) qVal(
         "SELECT COALESCE(SUM(vp.monto),0) FROM venta_pagos vp
          JOIN ventas v ON v.id = vp.venta_id
          JOIN metodos_pago m ON m.id = vp.metodo_pago_id
-         WHERE v.caja_sesion_id = ? AND v.estado='completada' AND m.afecta_caja = 1", [$sesionId]
+         WHERE v.caja_sesion_id = ? AND v.estado IN ('completada','devuelta') AND m.afecta_caja = 1", [$sesionId]
     );
     $tarjeta = (float) qVal(
         "SELECT COALESCE(SUM(vp.monto),0) FROM venta_pagos vp
          JOIN ventas v ON v.id = vp.venta_id
          JOIN metodos_pago m ON m.id = vp.metodo_pago_id
-         WHERE v.caja_sesion_id = ? AND v.estado='completada' AND m.afecta_caja = 0", [$sesionId]
+         WHERE v.caja_sesion_id = ? AND v.estado IN ('completada','devuelta') AND m.afecta_caja = 0", [$sesionId]
     );
     $ingresos = (float) qVal("SELECT COALESCE(SUM(monto),0) FROM caja_movimientos WHERE caja_sesion_id = ? AND tipo='ingreso'", [$sesionId]);
     $egresos  = (float) qVal("SELECT COALESCE(SUM(monto),0) FROM caja_movimientos WHERE caja_sesion_id = ? AND tipo='egreso'", [$sesionId]);
