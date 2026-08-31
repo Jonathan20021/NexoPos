@@ -380,6 +380,44 @@ function ecfEstadoRespuesta(?array $json): array
             'message' => $msg !== null ? (string) $msg : null];
 }
 
+/**
+ * Extrae el veredicto del COMPROBANTE, que viaja dentro de «data».
+ *
+ * No es lo mismo que `ecfEstadoRespuesta()`: aquella lee el sobre —«code 0,
+ * Transacción exitosa»— que únicamente dice que la CONSULTA llegó y volvió. El
+ * comprobante trae su propio dictamen en `data.responseCode` y
+ * `data.responseMessage`, y esos son los que reconoce la DGII: 1 aceptado, 4
+ * aceptado condicional, 145 en adelante los motivos de rechazo.
+ *
+ * Guardar el sobre en lugar de esto es lo que hacía que un e-CF rechazado por
+ * la DGII se leyera en pantalla como «Transacción exitosa»: la etiqueta decía
+ * rechazado y el motivo, justo debajo, decía que todo había salido bien. Quien
+ * mirara esa fila no tenía forma de enterarse de por qué la factura no existe.
+ *
+ * `responseObservations` son los reparos con los que la DGII acepta el
+ * documento igualmente. Se pegan al mensaje porque son la única señal de que
+ * algo hay que corregir en las facturas que vienen.
+ */
+function ecfVeredictoDocumento(?array $json): array
+{
+    $data = is_array($json) ? ($json['data'] ?? null) : null;
+    if (!is_array($data)) return ['code' => null, 'message' => null];
+
+    $code = ecfBuscarValor($data, ['responseCode', 'codigoRespuesta']);
+    $msg  = ecfBuscarValor($data, ['responseMessage', 'mensajeRespuesta']);
+
+    $obs = $data['responseObservations'] ?? null;
+    $reparos = is_array($obs)
+        ? implode(' · ', array_filter(array_map(static fn($o) => trim((string) $o), $obs), 'strlen'))
+        : trim((string) $obs);
+
+    $texto = trim((string) ($msg ?? ''));
+    if ($reparos !== '') $texto = $texto === '' ? $reparos : $texto . ' · ' . $reparos;
+
+    return ['code' => $code !== null ? (string) $code : null,
+            'message' => $texto !== '' ? $texto : null];
+}
+
 /* ============================================================
  *  AUTENTICACIÓN
  * ============================================================ */
@@ -631,11 +669,14 @@ function ecfConsultarTrackId(string $trackId, ?int $documentoId = null, array $o
                 'mensaje' => ecfMensajeError($r['http'], $st, 'No se pudo consultar el estado', $r['raw'])];
     }
 
+    // El dictamen del comprobante manda; el sobre solo vale si no vino ninguno.
+    $doc = ecfVeredictoDocumento($r['json']);
+
     return [
         'ok' => true,
         'estado' => ecfInterpretarEstado($r['json']),
-        'codigo' => $st['code'],
-        'mensaje' => $st['message'] ?: 'Consulta realizada.',
+        'codigo' => $doc['code'] ?? $st['code'],
+        'mensaje' => $doc['message'] ?: ($st['message'] ?: 'Consulta realizada.'),
         'json' => $r['json'],
         'raw' => $r['raw'],
     ];

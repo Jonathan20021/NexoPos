@@ -682,7 +682,15 @@ layout_start(
               <td>
                 <span class="badge badge-<?= $colores[$d['estado']] ?? 'slate' ?>"><?= e($d['estado']) ?></span>
                 <?php if ($d['estado_detalle']): ?>
-                  <span class="block text-[11px] text-slate-400 mt-1 max-w-xs truncate" title="<?= e($d['estado_detalle']) ?>">
+                  <?php
+                    // El motivo de un rechazo es lo único que explica cómo arreglar la
+                    // factura. Iba truncado a una línea con el texto completo solo en el
+                    // «title»: en el móvil no hay dónde posar el ratón, así que quien
+                    // trabaja desde el teléfono no llegaba a leerlo nunca.
+                    $tonoDetalle = in_array($d['estado'], ['rechazado', 'error'], true)
+                        ? 'text-rose-600 font-medium' : 'text-slate-400';
+                  ?>
+                  <span class="block text-[11px] <?= $tonoDetalle ?> mt-1 max-w-[20rem] leading-snug break-words">
                     <?= e($d['estado_detalle']) ?>
                   </span>
                 <?php endif; ?>

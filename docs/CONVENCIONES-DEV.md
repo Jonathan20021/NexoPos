@@ -508,6 +508,7 @@ La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
 
 ```bash
 php pruebas/nomina.php
+php pruebas/ecf.php
 ```
 
 `pruebas/nomina.php` cubre el cálculo de nómina dominicana (`includes/nomina.php`):
@@ -517,3 +518,11 @@ necesitan sesión. Devuelve 0 si todo pasa.
 
 **Si tocas el cálculo de nómina, corre esto antes de commitear.** Un error ahí no
 se ve en pantalla: se ve cuando alguien cobra de menos.
+
+`pruebas/ecf.php` cubre la lectura de las respuestas del proveedor de e-CF
+(`includes/ecf_api.php`). Las tramas de prueba son respuestas reales del
+cliente. Protege una trampa concreta: **la respuesta trae dos dictámenes**. El
+del sobre (`status.code` 0, «Transacción exitosa») solo dice que la consulta
+llegó y volvió; el del comprobante (`data.responseCode`, `data.responseMessage`)
+es el de la DGII. Leer el primero hacía que una factura rechazada apareciera en
+pantalla con el motivo «Transacción exitosa».
