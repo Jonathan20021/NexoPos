@@ -20,13 +20,14 @@ function er_cuentas(string $ini, string $fin, string $scope, array $scopeP, stri
         "SELECT COALESCE(SUM(v.subtotal),0) bruto, COALESCE(SUM(v.descuento),0) descuento,
                 COALESCE(SUM(v.costo_total),0) costo, COALESCE(SUM(v.itbis),0) itbis, COUNT(*) n
            FROM ventas v
-          WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope",
+          WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope",
         array_merge([$ini, $fin], $scopeP)
     ) ?: [];
-    $dev = (float) qVal(
-        "SELECT COALESCE(SUM(d.subtotal),0) FROM devoluciones d WHERE d.created_at BETWEEN ? AND ? AND $scopeD",
-        array_merge([$ini, $fin], $scopeDP)
-    );
+    // Base, ITBIS y COSTO de lo devuelto, con el mismo criterio que los demás
+    // informes. El costo cuenta: la mercancía volvió al estante, así que dejó
+    // de ser costo de ventas.
+    $devol = rep_devoluciones($ini, $fin, $scopeD, $scopeDP);
+    $dev   = $devol['base'];
 
     $fd = substr($ini, 0, 10);
     $fh = substr($fin, 0, 10);
@@ -50,7 +51,7 @@ function er_cuentas(string $ini, string $fin, string $scope, array $scopeP, stri
     $bruto     = (float) ($v['bruto'] ?? 0);
     $descuento = (float) ($v['descuento'] ?? 0);
     $neto      = $bruto - $descuento - $dev;
-    $costo     = (float) ($v['costo'] ?? 0);
+    $costo     = max(0.0, (float) ($v['costo'] ?? 0) - $devol['costo']);
     $utilBruta = $neto - $costo;
     $totalGast = array_sum(array_column($gastosCat, 'monto'));
     $totalOtro = array_sum(array_column($otros, 'monto'));
@@ -73,7 +74,7 @@ $ant = er_cuentas($p['prev_ini'], $p['prev_fin'], $scope, $scopeP, $scopeD, $sco
 $meses = rep_meses_atras(12);
 $mIng = qAll(
     "SELECT DATE_FORMAT(v.fecha,'%Y-%m') ym, COALESCE(SUM(v.subtotal - v.descuento),0) ing, COALESCE(SUM(v.costo_total),0) cos
-       FROM ventas v WHERE v.estado='completada' AND v.fecha >= ? AND $scope GROUP BY ym",
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha >= ? AND $scope GROUP BY ym",
     array_merge([$meses[0] . '-01 00:00:00'], $scopeP)
 );
 $mGas = qAll(

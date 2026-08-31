@@ -4,7 +4,8 @@ require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('reportes.ejecutivo');
 
 $p = rep_periodo('mes');
-[$scope, $scopeP] = rep_scope('v.sucursal_id');
+[$scope, $scopeP]   = rep_scope('v.sucursal_id');
+[$scopeD, $scopeDP] = rep_scope('d.sucursal_id');
 
 // Mismo rango del año pasado.
 $anioIni = date('Y-m-d', strtotime($p['desde'] . ' -1 year')) . ' 00:00:00';
@@ -16,8 +17,18 @@ $rangos = [
     'anio'     => ['Mismo periodo año pasado', $anioIni, $anioFin, fechaCorta(substr($anioIni, 0, 10)) . ' al ' . fechaCorta(substr($anioFin, 0, 10))],
 ];
 
-/** Totales de un rango. */
-function cmp_total(string $ini, string $fin, string $scope, array $scopeP): array
+/**
+ * Totales de un rango, NETOS de devoluciones.
+ *
+ * Antes se contaban solo las ventas «completada» y no se restaba nada. Eso
+ * dejaba dos números distintos según el caso: una devolución TOTAL cambia el
+ * estado y desaparecía sola —cuadraba por accidente—, pero una PARCIAL no lo
+ * cambia, así que la venta seguía contando entera y la nota de crédito no se
+ * veía por ningún lado. Y el panel ejecutivo, que sí las restaba, daba otra
+ * cifra para el mismo periodo.
+ */
+function cmp_total(string $ini, string $fin, string $scope, array $scopeP,
+                   string $scopeD, array $scopeDP): array
 {
     $r = qOne(
         "SELECT COUNT(*) facturas,
@@ -26,11 +37,12 @@ function cmp_total(string $ini, string $fin, string $scope, array $scopeP): arra
                 COALESCE(SUM(v.descuento),0) descuentos,
                 COUNT(DISTINCT v.cliente_id) clientes
            FROM ventas v
-          WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope",
+          WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope",
         array_merge([$ini, $fin], $scopeP)
     ) ?: [];
-    $ing = (float) ($r['ingresos'] ?? 0);
-    $cos = (float) ($r['costo'] ?? 0);
+    $devol = rep_devoluciones($ini, $fin, $scopeD, $scopeDP);
+    $ing = (float) ($r['ingresos'] ?? 0) - $devol['base'];
+    $cos = max(0.0, (float) ($r['costo'] ?? 0) - $devol['costo']);
     return [
         'facturas' => (int) ($r['facturas'] ?? 0), 'ingresos' => $ing, 'costo' => $cos,
         'utilidad' => $ing - $cos, 'descuentos' => (float) ($r['descuentos'] ?? 0),
@@ -41,7 +53,7 @@ function cmp_total(string $ini, string $fin, string $scope, array $scopeP): arra
 }
 
 $tot = [];
-foreach ($rangos as $k => $r) $tot[$k] = cmp_total($r[1], $r[2], $scope, $scopeP);
+foreach ($rangos as $k => $r) $tot[$k] = cmp_total($r[1], $r[2], $scope, $scopeP, $scopeD, $scopeDP);
 
 /**
  * Desglose comparado por una dimensión (mismo SQL, tres rangos).
@@ -210,6 +222,15 @@ function cmp_var(?float $d, bool $invertir = false): string
 <?php endif; ?>
 
 <!-- Desglose por dimensión -->
+<div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
+  <?= icon('alert', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
+  <p class="text-sm text-slate-600 leading-snug">
+    Los desgloses de abajo van en <strong>venta bruta</strong>. La nota de crédito se resta del
+    total del periodo —que es lo que se compara arriba— pero no de la sucursal, el vendedor o la
+    categoría que la originó, así que sumarlos dará más que el total.
+  </p>
+</div>
+
 <?php foreach ($dimensiones as $nombre => $datos):
   $iconos = ['Sucursal' => 'store', 'Canal de venta' => 'megaphone', 'Vendedor' => 'users', 'Categoría' => 'tag'];
   $filas = [];

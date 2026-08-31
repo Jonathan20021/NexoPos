@@ -27,15 +27,12 @@ function ej_cifras(string $ini, string $fin, string $scope, array $scopeP, strin
                 COALESCE(SUM(v.descuento),0)              AS descuentos,
                 COUNT(DISTINCT v.cliente_id)              AS clientes
            FROM ventas v
-          WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope",
+          WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope",
         array_merge([$ini, $fin], $scopeP)
     ) ?: [];
 
-    $dev = (float) qVal(
-        "SELECT COALESCE(SUM(d.subtotal),0) FROM devoluciones d
-          WHERE d.created_at BETWEEN ? AND ? AND $scopeD",
-        array_merge([$ini, $fin], $scopeDP)
-    );
+    $devol = rep_devoluciones($ini, $fin, $scopeD, $scopeDP);
+    $dev   = $devol['base'];
 
     // Solo gasto OPERATIVO: la compra de mercancía es inventario y la devolución
     // ya se resta de los ingresos (ver rep_where_gastos()).
@@ -46,7 +43,9 @@ function ej_cifras(string $ini, string $fin, string $scope, array $scopeP, strin
     );
 
     $ingresos = (float) ($v['ingresos'] ?? 0) - $dev;
-    $costo    = (float) ($v['costo'] ?? 0);
+    // La mercancía devuelta volvió al estante: su costo deja de ser costo de
+    // ventas. Restar el ingreso y dejar el costo puesto hunde el margen.
+    $costo    = max(0.0, (float) ($v['costo'] ?? 0) - $devol['costo']);
     $bruta    = $ingresos - $costo;
 
     return [
@@ -79,12 +78,28 @@ $filaMes = qAll(
             COALESCE(SUM(v.subtotal - v.descuento),0) AS ingresos,
             COALESCE(SUM(v.costo_total),0) AS costo
        FROM ventas v
-      WHERE v.estado = 'completada' AND v.fecha >= ? AND $scope
+      WHERE " . rep_estados_venta() . " AND v.fecha >= ? AND $scope
       GROUP BY ym",
     array_merge([$meses[0] . '-01 00:00:00'], $scopeP)
 );
 $mapaMes = [];
 foreach ($filaMes as $r) $mapaMes[$r['ym']] = $r;
+
+// Las devoluciones del mes, para que la serie diga lo mismo que la cifra grande.
+$devMes = qAll(
+    "SELECT DATE_FORMAT(d.created_at,'%Y-%m') AS ym,
+            COALESCE(SUM(d.subtotal),0) AS base,
+            COALESCE(SUM(dd.costo),0)   AS costo
+       FROM devoluciones d
+       LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                    FROM devolucion_detalles x
+                    LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                   GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
+      WHERE d.created_at >= ? AND $scopeD GROUP BY ym",
+    array_merge([$meses[0] . '-01 00:00:00'], $scopeDP)
+);
+$mapaDev = [];
+foreach ($devMes as $r) $mapaDev[$r['ym']] = $r;
 $gastoMes = qAll(
     "SELECT DATE_FORMAT(t.fecha,'%Y-%m') AS ym, COALESCE(SUM(t.monto),0) AS g
        FROM transacciones t WHERE " . rep_where_gastos() . " AND t.fecha >= ? AND $scopeT GROUP BY ym",
@@ -95,8 +110,8 @@ foreach ($gastoMes as $r) $mapaGasto[$r['ym']] = (float) $r['g'];
 
 foreach ($meses as $ym) {
     $labels[] = rep_mes_label($ym);
-    $ing = (float) ($mapaMes[$ym]['ingresos'] ?? 0);
-    $cos = (float) ($mapaMes[$ym]['costo'] ?? 0);
+    $ing = (float) ($mapaMes[$ym]['ingresos'] ?? 0) - (float) ($mapaDev[$ym]['base'] ?? 0);
+    $cos = max(0.0, (float) ($mapaMes[$ym]['costo'] ?? 0) - (float) ($mapaDev[$ym]['costo'] ?? 0));
     $serieIngresos[] = $ing;
     $serieUtilidad[] = $ing - $cos - ($mapaGasto[$ym] ?? 0);
 }
@@ -294,6 +309,15 @@ echo rep_abrir('Panel ejecutivo', $p, ['sucursal' => true]);
     ], $labels, ['alto' => 280]) ?>
   </div>
 <?= rep_fin() ?>
+
+<div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
+  <?= icon('alert', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
+  <p class="text-sm text-slate-600 leading-snug">
+    Los desgloses de abajo —sucursal, canal, producto y cliente— van en <strong>venta bruta</strong>.
+    La nota de crédito se resta del total del periodo, que es la cifra de arriba, pero no de la línea
+    que la originó: sumar el desglose dará más que el total.
+  </p>
+</div>
 
 <div class="grid grid-cols-1 lg:grid-cols-5 gap-5 items-stretch">
   <!-- Sucursales -->

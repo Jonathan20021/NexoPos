@@ -527,6 +527,70 @@ function rep_scope(string $col = 'v.sucursal_id'): array
  *   · Venta                → ya está en la línea de ingresos.
  */
 
+/**
+ * Qué ventas cuentan como ingreso del periodo.
+ *
+ * Las tres son distintas y no da igual cuál se use:
+ *
+ *   · «completada»  vendida y en pie.
+ *   · «devuelta»    vendida y devuelta ENTERA después. El estado cambia; la
+ *                   venta existió y su nota de crédito la anula.
+ *   · «anulada»     el comprobante no llegó a valer: se borran sus
+ *                   transacciones y se devuelve el saldo. Como si no hubiera
+ *                   pasado, y por eso queda fuera.
+ *
+ * Las devueltas SÍ entran, porque `rep_devoluciones()` les resta la nota de
+ * crédito aparte. Dejarlas fuera Y restar la nota descuenta el mismo importe
+ * dos veces —el estado de resultados llegaba a dar ingresos negativos— y, peor,
+ * una devolución PARCIAL no cambia el estado, así que solo se corregían las
+ * totales: el informe se comportaba distinto según si el cliente devolvió todo
+ * o la mitad.
+ */
+function rep_estados_venta(string $a = 'v'): string
+{
+    return "$a.estado IN ('completada','devuelta')";
+}
+
+/**
+ * Lo que hay que restarle al periodo por devoluciones: base, ITBIS y COSTO.
+ *
+ * El costo importa tanto como el ingreso: la mercancía devuelta vuelve al
+ * estante, así que su costo deja de ser costo de ventas. Restar solo el ingreso
+ * y dejar el costo puesto hunde el margen del periodo.
+ *
+ * La devolución pesa en el periodo en que se EMITE la nota de crédito, no en el
+ * de la venta original: es un documento fiscal con su propia fecha, y así lo
+ * declara el 607.
+ *
+ * @return array{base:float,itbis:float,costo:float}
+ */
+function rep_devoluciones(string $ini, string $fin, string $scopeD = '1=1', array $scopeDP = []): array
+{
+    $r = qOne(
+        "SELECT COALESCE(SUM(d.subtotal),0) base, COALESCE(SUM(d.itbis),0) itbis
+           FROM devoluciones d WHERE d.created_at BETWEEN ? AND ? AND $scopeD",
+        array_merge([$ini, $fin], $scopeDP)
+    ) ?: [];
+
+    // El costo sale de la línea de venta original. Una devolución sin línea
+    // enlazada (las de antes de que se guardara el vínculo) aporta 0: se prefiere
+    // quedarse corto en la recuperación de costo antes que inventarse una cifra.
+    $costo = (float) qVal(
+        "SELECT COALESCE(SUM(dd.cantidad * vd.costo_unitario),0)
+           FROM devolucion_detalles dd
+           JOIN devoluciones d ON d.id = dd.devolucion_id
+           LEFT JOIN venta_detalles vd ON vd.id = dd.venta_detalle_id
+          WHERE d.created_at BETWEEN ? AND ? AND $scopeD",
+        array_merge([$ini, $fin], $scopeDP)
+    );
+
+    return [
+        'base'  => (float) ($r['base'] ?? 0),
+        'itbis' => (float) ($r['itbis'] ?? 0),
+        'costo' => $costo,
+    ];
+}
+
 /** WHERE de gastos OPERATIVOS (nómina, comisiones, alquiler, servicios...). */
 function rep_where_gastos(string $a = 't'): string
 {
