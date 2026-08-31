@@ -65,20 +65,30 @@ foreach ($rangos as $k => $r) $tot[$k] = cmp_total($r[1], $r[2], $scope, $scopeP
  * daba 137,3 millones donde el ingreso real era 45,8 — el triple. Ahí hay que
  * sumar la línea, que además es lo único que se puede atribuir a una categoría.
  */
-function cmp_dimension(string $selectLabel, string $from, string $groupBy, array $rangos, string $scope, array $scopeP, string $ingresos = 'v.subtotal - v.descuento'): array
+function cmp_dimension(string $selectLabel, string $from, string $groupBy, array $rangos, string $scope, array $scopeP, string $ingresos = 'v.subtotal - v.descuento', ?callable $devDe = null): array
 {
     $out = [];
     foreach ($rangos as $k => $r) {
         $rows = qAll(
             "SELECT $selectLabel AS etiqueta, COALESCE(SUM($ingresos),0) AS ingresos, COUNT(DISTINCT v.id) AS facturas
                FROM ventas v $from
-              WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
+              WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
               GROUP BY $groupBy",
             array_merge([$r[1], $r[2]], $scopeP)
         );
+        // Las devoluciones del mismo rango, con la misma etiqueta.
+        $dev = $devDe ? $devDe($r[1], $r[2]) : [];
         foreach ($rows as $row) {
             $et = $row['etiqueta'] ?? 'Sin especificar';
-            $out[$et][$k] = ['ingresos' => (float) $row['ingresos'], 'facturas' => (int) $row['facturas']];
+            $out[$et][$k] = ['ingresos' => (float) $row['ingresos'] - (float) ($dev[$et]['base'] ?? 0),
+                              'facturas' => (int) $row['facturas']];
+            unset($dev[$et]);
+        }
+        // Devoluciones de ventas de un periodo anterior: la etiqueta no aparece
+        // entre las ventas del rango, pero el dinero salió en este. Se muestra en
+        // negativo, que es lo que de verdad aportó esa sucursal o ese vendedor.
+        foreach ($dev as $et => $d) {
+            $out[$et][$k] = ['ingresos' => -(float) $d['base'], 'facturas' => 0];
         }
     }
     foreach ($out as $et => $v) {
@@ -90,14 +100,49 @@ function cmp_dimension(string $selectLabel, string $from, string $groupBy, array
     return $out;
 }
 
+/** Devoluciones por una dimensión sencilla (las que salen de la cabecera de la venta). */
+$devPor = function (string $etiqueta, string $grupo, string $joins) use ($scope, $scopeP): callable {
+    return fn(string $i, string $f) => rep_devoluciones_por($etiqueta, $grupo, $joins, $i, $f, $scope, $scopeP);
+};
+
+/**
+ * La categoría no está en la cabecera: hay que bajar a las líneas devueltas y
+ * sumar SU importe. Sumar el total de la nota de crédito lo repetiría una vez
+ * por línea, el mismo error que ya explica cmp_dimension() del lado de la venta.
+ *
+ * Y el importe de la línea devuelta lleva el ITBIS dentro, mientras que el de la
+ * venta va sin él: hay que quitárselo o se descuenta de más.
+ */
+$devCategoria = function (string $i, string $f) use ($scope, $scopeP): array {
+    $filas = qAll(
+        "SELECT COALESCE(c.nombre,'Sin categoría') AS et,
+                COALESCE(SUM(dd.subtotal - COALESCE(vd.itbis * dd.cantidad / NULLIF(vd.cantidad,0), 0)),0) AS base
+           FROM devolucion_detalles dd
+           JOIN devoluciones d ON d.id = dd.devolucion_id
+           JOIN ventas v ON v.id = d.venta_id
+           LEFT JOIN venta_detalles vd ON vd.id = dd.venta_detalle_id
+           LEFT JOIN productos pr ON pr.id = dd.producto_id
+           LEFT JOIN categorias c ON c.id = pr.categoria_id
+          WHERE d.created_at BETWEEN ? AND ? AND $scope
+          GROUP BY c.id, c.nombre",
+        array_merge([$i, $f], $scopeP)
+    );
+    $m = [];
+    foreach ($filas as $r) $m[(string) $r['et']] = ['base' => (float) $r['base']];
+    return $m;
+};
+
 $dimensiones = [
-    'Sucursal'        => cmp_dimension('su.nombre', 'JOIN sucursales su ON su.id = v.sucursal_id', 'v.sucursal_id', $rangos, $scope, $scopeP),
-    'Canal de venta'  => cmp_dimension("COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", '', 'v.canal_venta', $rangos, $scope, $scopeP),
-    'Vendedor'        => cmp_dimension("CONCAT(u.nombre,' ',u.apellido)", 'JOIN usuarios u ON u.id = v.usuario_id', 'v.usuario_id', $rangos, $scope, $scopeP),
+    'Sucursal'        => cmp_dimension('su.nombre', 'JOIN sucursales su ON su.id = v.sucursal_id', 'v.sucursal_id, su.nombre', $rangos, $scope, $scopeP,
+        'v.subtotal - v.descuento', $devPor('su.nombre', 'v.sucursal_id, su.nombre', 'JOIN sucursales su ON su.id = v.sucursal_id')),
+    'Canal de venta'  => cmp_dimension("COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", '', 'v.canal_venta', $rangos, $scope, $scopeP,
+        'v.subtotal - v.descuento', $devPor("COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", "COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", '')),
+    'Vendedor'        => cmp_dimension("CONCAT(u.nombre,' ',u.apellido)", 'JOIN usuarios u ON u.id = v.usuario_id', 'v.usuario_id, u.nombre, u.apellido', $rangos, $scope, $scopeP,
+        'v.subtotal - v.descuento', $devPor("CONCAT(u.nombre,' ',u.apellido)", 'v.usuario_id, u.nombre, u.apellido', 'JOIN usuarios u ON u.id = v.usuario_id')),
     // Suma la LÍNEA, no el total de la venta: ver el comentario de cmp_dimension().
     'Categoría'       => cmp_dimension("COALESCE(c.nombre,'Sin categoría')",
         'JOIN venta_detalles vd ON vd.venta_id = v.id LEFT JOIN productos pr ON pr.id = vd.producto_id LEFT JOIN categorias c ON c.id = pr.categoria_id',
-        'c.id', $rangos, $scope, $scopeP, 'vd.subtotal - vd.descuento'),
+        'c.id, c.nombre', $rangos, $scope, $scopeP, 'vd.subtotal - vd.descuento', $devCategoria),
 ];
 
 /* ---------- Serie diaria comparada ---------- */
@@ -109,7 +154,7 @@ for ($i = 0; $i < $dias; $i++) {
     if ($dAct > $p['hasta']) break;
     $serie[] = ['label' => date('d/m', strtotime($dAct)), 'act' => $dAct, 'ant' => $dAnt];
 }
-$ventasDia = function (array $fechas) use ($scope, $scopeP) {
+$ventasDia = function (array $fechas) use ($scope, $scopeP, $scopeD, $scopeDP) {
     if (!$fechas) return [];
     // Las fechas salen de un bucle día a día, así que son contiguas: filtrar por
     // el rango sobre la columna CRUDA devuelve exactamente las mismas filas que
@@ -119,12 +164,22 @@ $ventasDia = function (array $fechas) use ($scope, $scopeP) {
     $rows = qAll(
         "SELECT DATE(v.fecha) d, COALESCE(SUM(v.subtotal - v.descuento),0) t
            FROM ventas v
-          WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
+          WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
           GROUP BY DATE(v.fecha)",
         array_merge([min($fechas) . ' 00:00:00', max($fechas) . ' 23:59:59'], $scopeP)
     );
+    // Y la nota de crédito emitida ese día, para que la barra diga lo mismo que
+    // el total de arriba.
+    $dev = qAll(
+        "SELECT DATE(d.created_at) d, COALESCE(SUM(d.subtotal),0) t
+           FROM devoluciones d
+          WHERE d.created_at BETWEEN ? AND ? AND $scopeD
+          GROUP BY DATE(d.created_at)",
+        array_merge([min($fechas) . ' 00:00:00', max($fechas) . ' 23:59:59'], $scopeDP)
+    );
     $m = [];
     foreach ($rows as $r) $m[$r['d']] = (float) $r['t'];
+    foreach ($dev as $r) $m[$r['d']] = ($m[$r['d']] ?? 0.0) - (float) $r['t'];
     return $m;
 };
 $mapAct = $ventasDia(array_column($serie, 'act'));
@@ -222,15 +277,6 @@ function cmp_var(?float $d, bool $invertir = false): string
 <?php endif; ?>
 
 <!-- Desglose por dimensión -->
-<div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
-  <?= icon('alert', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
-  <p class="text-sm text-slate-600 leading-snug">
-    Los desgloses de abajo van en <strong>venta bruta</strong>. La nota de crédito se resta del
-    total del periodo —que es lo que se compara arriba— pero no de la sucursal, el vendedor o la
-    categoría que la originó, así que sumarlos dará más que el total.
-  </p>
-</div>
-
 <?php foreach ($dimensiones as $nombre => $datos):
   $iconos = ['Sucursal' => 'store', 'Canal de venta' => 'megaphone', 'Vendedor' => 'users', 'Categoría' => 'tag'];
   $filas = [];

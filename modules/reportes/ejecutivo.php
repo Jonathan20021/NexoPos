@@ -86,20 +86,7 @@ $mapaMes = [];
 foreach ($filaMes as $r) $mapaMes[$r['ym']] = $r;
 
 // Las devoluciones del mes, para que la serie diga lo mismo que la cifra grande.
-$devMes = qAll(
-    "SELECT DATE_FORMAT(d.created_at,'%Y-%m') AS ym,
-            COALESCE(SUM(d.subtotal),0) AS base,
-            COALESCE(SUM(dd.costo),0)   AS costo
-       FROM devoluciones d
-       LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
-                    FROM devolucion_detalles x
-                    LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
-                   GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
-      WHERE d.created_at >= ? AND $scopeD GROUP BY ym",
-    array_merge([$meses[0] . '-01 00:00:00'], $scopeDP)
-);
-$mapaDev = [];
-foreach ($devMes as $r) $mapaDev[$r['ym']] = $r;
+$mapaDev = rep_devoluciones_por_mes($meses[0] . '-01 00:00:00', $scopeD, $scopeDP);
 $gastoMes = qAll(
     "SELECT DATE_FORMAT(t.fecha,'%Y-%m') AS ym, COALESCE(SUM(t.monto),0) AS g
        FROM transacciones t WHERE " . rep_where_gastos() . " AND t.fecha >= ? AND $scopeT GROUP BY ym",
@@ -122,24 +109,40 @@ $porSucursal = qAll(
             COALESCE(SUM(v.subtotal - v.descuento),0) AS ingresos,
             COALESCE(SUM(v.subtotal - v.descuento - v.costo_total),0) AS utilidad
        FROM ventas v JOIN sucursales su ON su.id = v.sucursal_id
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY v.sucursal_id ORDER BY ingresos DESC",
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
+      GROUP BY v.sucursal_id, su.nombre ORDER BY ingresos DESC",
     array_merge([$p['ini'], $p['fin']], $scopeP)
 );
+// La nota de crédito baja el resultado de la sucursal donde se hizo la venta.
+$devSuc = rep_devoluciones_por('su.nombre', 'v.sucursal_id, su.nombre',
+    'JOIN sucursales su ON su.id = v.sucursal_id', $p['ini'], $p['fin'], $scope, $scopeP);
+foreach ($porSucursal as $i => $s) {
+    $d = $devSuc[(string) $s['sucursal']] ?? ['base' => 0.0, 'costo' => 0.0];
+    $porSucursal[$i]['ingresos'] = (float) $s['ingresos'] - $d['base'];
+    $porSucursal[$i]['utilidad'] = (float) $s['utilidad'] - $d['base'] + $d['costo'];
+}
+usort($porSucursal, fn($a, $b) => $b['ingresos'] <=> $a['ingresos']);
 
 /* ---------- Canal de captación ---------- */
 $porCanal = qAll(
     "SELECT COALESCE(NULLIF(v.canal_venta,''),'Sin especificar') AS canal,
             COUNT(*) AS n, COALESCE(SUM(v.subtotal - v.descuento),0) AS ingresos
        FROM ventas v
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
       GROUP BY canal ORDER BY ingresos DESC",
     array_merge([$p['ini'], $p['fin']], $scopeP)
 );
+$devCanal = rep_devoluciones_por("COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')",
+    "COALESCE(NULLIF(v.canal_venta,''),'Sin especificar')", '', $p['ini'], $p['fin'], $scope, $scopeP);
+foreach ($porCanal as $i => $c) {
+    $porCanal[$i]['ingresos'] = (float) $c['ingresos'] - ($devCanal[(string) $c['canal']]['base'] ?? 0.0);
+}
+usort($porCanal, fn($a, $b) => $b['ingresos'] <=> $a['ingresos']);
 
 /* ---------- Top productos por utilidad ---------- */
 $topProductos = qAll(
-    "SELECT COALESCE(p.nombre, vd.descripcion) AS producto, c.nombre AS categoria,
+    "SELECT COALESCE(p.id, vd.descripcion) AS clave,
+            COALESCE(p.nombre, vd.descripcion) AS producto, c.nombre AS categoria,
             SUM(vd.cantidad) AS unidades,
             SUM(vd.subtotal - vd.descuento) AS ingresos,
             SUM(vd.subtotal - vd.descuento - (vd.cantidad * vd.costo_unitario)) AS utilidad
@@ -147,24 +150,41 @@ $topProductos = qAll(
        JOIN ventas v ON v.id = vd.venta_id
        LEFT JOIN productos p  ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
       -- Se agrupa por TODAS las columnas no agregadas que se seleccionan.
       -- MySQL 8 trae ONLY_FULL_GROUP_BY activo y rechaza lo contrario (error 1055);
       -- MariaDB lo permite, así que en desarrollo no se nota y en producción rompe.
-      GROUP BY COALESCE(p.id, vd.descripcion), COALESCE(p.nombre, vd.descripcion), c.nombre
-      ORDER BY utilidad DESC LIMIT 10",
+      GROUP BY COALESCE(p.id, vd.descripcion), COALESCE(p.nombre, vd.descripcion), c.nombre",
     array_merge([$p['ini'], $p['fin']], $scopeP)
 );
+// El top se recorta DESPUÉS de restar lo devuelto: ordenar por la cifra bruta
+// puede colocar arriba un producto que se vendió mucho y volvió entero.
+$devLinea = rep_devoluciones_por_linea($p['ini'], $p['fin'], $scope, $scopeP);
+foreach ($topProductos as $i => $t) {
+    $d = $devLinea[(string) $t['clave']] ?? ['unidades' => 0.0, 'base' => 0.0, 'costo' => 0.0];
+    $topProductos[$i]['unidades'] = (float) $t['unidades'] - $d['unidades'];
+    $topProductos[$i]['ingresos'] = (float) $t['ingresos'] - $d['base'];
+    $topProductos[$i]['utilidad'] = (float) $t['utilidad'] - $d['base'] + $d['costo'];
+}
+usort($topProductos, fn($a, $b) => $b['utilidad'] <=> $a['utilidad']);
+$topProductos = array_slice($topProductos, 0, 10);
 
 /* ---------- Top clientes ---------- */
 $topClientes = qAll(
     "SELECT COALESCE(cl.nombre,'Consumidor final') AS cliente, COUNT(v.id) AS compras,
             COALESCE(SUM(v.subtotal - v.descuento),0) AS ingresos
        FROM ventas v LEFT JOIN clientes cl ON cl.id = v.cliente_id
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY v.cliente_id ORDER BY ingresos DESC LIMIT 8",
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
+      GROUP BY v.cliente_id, cl.nombre ORDER BY ingresos DESC",
     array_merge([$p['ini'], $p['fin']], $scopeP)
 );
+$devCli = rep_devoluciones_por("COALESCE(cl.nombre,'Consumidor final')", 'v.cliente_id, cl.nombre',
+    'LEFT JOIN clientes cl ON cl.id = v.cliente_id', $p['ini'], $p['fin'], $scope, $scopeP);
+foreach ($topClientes as $i => $c) {
+    $topClientes[$i]['ingresos'] = (float) $c['ingresos'] - ($devCli[(string) $c['cliente']]['base'] ?? 0.0);
+}
+usort($topClientes, fn($a, $b) => $b['ingresos'] <=> $a['ingresos']);
+$topClientes = array_slice($topClientes, 0, 8);
 $totalTopCli = array_sum(array_column($topClientes, 'ingresos')) ?: 1;
 
 /* ---------- Metas activas ---------- */
@@ -309,15 +329,6 @@ echo rep_abrir('Panel ejecutivo', $p, ['sucursal' => true]);
     ], $labels, ['alto' => 280]) ?>
   </div>
 <?= rep_fin() ?>
-
-<div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
-  <?= icon('alert', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
-  <p class="text-sm text-slate-600 leading-snug">
-    Los desgloses de abajo —sucursal, canal, producto y cliente— van en <strong>venta bruta</strong>.
-    La nota de crédito se resta del total del periodo, que es la cifra de arriba, pero no de la línea
-    que la originó: sumar el desglose dará más que el total.
-  </p>
-</div>
 
 <div class="grid grid-cols-1 lg:grid-cols-5 gap-5 items-stretch">
   <!-- Sucursales -->

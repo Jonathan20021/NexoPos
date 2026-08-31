@@ -591,6 +591,105 @@ function rep_devoluciones(string $ini, string $fin, string $scopeD = '1=1', arra
     ];
 }
 
+/**
+ * Devoluciones agrupadas por mes: ['2026-08' => ['base'=>…, 'costo'=>…], …].
+ *
+ * La usan las series de 12 meses. Sin esto una gráfica mensual dibuja la venta
+ * bruta al lado de un total neto, y el lector ve dos alturas distintas para el
+ * mismo mes sin que nada lo explique.
+ */
+function rep_devoluciones_por_mes(string $desde, string $scopeD = '1=1', array $scopeDP = []): array
+{
+    $filas = qAll(
+        "SELECT DATE_FORMAT(d.created_at,'%Y-%m') AS ym,
+                COALESCE(SUM(d.subtotal),0) AS base,
+                COALESCE(SUM(dd.costo),0)   AS costo
+           FROM devoluciones d
+           LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                        FROM devolucion_detalles x
+                        LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                       GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
+          WHERE d.created_at >= ? AND $scopeD
+          GROUP BY ym",
+        array_merge([$desde], $scopeDP)
+    );
+    $m = [];
+    foreach ($filas as $r) $m[$r['ym']] = ['base' => (float) $r['base'], 'costo' => (float) $r['costo']];
+    return $m;
+}
+
+/**
+ * Devoluciones agrupadas por la dimensión que se le pida: ['etiqueta' => ['base','costo']].
+ *
+ * La devolución se atribuye a la sucursal, el canal, el vendedor o el cliente
+ * de la VENTA original, no a quien la tramitó: lo que se está corrigiendo es
+ * aquella venta. Se une `ventas` siempre, así que el alcance de sucursal se
+ * expresa igual que en las consultas de venta (`v.sucursal_id`).
+ *
+ * @param string $etiqueta Expresión SELECT de la etiqueta (la misma de la venta).
+ * @param string $groupBy  Expresión GROUP BY.
+ * @param string $joins    JOINs extra que necesite la etiqueta.
+ */
+function rep_devoluciones_por(string $etiqueta, string $groupBy, string $joins,
+                              string $ini, string $fin, string $scope = '1=1', array $scopeP = []): array
+{
+    $filas = qAll(
+        "SELECT $etiqueta AS et,
+                COALESCE(SUM(d.subtotal),0) AS base,
+                COALESCE(SUM(dd.costo),0)   AS costo
+           FROM devoluciones d
+           JOIN ventas v ON v.id = d.venta_id
+           LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                        FROM devolucion_detalles x
+                        LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                       GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
+           $joins
+          WHERE d.created_at BETWEEN ? AND ? AND $scope
+          GROUP BY $groupBy",
+        array_merge([$ini, $fin], $scopeP)
+    );
+    $m = [];
+    foreach ($filas as $r) $m[(string) $r['et']] = ['base' => (float) $r['base'], 'costo' => (float) $r['costo']];
+    return $m;
+}
+
+/**
+ * Devoluciones agrupadas por PRODUCTO, para los rankings que se arman desde las
+ * líneas. La clave es la misma que usan esas consultas —el id del producto, o su
+ * descripción cuando la línea no enlaza a catálogo— para que casen sin adivinar.
+ *
+ * OJO CON EL ITBIS: `devolucion_detalles.subtotal` lo lleva DENTRO (es lo que
+ * se le reembolsa al cliente), mientras que el lado de la venta suma base sin
+ * impuesto. Restar la línea tal cual descontaba de más justo el ITBIS devuelto.
+ * Se le quita usando el ITBIS de la línea original, en la misma proporción con
+ * la que se calculó al devolver.
+ *
+ * @return array<string,array{unidades:float,base:float,costo:float}>
+ */
+function rep_devoluciones_por_linea(string $ini, string $fin, string $scope = '1=1', array $scopeP = []): array
+{
+    $filas = qAll(
+        "SELECT COALESCE(p.id, dd.descripcion) AS k,
+                COALESCE(SUM(dd.cantidad),0) AS unidades,
+                COALESCE(SUM(dd.subtotal - COALESCE(vd.itbis * dd.cantidad / NULLIF(vd.cantidad,0), 0)),0) AS base,
+                COALESCE(SUM(dd.cantidad * vd.costo_unitario),0) AS costo
+           FROM devolucion_detalles dd
+           JOIN devoluciones d ON d.id = dd.devolucion_id
+           JOIN ventas v ON v.id = d.venta_id
+           LEFT JOIN productos p ON p.id = dd.producto_id
+           LEFT JOIN venta_detalles vd ON vd.id = dd.venta_detalle_id
+          WHERE d.created_at BETWEEN ? AND ? AND $scope
+          GROUP BY COALESCE(p.id, dd.descripcion)",
+        array_merge([$ini, $fin], $scopeP)
+    );
+    $m = [];
+    foreach ($filas as $r) {
+        $m[(string) $r['k']] = ['unidades' => (float) $r['unidades'],
+                                'base' => (float) $r['base'], 'costo' => (float) $r['costo']];
+    }
+    return $m;
+}
+
 /** WHERE de gastos OPERATIVOS (nómina, comisiones, alquiler, servicios...). */
 function rep_where_gastos(string $a = 't'): string
 {

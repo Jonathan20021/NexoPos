@@ -83,12 +83,15 @@ $mGas = qAll(
     array_merge([$meses[0] . '-01'], $scopeTP)
 );
 $iIng = []; foreach ($mIng as $r) $iIng[$r['ym']] = $r;
+// La serie cuenta las ventas devueltas, así que hay que restarles su nota de
+// crédito mes a mes; si no, la gráfica dice más que el total de arriba.
+$iDev = rep_devoluciones_por_mes($meses[0] . '-01 00:00:00', $scopeD, $scopeDP);
 $iGas = []; foreach ($mGas as $r) $iGas[$r['ym']] = (float) $r['g'];
 
 $labels = $sIng = $sBruta = $sNeta = [];
 foreach ($meses as $ym) {
-    $ing = (float) ($iIng[$ym]['ing'] ?? 0);
-    $cos = (float) ($iIng[$ym]['cos'] ?? 0);
+    $ing = (float) ($iIng[$ym]['ing'] ?? 0) - (float) ($iDev[$ym]['base'] ?? 0);
+    $cos = max(0.0, (float) ($iIng[$ym]['cos'] ?? 0) - (float) ($iDev[$ym]['costo'] ?? 0));
     $gas = $iGas[$ym] ?? 0;
     $labels[]  = rep_mes_label($ym);
     $sIng[]    = $ing;
