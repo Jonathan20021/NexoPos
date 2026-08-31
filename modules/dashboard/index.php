@@ -18,6 +18,8 @@ require_login();
 $sid    = current_sucursal_id();
 $scopeV = $sid === null ? '1=1' : 'v.sucursal_id = ' . (int) $sid;
 $scopeS = $sid === null ? '1=1' : 's.sucursal_id = ' . (int) $sid;
+// Las devoluciones cuelgan de su propia sucursal, no de la de la venta.
+$scopeDv = $sid === null ? '1=1' : 'd.sucursal_id = ' . (int) $sid;
 $verDinero = can('finanzas.ver') || can('reportes.ver') || is_super();
 
 /*
@@ -76,20 +78,29 @@ $hoyTot = qOne(
             COALESCE(SUM(v.subtotal - v.descuento - v.costo_total),0) utilidad,
             COUNT(DISTINCT v.cliente_id) clientes
        FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$hoyIni' AND '$hoyFin'"
+      WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$hoyIni' AND '$hoyFin'"
 ) ?: [];
-$ventasHoy   = (float) ($hoyTot['total'] ?? 0);
+// El tablero dice lo mismo que los informes de dirección: neto de
+// devoluciones. Aquí se mide por `ventas.total`, así que lo que se resta es el
+// total de la nota de crédito —con su ITBIS— y no solo la base.
+$devHoy = rep_devoluciones($hoyIni, $hoyFin, $scopeDv);
+$ventasHoy   = (float) ($hoyTot['total'] ?? 0) - $devHoy['total'];
 $nVentasHoy  = (int) ($hoyTot['n'] ?? 0);
-$utilidadHoy = (float) ($hoyTot['utilidad'] ?? 0);
+$utilidadHoy = (float) ($hoyTot['utilidad'] ?? 0) - $devHoy['base'] + $devHoy['costo'];
 $ticketHoy   = $nVentasHoy > 0 ? $ventasHoy / $nVentasHoy : 0;
 
 $ventasSemPasada = (float) qVal(
     "SELECT COALESCE(SUM(v.total),0) FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$semPasadaIni' AND '$semPasadaFin'"
-);
+      WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$semPasadaIni' AND '$semPasadaFin'"
+) - rep_devoluciones($semPasadaIni, $semPasadaFin, $scopeDv)['total'];
 $deltaHoy = $ventasSemPasada > 0 ? round(($ventasHoy - $ventasSemPasada) / $ventasSemPasada * 100, 1) : null;
 
 // Ritmo del día por hora, para ver si la tarde va floja o el pico ya pasó.
+//
+// Este SÍ va en bruto, a diferencia del resto del tablero: mide actividad de
+// venta, no resultado. Restarle una devolución de una venta de otro día dejaría
+// una barra negativa en una gráfica que se dibuja por altura, y además diría
+// que a esa hora no se vendió cuando sí se vendió.
 $porHora = array_fill(6, 17, 0.0);   // 06:00 a 22:00
 foreach (qAll(
     "SELECT HOUR(v.fecha) h, COALESCE(SUM(v.total),0) t FROM ventas v
@@ -111,27 +122,29 @@ $mesAct = qOne(
             COALESCE(SUM(v.subtotal - v.descuento),0) neto,
             COUNT(DISTINCT v.cliente_id) clientes
        FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'"
+      WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'"
 ) ?: [];
 $mesPre = qOne(
     "SELECT COALESCE(SUM(v.total),0) total, COUNT(*) n,
             COALESCE(SUM(v.subtotal - v.descuento - v.costo_total),0) utilidad,
             COUNT(DISTINCT v.cliente_id) clientes
        FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$prevIni' AND '$prevFin'"
+      WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$prevIni' AND '$prevFin'"
 ) ?: [];
 
-$ventasMes   = (float) ($mesAct['total'] ?? 0);
+$devMes  = rep_devoluciones($mesIni, $mesFin, $scopeDv);
+$devPrev = rep_devoluciones($prevIni, $prevFin, $scopeDv);
+$ventasMes   = (float) ($mesAct['total'] ?? 0) - $devMes['total'];
 $nVentasMes  = (int) ($mesAct['n'] ?? 0);
-$utilidadMes = (float) ($mesAct['utilidad'] ?? 0);
-$netoMes     = (float) ($mesAct['neto'] ?? 0);
+$utilidadMes = (float) ($mesAct['utilidad'] ?? 0) - $devMes['base'] + $devMes['costo'];
+$netoMes     = (float) ($mesAct['neto'] ?? 0) - $devMes['base'];
 $clientesMes = (int) ($mesAct['clientes'] ?? 0);
 $ticketMes   = $nVentasMes > 0 ? $ventasMes / $nVentasMes : 0;
 $margenMes   = $netoMes > 0 ? $utilidadMes / $netoMes * 100 : 0;
 
-$ventasPrev   = (float) ($mesPre['total'] ?? 0);
+$ventasPrev   = (float) ($mesPre['total'] ?? 0) - $devPrev['total'];
 $nVentasPrev  = (int) ($mesPre['n'] ?? 0);
-$utilidadPrev = (float) ($mesPre['utilidad'] ?? 0);
+$utilidadPrev = (float) ($mesPre['utilidad'] ?? 0) - $devPrev['base'] + $devPrev['costo'];
 $clientesPrev = (int) ($mesPre['clientes'] ?? 0);
 $ticketPrev   = $nVentasPrev > 0 ? $ventasPrev / $nVentasPrev : 0;
 
@@ -151,19 +164,23 @@ $proyeccion   = $proyectable ? ($ventasMes - $ventasHoy) / $diasCerrados * $dias
 /* ============================================================
  *  CURVA ACUMULADA: este mes contra el anterior
  * ============================================================ */
-$diaMesAct = [];
-foreach (qAll(
-    "SELECT DAY(v.fecha) d, COALESCE(SUM(v.total),0) t FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$mesIni' AND '$mesFin'
-      GROUP BY DAY(v.fecha)"
-) as $r) $diaMesAct[(int) $r['d']] = (float) $r['t'];
-
-$diaMesPre = [];
-foreach (qAll(
-    "SELECT DAY(v.fecha) d, COALESCE(SUM(v.total),0) t FROM ventas v
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$prevIni' AND '$prevFin'
-      GROUP BY DAY(v.fecha)"
-) as $r) $diaMesPre[(int) $r['d']] = (float) $r['t'];
+/** Ventas del mes por día, ya netas: la curva acumulada tiene que llegar al
+ *  mismo sitio que la cifra del mes que hay justo encima. */
+$porDia = function (string $ini, string $fin) use ($scopeV, $scopeDv): array {
+    $m = [];
+    foreach (qAll(
+        "SELECT DAY(v.fecha) d, COALESCE(SUM(v.total),0) t FROM ventas v
+          WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$ini' AND '$fin'
+          GROUP BY DAY(v.fecha)"
+    ) as $r) $m[(int) $r['d']] = (float) $r['t'];
+    foreach (rep_devoluciones_por_dia($ini, $fin, $scopeDv) as $f => $dv) {
+        $d = (int) date('j', strtotime($f));
+        $m[$d] = ($m[$d] ?? 0.0) - $dv['total'];
+    }
+    return $m;
+};
+$diaMesAct = $porDia($mesIni, $mesFin);
+$diaMesPre = $porDia($prevIni, $prevFin);
 
 $labels = $acumAct = $acumPre = [];
 $aAct = $aPre = 0.0;
@@ -231,9 +248,15 @@ if ($sid === null && count(sucursales_visibles()) > 1) {
     $porSucursal = qAll(
         "SELECT su.nombre AS sucursal, COUNT(v.id) n, COALESCE(SUM(v.total),0) total
            FROM ventas v JOIN sucursales su ON su.id = v.sucursal_id
-          WHERE v.estado='completada' AND v.fecha BETWEEN '$listaIni' AND '$listaFin'
+          WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN '$listaIni' AND '$listaFin'
           GROUP BY v.sucursal_id, su.nombre ORDER BY total DESC"
     );
+    $devSuc = rep_devoluciones_por('su.nombre', 'v.sucursal_id, su.nombre',
+        'JOIN sucursales su ON su.id = v.sucursal_id', $listaIni, $listaFin);
+    foreach ($porSucursal as $i => $s) {
+        $porSucursal[$i]['total'] = (float) $s['total'] - ($devSuc[(string) $s['sucursal']]['total'] ?? 0.0);
+    }
+    usort($porSucursal, fn($a, $b) => $b['total'] <=> $a['total']);
 }
 $totalSuc = array_sum(array_column($porSucursal, 'total')) ?: 1;
 
@@ -257,15 +280,25 @@ if (can('metas.ver')) {
  *  LISTAS DE APOYO
  * ============================================================ */
 $topProductos = qAll(
-    "SELECT p.nombre, c.nombre AS categoria, COALESCE(c.color,'slate') AS color,
+    "SELECT p.id, p.nombre, c.nombre AS categoria, COALESCE(c.color,'slate') AS color,
             SUM(vd.cantidad) AS unidades, SUM(vd.subtotal - vd.descuento) AS total
        FROM venta_detalles vd
        JOIN ventas v ON v.id = vd.venta_id
        JOIN productos p ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
-      WHERE v.estado='completada' AND $scopeV AND v.fecha BETWEEN '$listaIni' AND '$listaFin'
-      GROUP BY p.id, p.nombre, c.nombre, c.color ORDER BY total DESC LIMIT 5"
+      WHERE " . rep_estados_venta() . " AND $scopeV AND v.fecha BETWEEN '$listaIni' AND '$listaFin'
+      GROUP BY p.id, p.nombre, c.nombre, c.color ORDER BY total DESC"
 );
+// Se recorta a cinco DESPUÉS de restar lo devuelto: si no, el más vendido puede
+// ser el que más volvió.
+$devLin = rep_devoluciones_por_linea($listaIni, $listaFin, $scopeV);
+foreach ($topProductos as $i => $t) {
+    $dv = $devLin[(string) $t['id']] ?? ['unidades' => 0.0, 'base' => 0.0];
+    $topProductos[$i]['unidades'] = (float) $t['unidades'] - $dv['unidades'];
+    $topProductos[$i]['total']    = (float) $t['total'] - $dv['base'];
+}
+usort($topProductos, fn($a, $b) => $b['total'] <=> $a['total']);
+$topProductos = array_slice($topProductos, 0, 5);
 $maxProd = max(1, max(array_column($topProductos, 'total') ?: [1]));
 
 /*

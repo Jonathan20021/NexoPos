@@ -562,7 +562,10 @@ function rep_estados_venta(string $a = 'v'): string
  * de la venta original: es un documento fiscal con su propia fecha, y así lo
  * declara el 607.
  *
- * @return array{base:float,itbis:float,costo:float}
+ * `total` es base + ITBIS: lo que se le reembolsó al cliente. Se usa donde la
+ * venta se mide por `ventas.total` (el tablero) en vez de por su base.
+ *
+ * @return array{base:float,itbis:float,total:float,costo:float}
  */
 function rep_devoluciones(string $ini, string $fin, string $scopeD = '1=1', array $scopeDP = []): array
 {
@@ -584,11 +587,9 @@ function rep_devoluciones(string $ini, string $fin, string $scopeD = '1=1', arra
         array_merge([$ini, $fin], $scopeDP)
     );
 
-    return [
-        'base'  => (float) ($r['base'] ?? 0),
-        'itbis' => (float) ($r['itbis'] ?? 0),
-        'costo' => $costo,
-    ];
+    $base  = (float) ($r['base'] ?? 0);
+    $itbis = (float) ($r['itbis'] ?? 0);
+    return ['base' => $base, 'itbis' => $itbis, 'total' => round($base + $itbis, 2), 'costo' => $costo];
 }
 
 /**
@@ -636,6 +637,7 @@ function rep_devoluciones_por(string $etiqueta, string $groupBy, string $joins,
     $filas = qAll(
         "SELECT $etiqueta AS et,
                 COALESCE(SUM(d.subtotal),0) AS base,
+                COALESCE(SUM(d.itbis),0)    AS itbis,
                 COALESCE(SUM(dd.costo),0)   AS costo
            FROM devoluciones d
            JOIN ventas v ON v.id = d.venta_id
@@ -649,7 +651,43 @@ function rep_devoluciones_por(string $etiqueta, string $groupBy, string $joins,
         array_merge([$ini, $fin], $scopeP)
     );
     $m = [];
-    foreach ($filas as $r) $m[(string) $r['et']] = ['base' => (float) $r['base'], 'costo' => (float) $r['costo']];
+    foreach ($filas as $r) {
+        $m[(string) $r['et']] = ['base' => (float) $r['base'], 'itbis' => (float) $r['itbis'],
+                                  'total' => round((float) $r['base'] + (float) $r['itbis'], 2),
+                                  'costo' => (float) $r['costo']];
+    }
+    return $m;
+}
+
+/**
+ * Devoluciones por DÍA: ['2026-08-14' => ['base','itbis','total','costo'], …].
+ *
+ * Para las curvas diarias. Un día puede salir en negativo si solo hubo
+ * devoluciones: es correcto, y en una curva acumulada se ve como el escalón
+ * hacia abajo que de verdad fue.
+ */
+function rep_devoluciones_por_dia(string $ini, string $fin, string $scopeD = '1=1', array $scopeDP = []): array
+{
+    $filas = qAll(
+        "SELECT DATE(d.created_at) AS f,
+                COALESCE(SUM(d.subtotal),0) AS base,
+                COALESCE(SUM(d.itbis),0)    AS itbis,
+                COALESCE(SUM(dd.costo),0)   AS costo
+           FROM devoluciones d
+           LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                        FROM devolucion_detalles x
+                        LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                       GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
+          WHERE d.created_at BETWEEN ? AND ? AND $scopeD
+          GROUP BY DATE(d.created_at)",
+        array_merge([$ini, $fin], $scopeDP)
+    );
+    $m = [];
+    foreach ($filas as $r) {
+        $m[(string) $r['f']] = ['base' => (float) $r['base'], 'itbis' => (float) $r['itbis'],
+                                 'total' => round((float) $r['base'] + (float) $r['itbis'], 2),
+                                 'costo' => (float) $r['costo']];
+    }
     return $m;
 }
 
