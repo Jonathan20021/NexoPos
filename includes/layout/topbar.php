@@ -18,7 +18,8 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
   <!-- Buscador global (Ctrl/⌘ + K) -->
   <?php include __DIR__ . '/buscador.php'; ?>
 
-  <div class="flex items-center gap-2 sm:gap-3 ml-auto">
+  <!-- Este lado no se encoge: quien cede espacio es el buscador. -->
+  <div class="flex items-center gap-2 sm:gap-3 ml-auto shrink-0">
     <!-- Selector de sucursal -->
     <?php if ($puedeCambiarSuc): ?>
       <form action="<?= e(url('modules/admin/cambiar_sucursal.php')) ?>" method="post" class="hidden md:block">
@@ -52,9 +53,12 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
     <div class="relative" x-data="{open:false}">
       <button @click="open=!open" class="flex items-center gap-2.5 pl-1 pr-2 h-10 rounded-xl hover:bg-slate-100 transition">
         <?= avatar(($u['nombre'] ?? '') . ' ' . ($u['apellido'] ?? ''), 'w-9 h-9') ?>
-        <div class="hidden sm:block text-left leading-tight">
-          <p class="text-sm font-semibold text-slate-700"><?= e($u['nombre'] . ' ' . $u['apellido']) ?></p>
-          <p class="text-[11px] text-slate-400"><?= e($u['rol_nombre']) ?></p>
+        <!-- Acotado y recortado: «Administrador de TSS/NOMINA» ensanchaba la
+             barra hasta sacarla de la pantalla. El nombre completo sigue
+             estando en el menú que se abre debajo. -->
+        <div class="hidden sm:block text-left leading-tight max-w-[10rem] xl:max-w-[13rem]">
+          <p class="text-sm font-semibold text-slate-700 truncate" title="<?= e($u['nombre'] . ' ' . $u['apellido']) ?>"><?= e($u['nombre'] . ' ' . $u['apellido']) ?></p>
+          <p class="text-[11px] text-slate-400 truncate" title="<?= e($u['rol_nombre']) ?>"><?= e($u['rol_nombre']) ?></p>
         </div>
         <span class="text-slate-400 hidden sm:block"><?= icon('chevron-down', 'w-4 h-4') ?></span>
       </button>

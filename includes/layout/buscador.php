@@ -9,13 +9,19 @@
  */
 $atajos = buscar_atajos();
 ?>
-<div x-data="buscadorGlobal(<?= e(json_encode(url('modules/busqueda/api.php'))) ?>, <?= e(json_encode(url('modules/busqueda/index.php'))) ?>, <?= (int) (current_user()['id'] ?? 0) ?>)"
+<!--
+  `min-w-0 flex-1`: el buscador es la pieza ELÁSTICA de la barra. Sin `min-w-0`
+  un elemento flex no baja de su contenido, así que el ancho fijo de abajo
+  empujaba al resto y la barra desbordaba a la derecha justo a 1280 px, con el
+  menú del usuario saliéndose de la pantalla.
+-->
+<div class="min-w-0 flex-1" x-data="buscadorGlobal(<?= e(json_encode(url('modules/busqueda/api.php'))) ?>, <?= e(json_encode(url('modules/busqueda/index.php'))) ?>, <?= (int) (current_user()['id'] ?? 0) ?>)"
      @keydown.window.prevent.ctrl.k="abrir()" @keydown.window.prevent.meta.k="abrir()"
      @keydown.escape.window="cerrar()">
 
   <!-- Disparador -->
   <button type="button" @click="abrir()"
-          class="hidden sm:flex items-center gap-2.5 bg-slate-100 hover:bg-slate-200/70 rounded-xl px-3.5 h-10 w-64 lg:w-80 max-w-full text-left transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/15"
+          class="hidden sm:flex items-center gap-2.5 bg-slate-100 hover:bg-slate-200/70 rounded-xl px-3.5 h-10 w-full max-w-[16rem] lg:max-w-[20rem] text-left transition focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/15"
           aria-label="Buscar en todo el sistema">
     <span class="text-slate-400 shrink-0"><?= icon('search', 'w-4 h-4') ?></span>
     <span class="text-sm text-slate-400 flex-1 truncate">Buscar en todo…</span>
