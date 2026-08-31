@@ -99,7 +99,12 @@ if (isPost()) {
         require_perm('transferencias.enviar');
         $id = postInt('id');
         try {
-            tx(fn() => transferenciaEnviar($id));
+            // Descuenta stock de varios productos a la vez. Si choca con una venta
+            // simultánea de los mismos, toca reintentar: la convención pide
+            // txReintentable() para todo lo que mueva stock o dinero, y aquí se
+            // había quedado en tx(), que le suelta el error de InnoDB en la cara a
+            // quien solo quería mandar mercancía a otra sucursal.
+            txReintentable(fn() => transferenciaEnviar($id));
             audit('transferencias', 'enviar', "Transferencia enviada #$id", ['tabla' => 'transferencias', 'registro_id' => $id]);
             flash('success', 'Transferencia enviada. Stock descontado del origen.');
         } catch (Throwable $e) { flash('error', $e->getMessage()); }

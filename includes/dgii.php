@@ -59,6 +59,33 @@ function dgiiFormasPago606(): array
     ];
 }
 
+/**
+ * De qué cuenta sale el dinero, según la forma de pago que se informa en el 606.
+ *
+ * El 606 usa su propio vocabulario, distinto al de `metodos_pago.afecta_caja`
+ * que emplea el punto de venta. Sin traducirlo, toda compra que no fuera a
+ * crédito descontaba la CAJA DE EFECTIVO —también la pagada por transferencia o
+ * con tarjeta—: el efectivo bajaba por dinero que nunca salió del cajón y el
+ * banco se quedaba alto.
+ *
+ * Devuelve null cuando la operación no mueve dinero de ninguna cuenta. La
+ * permuta y la nota de crédito son eso: la mercancía entró, el gasto es real y
+ * se registra, pero no salió un peso de ningún sitio (mismo criterio que la
+ * diferencia cambiaria en `includes/cxp.php`).
+ *
+ * «Mixto» se queda en efectivo porque el formato no dice cómo se repartió, y
+ * repartirlo a ojo sería inventarse el dato. La compra a crédito (4) no llega
+ * aquí: esa no paga hoy, registra deuda.
+ */
+function dgiiCuentaPorFormaPago(?int $forma): ?string
+{
+    return match ((int) $forma) {
+        2, 3    => 'banco',     // cheque, transferencia o depósito · tarjeta
+        5, 6    => null,        // permuta · nota de crédito
+        default => 'efectivo',  // 1 efectivo, 7 mixto y sin especificar
+    };
+}
+
 /** 607, columna 5: Tipo de Ingreso. */
 function dgiiTiposIngreso(): array
 {

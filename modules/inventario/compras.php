@@ -154,7 +154,20 @@ if (isPost()) {
                 if ($esCredito && cxp_disponible() && $proveedorId) {
                     q("UPDATE proveedores SET balance = balance + ? WHERE id = ?", [$total, $proveedorId]);
                 } else {
-                    registrarTransaccion('gasto', $total, ['sucursal_id' => $sucursalId, 'cuenta_id' => cuentaFinancieraIdPorTipo('efectivo', $sucursalId), 'categoria_id' => categoriaFinancieraId('gasto', 'Compra de Mercancía'), 'descripcion' => 'Compra ' . $numero, 'referencia_tipo' => 'compra', 'referencia_id' => $compraId, 'fecha' => $fecha]);
+                    // La cuenta la decide la forma de pago informada, no el «efectivo»
+                    // de siempre: una compra por transferencia bajaba la caja por dinero
+                    // que nunca salió del cajón. Permuta y nota de crédito registran el
+                    // gasto sin cuenta, porque no sale un peso de ningún sitio.
+                    $tipoCuenta = dgiiCuentaPorFormaPago($dgii['forma_pago']);
+                    registrarTransaccion('gasto', $total, [
+                        'sucursal_id'     => $sucursalId,
+                        'cuenta_id'       => $tipoCuenta ? cuentaFinancieraIdPorTipo($tipoCuenta, $sucursalId) : null,
+                        'categoria_id'    => categoriaFinancieraId('gasto', 'Compra de Mercancía'),
+                        'descripcion'     => 'Compra ' . $numero,
+                        'referencia_tipo' => 'compra',
+                        'referencia_id'   => $compraId,
+                        'fecha'           => $fecha,
+                    ]);
                 }
                 return $compraId;
             });
@@ -179,7 +192,10 @@ if (isPost()) {
                         throw new RuntimeException('No se puede anular: ya se vendió parte de la mercancía.');
                     }
                 }
-                foreach (qAll("SELECT * FROM compra_detalles WHERE compra_id = ?", [$id]) as $d) {
+                // Mismo orden de producto que al registrar la compra: dos procesos
+                // que tocan los mismos artículos en orden distinto se bloquean en cruz.
+                // El bucle de validación de arriba sí lo ordenaba; este se había quedado sin.
+                foreach (qAll("SELECT * FROM compra_detalles WHERE compra_id = ? ORDER BY producto_id", [$id]) as $d) {
                     ajustarStock((int) $d['producto_id'], (int) $c['sucursal_id'], -$d['cantidad'], 'salida', 'compra_anulada', $id, (float) $d['costo_unitario'], 'Anulación compra ' . $c['numero']);
                 }
                 // Revertir gasto en finanzas

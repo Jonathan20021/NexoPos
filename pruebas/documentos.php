@@ -94,6 +94,22 @@ $validasCed = 0;
 for ($d = 0; $d <= 9; $d++) if (dgiiDocumentoValido('4021234567' . $d)) $validasCed++;
 comprueba('de los diez finales posibles, la cédula acepta uno', $validasCed, 1);
 
+/* ============================================================
+ *  De qué cuenta sale el dinero de una compra
+ * ============================================================ */
+titulo('Forma de pago del 606 → cuenta');
+comprueba('efectivo sale de la caja',        dgiiCuentaPorFormaPago(1), 'efectivo');
+comprueba('transferencia sale del banco',    dgiiCuentaPorFormaPago(2), 'banco');
+comprueba('tarjeta sale del banco',          dgiiCuentaPorFormaPago(3), 'banco');
+comprueba('la permuta no mueve dinero',      dgiiCuentaPorFormaPago(5), null);
+comprueba('la nota de crédito tampoco',      dgiiCuentaPorFormaPago(6), null);
+comprueba('mixto se queda en efectivo',      dgiiCuentaPorFormaPago(7), 'efectivo');
+comprueba('sin forma de pago, efectivo',     dgiiCuentaPorFormaPago(null), 'efectivo');
+// La 4 (compra a crédito) no llega a esta función: no paga hoy, registra deuda.
+comprueba('toda forma conocida tiene destino',
+    count(array_filter(array_keys(dgiiFormasPago606()),
+        fn($k) => $k !== 4 && !in_array(dgiiCuentaPorFormaPago($k), ['efectivo', 'banco', null], true))), 0);
+
 echo "\n" . ($fallos === 0
         ? "TODO EN VERDE ($total comprobaciones)"
         : "$fallos de $total FALLARON") . "\n";
