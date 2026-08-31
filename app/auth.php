@@ -371,5 +371,5 @@ function user_iniciales(?array $u = null): string
 {
     $u = $u ?: current_user();
     if (!$u) return '?';
-    return strtoupper(mb_substr($u['nombre'] ?? '', 0, 1) . mb_substr($u['apellido'] ?? '', 0, 1));
+    return mb_strtoupper(mb_substr($u['nombre'] ?? '', 0, 1) . mb_substr($u['apellido'] ?? '', 0, 1), 'UTF-8');
 }

@@ -55,17 +55,29 @@ if (!is_file($local)) {
 $vLocal = $parsear((string) file_get_contents($local));
 
 /* ---------- ¿Está sellado el commit actual? ----------
-   Si el último commit tocó código pero nadie selló la versión, el archivo
-   local es viejo y cualquier comparación engaña. Se detecta comparando la
-   fecha del sello con la del último commit. */
-$fechaCommit = trim((string) @shell_exec('git -C ' . escapeshellarg($raiz) . ' log -1 --format=%cI 2>&1'));
-$sinSellar = false;
-if ($fechaCommit && !empty($vLocal['fecha'])) {
-    $tSello  = strtotime($vLocal['fecha']);
-    $tCommit = strtotime($fechaCommit);
-    // Un minuto de holgura: sellar y hacer commit son dos pasos seguidos.
-    if ($tSello && $tCommit && $tSello < $tCommit - 60) $sinSellar = true;
-}
+   Si el último commit tocó código pero nadie selló la versión, el sello local
+   es viejo y cualquier comparación engaña.
+
+   Esto se miraba comparando la FECHA del sello con la del commit, con un minuto
+   de holgura, y estaba mal por dos razones. La menor: sellar y confirmar son
+   dos pasos, y basta despistarse un poco para pasarse del minuto y recibir una
+   alarma falsa. La mayor: con relojes NO se puede distinguir «hice el commit
+   despacio» de «no sellé», que era justo lo que había que detectar.
+
+   La pregunta exacta no necesita relojes: el último commit que tocó
+   assets/version.txt TIENE que ser HEAD. Si lo es, el sello viajó dentro del
+   commit, y encontrar ese mismo sello en el servidor prueba que el servidor
+   tiene ese commit. Si no lo es, hay código posterior al sello y la
+   comparación no dice nada de ese código. */
+$git    = 'git -C ' . escapeshellarg($raiz) . ' ';
+$head   = trim((string) @shell_exec($git . 'rev-parse HEAD 2>&1'));
+$cSello = trim((string) @shell_exec($git . 'log -1 --format=%H -- assets/version.txt 2>&1'));
+// Sin git (una copia descargada, por ejemplo) no se puede afirmar nada: se calla.
+$sinSellar = $head !== '' && $cSello !== '' && strlen($head) === 40 && $head !== $cSello;
+
+// Aparte: lo que no está confirmado tampoco está en el sello ni en el servidor.
+// No invalida la comprobación —el push sí llegó—, pero conviene decirlo.
+$sucio = trim((string) @shell_exec($git . 'status --porcelain --untracked-files=no 2>&1'));
 
 /* ---------- Pedir el remoto ---------- */
 $remoto = null; $codigo = 0; $error = '';
@@ -106,14 +118,20 @@ $igual = ($vLocal['build'] ?? '') === ($remoto['build'] ?? '')
       && ($vLocal['fecha'] ?? '') === ($remoto['fecha'] ?? '');
 
 if ($sinSellar) {
-    echo "  ⚠ El último commit NO pasó por marcar_version.php: el sello local es\n";
-    echo "    anterior al commit, así que esta comparación no dice nada del código\n";
-    echo "    que acabas de subir. Sella, vuelve a hacer commit y push.\n\n";
+    echo "  ⚠ Hay commits POSTERIORES al sello: " . substr($cSello, 0, 7) . " lo puso, pero HEAD es "
+       . substr($head, 0, 7) . ".\n";
+    echo "    Ese código no está cubierto por esta comparación. Sella, vuelve a\n";
+    echo "    hacer commit y push:   php database/marcar_version.php\n\n";
     exit(1);
 }
 
 if ($igual) {
-    echo "  ✓ COINCIDEN. El servidor tiene lo mismo que el repo.\n\n";
+    echo "  ✓ COINCIDEN. El servidor tiene el commit " . substr($head, 0, 7) . ".\n";
+    if ($sucio !== '') {
+        $n = count(preg_split('/\R/', $sucio));
+        echo "    (Ojo: $n archivo(s) con cambios sin confirmar. Eso NO está en el servidor.)\n";
+    }
+    echo "\n";
     exit(0);
 }
 

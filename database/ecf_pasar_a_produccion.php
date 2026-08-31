@@ -69,7 +69,7 @@ $RANGOS = [
 // errores en producción, el choque NO se ve: la salida sale vacía y parece que
 // no pasó nada. Ya costó un rato de diagnóstico.
 function ln(string $t = ''): void { echo $t, "\n"; }
-function ecfPpTitulo(string $t): void { ln(); ln(str_repeat('=', 74)); ln('  ' . strtoupper($t)); ln(str_repeat('=', 74)); }
+function ecfPpTitulo(string $t): void { ln(); ln(str_repeat('=', 74)); ln('  ' . mb_strtoupper($t, 'UTF-8')); ln(str_repeat('=', 74)); }
 
 ecfPpTitulo($aplicar ? 'cambio a producción · SE VA A APLICAR' : 'cambio a producción · SIMULACIÓN');
 if (!$aplicar) ln('  Nada se escribe. Para hacerlo de verdad:  --aplicar');
