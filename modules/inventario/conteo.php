@@ -98,7 +98,7 @@ if (isPost()) {
                     [$id]
                 );
 
-                $ajustados = 0; $sobrante = 0.0; $faltante = 0.0; $omitidos = [];
+                $ajustados = 0; $sobrante = 0.0; $faltante = 0.0; $omitidos = []; $sinLote = [];
                 foreach ($lineas as $l) {
                     $delta = round((float) $l['stock_contado'] - (float) $l['stock_teorico'], 3);
                     if (abs($delta) < 0.0001) continue;
@@ -111,6 +111,17 @@ if (isPost()) {
                         // esa línea y se avisa, en vez de tumbar todo el conteo.
                         $omitidos[] = $l['nombre'];
                         continue;
+                    }
+                    // Un conteo no pregunta el número de lote, así que las unidades
+                    // que APARECEN entran al lote «sin identificar». No se pierden ni
+                    // se venden antes de tiempo —FEFO deja lo que no tiene fecha para
+                    // el final— pero un producto regulado sin lote es un problema de
+                    // trazabilidad, y quien contó tiene la caja delante ahora mismo.
+                    // Por eso se le dice al terminar, con nombre y sitio donde
+                    // corregirlo, en vez de dejarlo callado en la base.
+                    if ($delta > 0 && function_exists('san_controla_lote')
+                        && san_controla_lote((int) $l['producto_id'])) {
+                        $sinLote[] = $l['nombre'];
                     }
                     ajustarStock((int) $l['producto_id'], $sucursalId, $delta, 'ajuste', 'conteo', $id,
                         (float) $l['costo_unitario'], 'Conteo ' . $conteo['numero']);
@@ -125,7 +136,8 @@ if (isPost()) {
                     'aplicado_at' => date('Y-m-d H:i:s'),
                 ], 'id = ?', [$id]);
 
-                return ['ajustados' => $ajustados, 'sobrante' => $sobrante, 'faltante' => $faltante, 'omitidos' => $omitidos];
+                return ['ajustados' => $ajustados, 'sobrante' => $sobrante, 'faltante' => $faltante,
+                        'omitidos' => $omitidos, 'sin_lote' => $sinLote];
             });
 
             audit('conteos', 'aplicar', 'Conteo ' . $c['numero'] . ' aplicado: ' . $resumen['ajustados'] . ' ajuste(s)',
@@ -133,6 +145,14 @@ if (isPost()) {
 
             flash('success', 'Conteo aplicado: ' . $resumen['ajustados'] . ' producto(s) ajustados. '
                 . 'Sobrantes ' . money($resumen['sobrante']) . ' · Faltantes ' . money(abs($resumen['faltante'])) . '.');
+            if (!empty($resumen['sin_lote'])) {
+                $n = count($resumen['sin_lote']);
+                flash('warning', $n . ' producto(s) con control de lote sumaron unidades y el conteo no pregunta el '
+                    . 'número, así que entraron como «' . (defined('SAN_LOTE_SIN_IDENTIFICAR') ? SAN_LOTE_SIN_IDENTIFICAR : 'SIN-LOTE')
+                    . '»: ' . implode(', ', array_slice($resumen['sin_lote'], 0, 5))
+                    . ($n > 5 ? ' y ' . ($n - 5) . ' más' : '') . '. Ponles su lote y su vencimiento en '
+                    . 'Inventario → Lotes, filtrando por «sin lote».');
+            }
             if ($resumen['omitidos']) {
                 flash('warning', 'No se pudieron ajustar ' . count($resumen['omitidos']) . ' producto(s) porque el ajuste'
                     . ' dejaría la existencia en negativo (se vendió más de lo contado mientras contabas): '
