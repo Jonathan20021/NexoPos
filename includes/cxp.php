@@ -305,19 +305,17 @@ function cxp_registrarPago(array $in): array
     });
 }
 
-/**
- * Recalcula el balance de un proveedor a partir de sus compras.
- * Se usa en la verificación de integridad y al anular una compra.
+/*
+ * Aquí vivía `cxp_recalcularBalance()`, que reescribía el balance del proveedor
+ * con la suma de sus compras. Su comentario decía que la usaban la verificación
+ * de integridad y la anulación de una compra: no la llamaba nadie. La anulación
+ * hace `balance = balance - saldo`, que es lo correcto, y la comprobación vive
+ * ahora en Integridad de datos, que solo lee.
+ *
+ * Se retiró porque escribía el saldo en ABSOLUTO: leer, sumar en PHP y escribir
+ * pierde cualquier pago que ocurra en medio (convención 4). Dejarla ahí, muerta
+ * y con el nombre que invita a usarla, era un pie de banco esperando a alguien.
  */
-function cxp_recalcularBalance(int $proveedorId): float
-{
-    $saldo = (float) qVal(
-        "SELECT COALESCE(SUM(saldo), 0) FROM compras WHERE proveedor_id = ? AND estado <> 'anulada'",
-        [$proveedorId]
-    );
-    dbUpdate('proveedores', ['balance' => $saldo], 'id = ?', [$proveedorId]);
-    return $saldo;
-}
 
 /** Historial de pagos de un proveedor. */
 function cxp_pagos(int $proveedorId, int $limite = 50): array

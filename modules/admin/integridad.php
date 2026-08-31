@@ -354,6 +354,33 @@ $dinero[] = chk(
 );
 
 $dinero[] = chk(
+    'Saldo de proveedores contra sus facturas por pagar',
+    'Lo que se le debe a un proveedor es la suma del saldo pendiente de sus compras no anuladas. '
+    . 'Si el balance guardado no coincide, se le acabará pagando de más o de menos, y la antigüedad '
+    . 'de la deuda deja de servir para decidir a quién pagar primero.',
+    function () {
+        if (!function_exists('cxp_disponible') || !cxp_disponible()) return [0, []];
+        $rows = qAll(
+            "SELECT p.nombre, p.balance,
+                    COALESCE((SELECT SUM(c.saldo) FROM compras c
+                               WHERE c.proveedor_id = p.id AND c.estado <> 'anulada'), 0) AS esperado
+               FROM proveedores p
+              WHERE p.balance <> 0
+                 OR EXISTS (SELECT 1 FROM compras c2 WHERE c2.proveedor_id = p.id)"
+        );
+        $malos = [];
+        foreach ($rows as $r) {
+            if (abs((float) $r['balance'] - (float) $r['esperado']) > 0.05) {
+                $malos[] = $r['nombre'] . ': registra ' . money($r['balance'])
+                         . ', sus facturas suman ' . money($r['esperado']);
+            }
+        }
+        return [count($malos), array_slice($malos, 0, 10)];
+    },
+    'Suele venir de un pago registrado sin aplicarlo a una factura, o de una compra editada a mano. Revísalo en Inventario → Cuentas por Pagar.'
+);
+
+$dinero[] = chk(
     'Balance de cuentas contra sus movimientos',
     'El balance de cada cuenta debe ser su saldo inicial más los ingresos menos los gastos registrados.',
     function () {
