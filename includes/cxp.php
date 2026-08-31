@@ -268,19 +268,29 @@ function cxp_registrarPago(array $in): array
             ]);
         }
 
-        // Si salió de la caja física y hay una sesión abierta, se refleja en el cuadre.
+        // Si el pago salió del cajón, el cuadre tiene que enterarse.
+        //
+        // Antes esto era «y si hay sesión abierta»: sin caja abierta el egreso se
+        // saltaba en silencio, el dinero salía igual —la cuenta de efectivo sí se
+        // descontaba— y al cerrar aparecía un faltante que nadie había causado.
+        // Vender exige caja abierta y facturar un pedido también; pagarle a un
+        // proveedor en efectivo, por la misma razón.
         if ((int) $metodo['afecta_caja'] === 1) {
             $sesion = cajaSesionAbierta($sid, (int) current_user()['id']);
-            if ($sesion) {
-                dbInsert('caja_movimientos', [
-                    'caja_sesion_id' => (int) $sesion['id'],
-                    'tipo'           => 'egreso',
-                    'concepto'       => 'Pago a ' . $prov['nombre'],
-                    'monto'          => $aplicado,
-                    'usuario_id'     => (int) current_user()['id'],
-                    'created_at'     => $fecha,
-                ]);
+            if (!$sesion) {
+                throw new RuntimeException(
+                    'Abre tu caja antes de pagar en efectivo: el dinero sale del cajón y el arqueo tiene '
+                    . 'que saberlo. Si el pago sale del banco, elige un método de pago bancario.'
+                );
             }
+            dbInsert('caja_movimientos', [
+                'caja_sesion_id' => (int) $sesion['id'],
+                'tipo'           => 'egreso',
+                'concepto'       => 'Pago a ' . $prov['nombre'],
+                'monto'          => $aplicado,
+                'usuario_id'     => (int) current_user()['id'],
+                'created_at'     => $fecha,
+            ]);
         }
 
         return [

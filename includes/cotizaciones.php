@@ -512,6 +512,25 @@ function cot_facturar(int $id, int $metodoPagoId, ?array $seleccion = null): arr
     $uid    = (int) current_user()['id'];
     $sesion = cajaSesionAbierta($sid, $uid);
 
+    // Cobrar en efectivo exige un cajón donde apuntarlo.
+    //
+    // Sin sesión la venta se guardaba con `caja_sesion_id` en null, así que el
+    // billete entraba al cajón pero el arqueo no lo veía por ningún lado: al
+    // cerrar salía un sobrante del tamaño exacto de la factura. El POS y la
+    // facturación de pedidos ya lo exigen; aquí faltaba.
+    //
+    // Solo se exige cuando el dinero toca la caja. Una cotización que se factura
+    // a crédito, por transferencia o con tarjeta se puede seguir facturando desde
+    // la oficina sin abrir ningún cajón, que es como se trabaja de verdad.
+    $metodoCobro = qOne("SELECT nombre, afecta_caja, es_credito FROM metodos_pago WHERE id = ?", [$metodoPagoId]);
+    if ($metodoCobro && (int) $metodoCobro['afecta_caja'] === 1
+        && (int) $metodoCobro['es_credito'] === 0 && !$sesion) {
+        throw new RuntimeException(
+            'Abre la caja de esa sucursal antes de facturar en efectivo: si no, el dinero entra al cajón '
+            . 'y el cuadre del turno no se entera. También puedes facturarla por banco o a crédito.'
+        );
+    }
+
     $r = registrarVentaPOS([
         'cart'           => $cart,
         'descuento'      => mon_aBase($descuento, $tasa),
