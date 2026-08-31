@@ -20,6 +20,30 @@ $scopeV = $sid === null ? '1=1' : 'v.sucursal_id = ' . (int) $sid;
 $scopeS = $sid === null ? '1=1' : 's.sucursal_id = ' . (int) $sid;
 $verDinero = can('finanzas.ver') || can('reportes.ver') || is_super();
 
+/*
+ * QUÉ PUEDE VER ESTE USUARIO EN EL TABLERO
+ *
+ * El menú lateral se filtra por permiso desde siempre; el tablero no lo hacía.
+ * Como es la pantalla de entrada de TODO el mundo (`require_login()` a secas),
+ * un administrador de nómina —sin un solo permiso de ventas— entraba y veía la
+ * facturación del mes, el estado de la caja, los productos más vendidos y las
+ * últimas facturas con el nombre de cada cliente.
+ *
+ * Los `can()` que había cubrían los enlaces «Ver todas →» de cada tarjeta, no la
+ * tarjeta: se ocultaba el botón y se enseñaba el dato, que es justo al revés.
+ *
+ * Cada bloque se abre ahora con el permiso del módulo que resume. Quien no tenga
+ * ninguno ve a dónde ir, no una pantalla en blanco.
+ */
+$verVentas     = can_any(['ventas.ver', 'pos.ver', 'pos.vender', 'reportes.ver',
+                          'reportes.ejecutivo', 'reportes.operacion', 'finanzas.ver']);
+$verCaja       = can('caja.ver');
+$verSucursales = can_any(['reportes.ejecutivo', 'reportes.ver']);
+$verProductos  = can_any(['reportes.operacion', 'productos.ver', 'inventario.ver']);
+$verInventario = can_any(['inventario.ver', 'productos.ver']);
+$verMetas      = can('metas.ver');
+$verNada       = !$verVentas && !$verCaja && !$verProductos && !$verInventario && !$verMetas;
+
 $hoy       = date('Y-m-d');
 $inicioMes = date('Y-m-01');
 $finMes    = date('Y-m-t');
@@ -325,11 +349,28 @@ layout_start(
 </div>
 <?php endif; ?>
 
+<?php if ($verNada): ?>
+  <!-- Sin un solo permiso de venta, caja o inventario no hay tablero que
+       enseñar. Antes se le pintaba a esta persona la facturación del mes y la
+       lista de clientes; ahora se le dice qué SÍ puede hacer. -->
+  <?= empty_state(
+      'Tu tablero está en tus módulos',
+      'Tu usuario trabaja con ' . implode(', ', array_map(
+          fn($g) => $g[0], array_filter(nav_groups(), fn($g) => $g[0] !== 'Principal' && array_filter(
+              $g[1], fn($i) => $i[3] === null || can($i[3])
+          ))
+      )) . '. Ábrelos desde el menú de la izquierda.',
+      'grid'
+  ) ?>
+<?php endif; ?>
+
 <!-- ============ HOY + CAJA ============ -->
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+<?php if ($verVentas || $verCaja): ?>
+<div class="grid grid-cols-1 <?= ($verVentas && $verCaja) ? 'lg:grid-cols-3' : '' ?> gap-5 mb-5">
 
   <!-- Hoy -->
-  <section class="card lg:col-span-2 p-6 relative overflow-hidden flex flex-col">
+  <?php if ($verVentas): ?>
+  <section class="card <?= $verCaja ? 'lg:col-span-2' : '' ?> p-6 relative overflow-hidden flex flex-col">
     <div class="absolute -top-24 -right-16 w-72 h-72 bg-blue-500/[0.04] rounded-full pointer-events-none"></div>
 
     <div class="relative flex flex-wrap items-start justify-between gap-4">
@@ -448,7 +489,10 @@ layout_start(
     <?php endif; ?>
   </section>
 
+  <?php endif; ?>
+
   <!-- Caja -->
+  <?php if ($verCaja): ?>
   <section class="card p-5 flex flex-col">
     <div class="flex items-center justify-between mb-4">
       <h3 class="font-bold text-slate-800">Estado de caja</h3>
@@ -495,9 +539,12 @@ layout_start(
       </div>
     <?php endif; ?>
   </section>
+  <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <!-- ============ KPIs DEL MES ============ -->
+<?php if ($verVentas): ?>
 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
   <?php
   $kpis = [
@@ -543,7 +590,7 @@ layout_start(
 </div>
 
 <!-- ============ CURVA DEL MES + SUCURSALES ============ -->
-<div class="grid grid-cols-1 <?= $porSucursal ? 'lg:grid-cols-3' : '' ?> gap-5 mb-5">
+<div class="grid grid-cols-1 <?= ($porSucursal && $verSucursales) ? 'lg:grid-cols-3' : '' ?> gap-5 mb-5">
   <section class="card p-5 <?= $porSucursal ? 'lg:col-span-2' : '' ?> flex flex-col">
     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
       <div>
@@ -581,7 +628,7 @@ layout_start(
     <?php endif; ?>
   </section>
 
-  <?php if ($porSucursal): ?>
+  <?php if ($porSucursal && $verSucursales): ?>
     <section class="card p-5 flex flex-col">
       <div class="flex items-start justify-between gap-2">
         <div>
@@ -623,9 +670,17 @@ layout_start(
     </section>
   <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <!-- ============ METAS + TOP PRODUCTOS ============ -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+<?php
+// La tarjeta de la derecha cambia de contenido según haya metas o no, así que
+// su permiso también: metas si las hay, inventario si no.
+$verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
+?>
+<?php if ($verProductos || $verDerecha): ?>
+<div class="grid grid-cols-1 <?= ($verProductos && $verDerecha) ? 'lg:grid-cols-2' : '' ?> gap-5 mb-5">
+  <?php if ($verProductos): ?>
   <section class="card p-5 flex flex-col">
     <div class="flex items-center justify-between mb-4">
       <div>
@@ -657,6 +712,9 @@ layout_start(
     </div>
   </section>
 
+  <?php endif; ?>
+
+  <?php if ($verDerecha): ?>
   <section class="card p-5 flex flex-col">
     <div class="flex items-center justify-between mb-4">
       <div>
@@ -731,9 +789,12 @@ layout_start(
       <?php endif; ?>
     </div>
   </section>
+  <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <!-- ============ VENTAS RECIENTES ============ -->
+<?php if ($verVentas): ?>
 <section class="card overflow-hidden">
   <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
     <div>
@@ -779,5 +840,6 @@ layout_start(
     </div>
   <?php endif; ?>
 </section>
+<?php endif; ?>
 
 <?php layout_end(); ?>
