@@ -420,6 +420,77 @@ $dinero[] = chk(
     'Anótalo como egreso de caja con el número de la devolución en el concepto. El sistema ya exige caja abierta para reembolsar en efectivo, así que aquí solo deberían salir devoluciones anteriores a ese cambio.'
 );
 
+$dinero[] = chk(
+    'Cobros en efectivo que no entraron al cajón',
+    'Un abono cobrado en efectivo entra en un cajón y tiene que aparecer como ingreso del turno. '
+    . 'Si falta, el turno cierra con un sobrante que nadie sabe explicar.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT('Abono #', pc.id, ' · ', cl.nombre, ' · ', FORMAT(pc.monto, 2))
+               FROM pagos_clientes pc
+               JOIN clientes cl ON cl.id = pc.cliente_id
+               JOIN metodos_pago m ON m.id = pc.metodo_pago_id
+              WHERE m.afecta_caja = 1 AND pc.monto > 0.009
+                AND NOT EXISTS (SELECT 1 FROM caja_movimientos cm
+                                 WHERE cm.tipo = 'ingreso'
+                                   AND (cm.concepto = CONCAT('Abono de ', cl.nombre, ' #', pc.id)
+                                     OR (cm.concepto = CONCAT('Abono de ', cl.nombre)
+                                         AND ABS(cm.monto - pc.monto) < 0.01)))
+              ORDER BY pc.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Anótalo como ingreso de caja con el número del abono en el concepto. Sale aquí cuando se cobró sin tener la caja abierta.'
+    // Se aceptan las dos formas del concepto: los movimientos anteriores a que
+    // el concepto llevara el número del abono se reconocen por nombre e importe.
+);
+
+$dinero[] = chk(
+    'Pagos en efectivo a proveedores que no salieron del cajón',
+    'Igual que los cobros, al revés: si el pago salió en efectivo, el cajón lo perdió y el arqueo '
+    . 'tiene que decirlo. Si no, el turno cierra con un faltante que el cajero no causó.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT('Pago #', pp.id, ' · ', pr.nombre, ' · ', FORMAT(pp.monto, 2))
+               FROM pagos_proveedores pp
+               JOIN proveedores pr ON pr.id = pp.proveedor_id
+               JOIN metodos_pago m ON m.id = pp.metodo_pago_id
+              WHERE m.afecta_caja = 1 AND pp.monto > 0.009
+                AND NOT EXISTS (SELECT 1 FROM caja_movimientos cm
+                                 WHERE cm.tipo = 'egreso'
+                                   AND (cm.concepto = CONCAT('Pago a ', pr.nombre, ' #', pp.id)
+                                     OR (cm.concepto = CONCAT('Pago a ', pr.nombre)
+                                         AND ABS(cm.monto - pp.monto) < 0.01)))
+              ORDER BY pp.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Anótalo como egreso de caja con el número del pago en el concepto. Sale aquí cuando se pagó sin tener la caja abierta.'
+);
+
+$dinero[] = chk(
+    'Ventas en efectivo que no están en ningún arqueo',
+    'Una venta cobrada en efectivo pertenece al turno que recibió el dinero. Si no tiene turno, ese '
+    . 'efectivo no entra en el cuadre de nadie y la caja cerrará con un sobrante. '
+    . 'Las ventas históricas cargadas por archivo no cuentan: se cargan a propósito sin mover caja.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT(v.numero, ' · ', s.nombre, ' · ', FORMAT(v.total, 2))
+               FROM ventas v
+               JOIN sucursales s ON s.id = v.sucursal_id
+               JOIN venta_pagos vp ON vp.venta_id = v.id
+               JOIN metodos_pago m ON m.id = vp.metodo_pago_id
+              WHERE v.caja_sesion_id IS NULL
+                AND m.afecta_caja = 1 AND m.es_credito = 0
+                AND v.estado IN ('completada', 'devuelta')
+                AND COALESCE(v.canal_venta, '') <> 'Histórico'
+              ORDER BY v.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Suele venir de facturar una cotización en efectivo sin caja abierta. Anota el ingreso en la caja del turno que recibió el dinero.'
+);
+
 $grupos[] = ['titulo' => 'Dinero', 'icono' => 'wallet', 'color' => 'emerald', 'checks' => $dinero];
 
 /* ============================================================

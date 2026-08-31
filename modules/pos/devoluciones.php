@@ -27,6 +27,7 @@ if (isPost()) {
                 if (!can_access_sucursal($v['sucursal_id'])) throw new RuntimeException('No tienes acceso a la sucursal de esta venta.');
                 if ($motivo === '') throw new RuntimeException('Indica el motivo de la devolución.');
                 $totalDev = 0; $subtotalDev = 0; $itbisDev = 0; $lineas = []; $totVendido = 0;
+                $sinCaja = false;   // reembolso en efectivo que no pudo anotarse en ningún arqueo
                 $factorVenta = (float) $v['subtotal'] > 0
                     ? ((float) $v['subtotal'] - (float) $v['descuento']) / (float) $v['subtotal']
                     : 1.0;
@@ -110,32 +111,42 @@ if (isPost()) {
                         'referencia_tipo' => 'devolucion', 'referencia_id' => $devId,
                     ]);
                     if ((int) $metodo['afecta_caja'] === 1) {
-                        // El reembolso en efectivo sale de un cajón concreto. Cuando
-                        // no había caja abierta este egreso se saltaba en silencio: el
-                        // dinero salía igual y al cierre aparecía un faltante que nadie
-                        // había causado. Vender ya exige caja abierta; entregar
-                        // efectivo, con más razón.
+                        // El reembolso en efectivo sale de un cajón concreto. Sin caja
+                        // abierta no hay dónde apuntar el egreso, y antes eso se
+                        // resolvía callándose: el dinero salía igual y al cierre
+                        // aparecía un faltante que nadie había causado.
+                        //
+                        // No se bloquea la devolución —hay quien reembolsa desde la
+                        // oficina— pero tampoco se calla: se avisa nombrando la cifra,
+                        // y queda listada en Integridad de datos hasta que se anote.
                         $sesionCaja = cajaSesionAbierta((int) $v['sucursal_id'], (int) current_user()['id']);
-                        if (!$sesionCaja) {
-                            throw new RuntimeException(
-                                'Abre tu caja antes de reembolsar en efectivo: el dinero sale del cajón y el '
-                                . 'arqueo tiene que saberlo. Si la caja de esta sucursal la tiene otra persona, '
-                                . 'que registre ella la devolución.'
-                            );
+                        if ($sesionCaja) {
+                            dbInsert('caja_movimientos', [
+                                'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'egreso',
+                                'concepto' => 'Reembolso ' . $numero, 'monto' => $totalDev,
+                                'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                            ]);
+                        } else {
+                            $sinCaja = true;
                         }
-                        dbInsert('caja_movimientos', [
-                            'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'egreso',
-                            'concepto' => 'Reembolso ' . $numero, 'monto' => $totalDev,
-                            'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
-                        ]);
                     }
                 }
                 // ¿Devolución total?
                 $totDevuelto = (float) qVal("SELECT COALESCE(SUM(dd.cantidad),0) FROM devolucion_detalles dd JOIN devoluciones de ON de.id=dd.devolucion_id WHERE de.venta_id=?", [$ventaId]);
                 if ($totDevuelto >= $totVendido) dbUpdate('ventas', ['estado' => 'devuelta'], 'id = ?', [$ventaId]);
-                return ['id' => $devId, 'ncf' => $b04];
+                return ['id' => $devId, 'ncf' => $b04, 'sin_caja' => $sinCaja, 'monto' => $totalDev];
             });
-            $devNcf = $devId['ncf'] ?? null; $devId = $devId['id'];
+            $devNcf    = $devId['ncf'] ?? null;
+            $devSinCaja = !empty($devId['sin_caja']);
+            $devMonto  = (float) ($devId['monto'] ?? 0);
+            $devId     = $devId['id'];
+
+            if ($devSinCaja) {
+                flash('warning', 'Se reembolsaron ' . money($devMonto) . ' en efectivo y no tenías la caja '
+                    . 'abierta, así que ese egreso no aparece en ningún arqueo. Anótalo como egreso cuando '
+                    . 'abras tu caja. Mientras tanto sale listado en Integridad de datos, en «Reembolsos en '
+                    . 'efectivo que no salieron del cajón».');
+            }
 
             // Nota de Crédito Electrónica (tipo 34), FUERA de la transacción: la
             // mercancía ya volvió al estante y el dinero ya se reembolsó; que el
@@ -179,9 +190,9 @@ if ($ventaId && can('devoluciones.crear')) {
         redirect('modules/pos/devoluciones.php');
     }
     layout_start('Nueva devolución', 'Venta ' . e($v['numero']) . ' · ' . e($v['cliente'] ?: 'Cliente Genérico'), '<a href="' . url('modules/pos/devoluciones.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Cancelar</a>');
-    // Se avisa ANTES de llenar el formulario. Si el reembolso es en efectivo y
-    // quien devuelve no tiene caja abierta, al guardar se rechaza; enterarse
-    // aquí evita teclear las cantidades para nada.
+    // Se avisa ANTES de llenar el formulario. La devolución se puede registrar
+    // igual, pero sin caja abierta el reembolso no entra en ningún arqueo, y eso
+    // se entiende mejor antes de teclear las cantidades que en un aviso al final.
     $metodoVenta = qOne(
         "SELECT m.nombre, m.afecta_caja, m.es_credito FROM venta_pagos vp
            JOIN metodos_pago m ON m.id = vp.metodo_pago_id
@@ -199,9 +210,10 @@ if ($ventaId && can('devoluciones.crear')) {
         <div class="text-sm text-amber-900">
           <p class="font-semibold">Esta venta se cobró en efectivo y no tienes la caja abierta.</p>
           <p class="mt-0.5 leading-snug">
-            El reembolso sale del cajón, así que hace falta una caja abierta donde apuntar el egreso.
+            Puedes registrar la devolución igual, pero el reembolso no quedará anotado en ningún
+            arqueo y al cerrar turno aparecerá como faltante.
             <a href="<?= url('modules/pos/caja.php') ?>" class="underline font-medium">Abre tu caja</a>
-            o pide a quien la tenga que registre la devolución.
+            antes, o pide a quien la tenga que registre la devolución.
           </p>
         </div>
       </div>

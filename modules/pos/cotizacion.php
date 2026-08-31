@@ -98,6 +98,11 @@ if (isPost()) {
             $r = cot_facturar($id, postInt('metodo_pago_id') ?: 1, $sel ?: null);
             flash('success', 'Factura ' . $r['numero'] . ' generada' . ($r['ncf'] ? ' con NCF ' . $r['ncf'] : '') . '.'
                 . (!empty($r['parcial']) ? ' Se facturó solo parte de lo cotizado; el resto queda registrado como no vendido.' : ''));
+            if (!empty($r['sin_caja'])) {
+                flash('warning', 'Se cobró en efectivo y no hay caja abierta en esa sucursal, así que esta '
+                    . 'factura no entra en ningún arqueo: el turno que reciba ese dinero cerrará con un '
+                    . 'sobrante. Ábrela y anótalo como ingreso, o factúrala por banco.');
+            }
             redirect('modules/pos/ventas.php?q=' . urlencode($r['numero']));
         } catch (Throwable $e) {
             flash('error', $e->getMessage());

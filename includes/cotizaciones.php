@@ -512,24 +512,18 @@ function cot_facturar(int $id, int $metodoPagoId, ?array $seleccion = null): arr
     $uid    = (int) current_user()['id'];
     $sesion = cajaSesionAbierta($sid, $uid);
 
-    // Cobrar en efectivo exige un cajón donde apuntarlo.
+    // Cobrar en efectivo sin un cajón donde apuntarlo deja un hueco en el cuadre.
     //
-    // Sin sesión la venta se guardaba con `caja_sesion_id` en null, así que el
-    // billete entraba al cajón pero el arqueo no lo veía por ningún lado: al
-    // cerrar salía un sobrante del tamaño exacto de la factura. El POS y la
-    // facturación de pedidos ya lo exigen; aquí faltaba.
+    // La venta se guarda con `caja_sesion_id` en null, así que el billete entra al
+    // cajón pero el arqueo no lo ve por ningún lado: al cerrar sale un sobrante
+    // del tamaño exacto de la factura.
     //
-    // Solo se exige cuando el dinero toca la caja. Una cotización que se factura
-    // a crédito, por transferencia o con tarjeta se puede seguir facturando desde
-    // la oficina sin abrir ningún cajón, que es como se trabaja de verdad.
+    // No se bloquea —se factura cotizaciones desde la oficina— pero se devuelve la
+    // señal para avisarlo. Solo aplica cuando el dinero toca la caja: a crédito,
+    // por transferencia o con tarjeta no hay nada que cuadrar en ningún cajón.
     $metodoCobro = qOne("SELECT nombre, afecta_caja, es_credito FROM metodos_pago WHERE id = ?", [$metodoPagoId]);
-    if ($metodoCobro && (int) $metodoCobro['afecta_caja'] === 1
-        && (int) $metodoCobro['es_credito'] === 0 && !$sesion) {
-        throw new RuntimeException(
-            'Abre la caja de esa sucursal antes de facturar en efectivo: si no, el dinero entra al cajón '
-            . 'y el cuadre del turno no se entera. También puedes facturarla por banco o a crédito.'
-        );
-    }
+    $sinCaja = $metodoCobro && (int) $metodoCobro['afecta_caja'] === 1
+        && (int) $metodoCobro['es_credito'] === 0 && !$sesion;
 
     $r = registrarVentaPOS([
         'cart'           => $cart,
@@ -564,7 +558,7 @@ function cot_facturar(int $id, int $metodoPagoId, ?array $seleccion = null): arr
           "Cotización {$c['numero']} facturada como {$r['numero']}" . ($parcial ? ' (parcial)' : ''),
           ['tabla' => 'cotizaciones', 'registro_id' => $id]);
 
-    return $r + ['parcial' => $parcial];
+    return $r + ['parcial' => $parcial, 'sin_caja' => $sinCaja];
 }
 
 /* ============================================================

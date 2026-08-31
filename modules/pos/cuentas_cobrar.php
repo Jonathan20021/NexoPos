@@ -11,7 +11,8 @@ if (isPost()) {
         $metodoId = postInt('metodo_pago_id') ?: null;
         $notas = trim(post('notas'));
         try {
-            txReintentable(function () use ($clienteId, $monto, $metodoId, $notas) {
+            $sinCaja = false;   // cobro en efectivo que no pudo anotarse en ningún arqueo
+            txReintentable(function () use (&$sinCaja, $clienteId, $monto, $metodoId, $notas) {
                 $cli = qOne("SELECT nombre, balance FROM clientes WHERE id = ? FOR UPDATE", [$clienteId]);
                 if (!$cli) throw new RuntimeException('Cliente no válido.');
                 if ($monto <= 0) throw new RuntimeException('El monto del abono debe ser mayor a cero.');
@@ -20,7 +21,7 @@ if (isPost()) {
                 if ($sid === null) throw new RuntimeException('Selecciona una sucursal antes de registrar el abono.');
                 $metodo = qOne("SELECT afecta_caja FROM metodos_pago WHERE id=? AND activo=1 AND es_credito=0", [$metodoId]);
                 if (!$metodo) throw new RuntimeException('Selecciona un método de pago válido.');
-                dbInsert('pagos_clientes', [
+                $pagoId = dbInsert('pagos_clientes', [
                     'cliente_id' => $clienteId, 'sucursal_id' => $sid, 'monto' => $monto,
                     'metodo_pago_id' => $metodoId, 'notas' => $notas ?: null,
                     'usuario_id' => current_user()['id'], 'fecha' => date('Y-m-d H:i:s'),
@@ -34,24 +35,28 @@ if (isPost()) {
                 ]);
                 if ((int) $metodo['afecta_caja'] === 1) {
                     // Mismo caso que el reembolso, al revés: el billete entra en un
-                    // cajón. Sin caja abierta el ingreso no se apuntaba en ninguna
-                    // parte y al cierre salía un sobrante sin explicación.
+                    // cajón. Sin caja abierta el ingreso no se apunta en ninguna parte
+                    // y al cierre sale un sobrante sin explicación. No se bloquea el
+                    // cobro, pero se avisa nombrando la cifra.
                     $sesionCaja = cajaSesionAbierta($sid, (int) current_user()['id']);
-                    if (!$sesionCaja) {
-                        throw new RuntimeException(
-                            'Abre tu caja antes de cobrar en efectivo: el dinero entra al cajón y el arqueo '
-                            . 'tiene que saberlo. Si prefieres no tocar caja, registra el abono por banco.'
-                        );
+                    if ($sesionCaja) {
+                        dbInsert('caja_movimientos', [
+                            'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'ingreso',
+                            'concepto' => 'Abono de ' . $cli['nombre'] . ' #' . $pagoId, 'monto' => $monto,
+                            'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
+                        ]);
+                    } else {
+                        $sinCaja = true;
                     }
-                    dbInsert('caja_movimientos', [
-                        'caja_sesion_id' => (int) $sesionCaja['id'], 'tipo' => 'ingreso',
-                        'concepto' => 'Abono de ' . $cli['nombre'], 'monto' => $monto,
-                        'usuario_id' => current_user()['id'], 'created_at' => date('Y-m-d H:i:s'),
-                    ]);
                 }
             });
             audit('clientes', 'editar', "Abono registrado al cliente #$clienteId por " . money($monto));
             flash('success', 'Abono registrado correctamente.');
+            if ($sinCaja) {
+                flash('warning', 'Entraron ' . money($monto) . ' en efectivo y no tenías la caja abierta, '
+                    . 'así que ese ingreso no aparece en ningún arqueo. Anótalo como ingreso cuando abras '
+                    . 'tu caja, o el turno cerrará con un sobrante sin explicación.');
+            }
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }

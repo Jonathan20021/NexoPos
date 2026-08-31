@@ -48,6 +48,11 @@ if (isPost()) {
             audit('cxp', 'crear', 'Pago a proveedor #' . postInt('proveedor_id') . ' por ' . money($r['aplicado_base']),
                   ['tabla' => 'pagos_proveedores', 'registro_id' => $r['pago_id']]);
             flash('success', $msg . '.');
+            if (!empty($r['sin_caja'])) {
+                flash('warning', 'El pago salió en efectivo y no tenías la caja abierta, así que ese egreso '
+                    . 'no aparece en ningún arqueo. Anótalo como egreso al abrir tu caja, o el turno cerrará '
+                    . 'con un faltante sin explicación.');
+            }
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }

@@ -273,24 +273,25 @@ function cxp_registrarPago(array $in): array
         // Antes esto era «y si hay sesión abierta»: sin caja abierta el egreso se
         // saltaba en silencio, el dinero salía igual —la cuenta de efectivo sí se
         // descontaba— y al cerrar aparecía un faltante que nadie había causado.
-        // Vender exige caja abierta y facturar un pedido también; pagarle a un
-        // proveedor en efectivo, por la misma razón.
+        //
+        // No se bloquea el pago: hay quien paga en efectivo desde la oficina, sin
+        // cajón de por medio. Pero se devuelve la señal para poder avisarlo con la
+        // cifra delante, en vez de callarse.
+        $sinCaja = false;
         if ((int) $metodo['afecta_caja'] === 1) {
             $sesion = cajaSesionAbierta($sid, (int) current_user()['id']);
-            if (!$sesion) {
-                throw new RuntimeException(
-                    'Abre tu caja antes de pagar en efectivo: el dinero sale del cajón y el arqueo tiene '
-                    . 'que saberlo. Si el pago sale del banco, elige un método de pago bancario.'
-                );
+            if ($sesion) {
+                dbInsert('caja_movimientos', [
+                    'caja_sesion_id' => (int) $sesion['id'],
+                    'tipo'           => 'egreso',
+                    'concepto'       => 'Pago a ' . $prov['nombre'] . ' #' . $pagoId,
+                    'monto'          => $aplicado,
+                    'usuario_id'     => (int) current_user()['id'],
+                    'created_at'     => $fecha,
+                ]);
+            } else {
+                $sinCaja = true;
             }
-            dbInsert('caja_movimientos', [
-                'caja_sesion_id' => (int) $sesion['id'],
-                'tipo'           => 'egreso',
-                'concepto'       => 'Pago a ' . $prov['nombre'],
-                'monto'          => $aplicado,
-                'usuario_id'     => (int) current_user()['id'],
-                'created_at'     => $fecha,
-            ]);
         }
 
         return [
@@ -299,6 +300,7 @@ function cxp_registrarPago(array $in): array
             'reduccion'     => $reduccionTotal,  // bajó la deuda en libros
             'diferencia'    => $diferencia,      // + pérdida cambiaria, − ganancia
             'facturas'      => $afectadas,
+            'sin_caja'      => $sinCaja,   // salió en efectivo sin arqueo donde anotarlo
         ];
     });
 }
