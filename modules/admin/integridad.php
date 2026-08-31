@@ -235,6 +235,28 @@ if (san_disponible()) {
     );
 }
 
+$inventario[] = chk(
+    'Devoluciones que no devolvieron la mercancía',
+    'Cuando se devuelve un producto físico, la unidad tiene que volver a la existencia y quedar anotada en el kardex. '
+    . 'Si la devolución está registrada pero el movimiento no existe, esa unidad se le cobró al cliente, se le reembolsó '
+    . 'y sigue contando como vendida: el inventario dice que hay una menos de las que hay.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT(d.numero, ' · ', dd.descripcion, ' (', TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM dd.cantidad)), ')')
+               FROM devoluciones d
+               JOIN devolucion_detalles dd ON dd.devolucion_id = d.id
+               JOIN productos p ON p.id = dd.producto_id AND p.tipo = 'producto'
+              WHERE NOT EXISTS (SELECT 1 FROM movimientos_inventario mi
+                                 WHERE mi.referencia_tipo = 'devolucion'
+                                   AND mi.referencia_id = d.id
+                                   AND mi.producto_id = dd.producto_id)
+              ORDER BY d.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Corrige la existencia con un ajuste de inventario y deja el motivo escrito, para que el kardex explique de dónde salió.'
+);
+
 $grupos[] = ['titulo' => 'Inventario', 'icono' => 'box', 'color' => 'amber', 'checks' => $inventario];
 
 /* ============================================================
@@ -351,6 +373,51 @@ $dinero[] = chk(
         return [count($malos), array_slice($malos, 0, 10)];
     },
     'Suele pasar si se editó el balance a mano. La conciliación bancaria toma los movimientos como fuente de verdad.'
+);
+
+$dinero[] = chk(
+    'Devoluciones que no devolvieron el dinero',
+    'Una devolución que no fue a crédito tiene que dejar su salida en alguna cuenta: efectivo si se pagó en efectivo, '
+    . 'banco si se pagó con tarjeta o transferencia. Si no está, el cliente cobró su reembolso pero los libros siguen '
+    . 'contando ese dinero como si estuviera en la empresa.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT(d.numero, ' · ', s.nombre, ' · ', FORMAT(d.total, 2))
+               FROM devoluciones d
+               JOIN sucursales s ON s.id = d.sucursal_id
+              WHERE d.total > 0.009
+                AND COALESCE((SELECT MAX(m.es_credito) FROM venta_pagos vp
+                                JOIN metodos_pago m ON m.id = vp.metodo_pago_id
+                               WHERE vp.venta_id = d.venta_id), 0) = 0
+                AND NOT EXISTS (SELECT 1 FROM transacciones t
+                                 WHERE t.referencia_tipo = 'devolucion' AND t.referencia_id = d.id)
+              ORDER BY d.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Registra la salida a mano en Finanzas → Transacciones, con la devolución como referencia, o revierte la devolución si nunca se pagó.'
+);
+
+$dinero[] = chk(
+    'Reembolsos en efectivo que no salieron del cajón',
+    'Si la venta se cobró en efectivo, el reembolso sale del cajón y tiene que aparecer como egreso en la caja del turno. '
+    . 'Cuando falta, el cuadre acusa un faltante que el cajero no causó.',
+    function () {
+        $rows = qCol(
+            "SELECT CONCAT(d.numero, ' · ', s.nombre, ' · ', FORMAT(d.total, 2))
+               FROM devoluciones d
+               JOIN sucursales s ON s.id = d.sucursal_id
+              WHERE d.total > 0.009
+                AND EXISTS (SELECT 1 FROM venta_pagos vp
+                              JOIN metodos_pago m ON m.id = vp.metodo_pago_id
+                             WHERE vp.venta_id = d.venta_id AND m.afecta_caja = 1 AND m.es_credito = 0)
+                AND NOT EXISTS (SELECT 1 FROM caja_movimientos cm
+                                 WHERE cm.tipo = 'egreso' AND cm.concepto = CONCAT('Reembolso ', d.numero))
+              ORDER BY d.id DESC"
+        );
+        return [count($rows), array_slice($rows, 0, 10)];
+    },
+    'Anótalo como egreso de caja con el número de la devolución en el concepto. El sistema ya exige caja abierta para reembolsar en efectivo, así que aquí solo deberían salir devoluciones anteriores a ese cambio.'
 );
 
 $grupos[] = ['titulo' => 'Dinero', 'icono' => 'wallet', 'color' => 'emerald', 'checks' => $dinero];
