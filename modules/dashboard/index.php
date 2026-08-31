@@ -55,8 +55,13 @@ $verPrestamos  = can('prestamos.ver') && function_exists('presDisponible') && pr
 $verVacaciones = can('rrhh_vacaciones.ver');
 $verRRHH       = $verEmpleados || $verNomina || $verTss || $verPrestamos || $verVacaciones;
 
+// Compras y CRM: mismo motivo que recursos humanos. Quien lleva las cuentas
+// por pagar o el embudo de ventas también entra por aquí.
+$verCompras = can_any(['compras.ver', 'proveedores.ver', 'cxp.ver']);
+$verCrm     = can('crm.ver');
+
 $verNada       = !$verVentas && !$verCaja && !$verProductos && !$verInventario
-                 && !$verMetas && !$verRRHH;
+                 && !$verMetas && !$verRRHH && !$verCompras && !$verCrm;
 
 $hoy       = date('Y-m-d');
 $inicioMes = date('Y-m-01');
@@ -271,6 +276,50 @@ if ($sid === null && count(sucursales_visibles()) > 1) {
     usort($porSucursal, fn($a, $b) => $b['total'] <=> $a['total']);
 }
 $totalSuc = array_sum(array_column($porSucursal, 'total')) ?: 1;
+
+/* ============================================================
+ *  COMPRAS Y PROVEEDORES
+ * ============================================================ */
+$compras = [];
+if ($verCompras) {
+    $scopeC = $sid === null ? '1=1' : 'c.sucursal_id = ' . (int) $sid;
+    $compras['mes'] = qOne(
+        "SELECT COUNT(*) n, COALESCE(SUM(c.total),0) total FROM compras c
+          WHERE c.estado <> 'anulada' AND $scopeC AND c.fecha BETWEEN ? AND ?",
+        [substr($mesIni, 0, 10), substr($mesFin, 0, 10)]
+    ) ?: ['n' => 0, 'total' => 0];
+    // La deuda no se filtra por sucursal: se le paga al proveedor, no a la tienda.
+    $compras['deuda'] = function_exists('cxp_disponible') && cxp_disponible()
+        ? cxp_resumen() : null;
+}
+
+/* ============================================================
+ *  CRM
+ * ============================================================ */
+$crm = [];
+if ($verCrm) {
+    $scopeO = $sid === null ? '1=1' : 'o.sucursal_id = ' . (int) $sid;
+    $crm['embudo'] = qOne(
+        "SELECT COUNT(*) n, COALESCE(SUM(o.valor_estimado),0) valor,
+                COALESCE(SUM(o.valor_estimado * o.probabilidad / 100),0) ponderado
+           FROM crm_oportunidades o
+          WHERE o.etapa NOT IN ('ganada','perdida') AND $scopeO"
+    ) ?: ['n' => 0, 'valor' => 0, 'ponderado' => 0];
+    $crm['ganadas'] = qOne(
+        "SELECT COUNT(*) n, COALESCE(SUM(o.valor_estimado),0) valor
+           FROM crm_oportunidades o
+          WHERE o.etapa = 'ganada' AND $scopeO AND o.fecha_cierre_real BETWEEN ? AND ?",
+        [substr($mesIni, 0, 10), substr($mesFin, 0, 10)]
+    ) ?: ['n' => 0, 'valor' => 0];
+    // Solo las mías cuando no soy quien las reparte: un vendedor no necesita el
+    // pendiente de toda la oficina en su pantalla de entrada.
+    $uid = (int) (current_user()['id'] ?? 0);
+    $crm['tareas'] = (int) qVal(
+        "SELECT COUNT(*) FROM crm_tareas t
+          WHERE t.estado = 'pendiente' AND t.vence_at < NOW()
+            AND (t.asignado_a = ? OR t.asignado_a IS NULL)", [$uid]
+    );
+}
 
 /* ============================================================
  *  RECURSOS HUMANOS
@@ -919,6 +968,69 @@ $verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
         </tbody>
       </table>
     </div>
+  <?php endif; ?>
+</section>
+<?php endif; ?>
+
+<!-- ============ COMPRAS Y PROVEEDORES ============ -->
+<?php if ($verCompras): ?>
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-4">
+    <?= icon('truck', 'w-5 h-5 text-slate-400') ?>
+    <h2 class="text-lg font-bold text-slate-800">Compras y proveedores</h2>
+  </div>
+  <?php
+  $tc = [];
+  $tc[] = ['label' => 'Comprado este mes', 'valor' => money((float) $compras['mes']['total']),
+      'icono' => 'truck', 'color' => 'blue', 'href' => url('modules/inventario/compras.php'),
+      'nota' => (int) $compras['mes']['n'] . ' factura(s) de compra'];
+  if ($compras['deuda'] !== null) {
+      $dd = $compras['deuda'];
+      $tc[] = ['label' => 'Se le debe a proveedores', 'valor' => money($dd['total']),
+          'icono' => 'wallet', 'color' => 'amber', 'href' => url('modules/inventario/cuentas_pagar.php'),
+          'nota' => $dd['facturas'] . ' factura(s) · ' . $dd['proveedores'] . ' proveedor(es)'];
+      $tc[] = ['label' => 'Vencido a más de 30 días', 'valor' => money($dd['vencido']),
+          'icono' => 'alert', 'color' => $dd['vencido'] > 0 ? 'rose' : 'emerald',
+          'href' => url('modules/inventario/cuentas_pagar.php'),
+          'nota' => $dd['vencido'] > 0 ? 'Págalo o negocia el plazo' : 'Nada vencido, al día'];
+  }
+  echo kpis($tc, min(3, max(2, count($tc))));
+  ?>
+</section>
+<?php endif; ?>
+
+<!-- ============ CRM ============ -->
+<?php if ($verCrm): ?>
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-4">
+    <?= icon('trending', 'w-5 h-5 text-slate-400') ?>
+    <h2 class="text-lg font-bold text-slate-800">Embudo de ventas</h2>
+  </div>
+  <?= kpis([
+      ['label' => 'Oportunidades abiertas', 'valor' => number_format((int) $crm['embudo']['n']),
+       'icono' => 'briefcase', 'color' => 'indigo', 'href' => url('modules/crm/oportunidades.php'),
+       'nota' => money((float) $crm['embudo']['valor'], false) . ' en juego'],
+      ['label' => 'Valor ponderado', 'valor' => money((float) $crm['embudo']['ponderado']),
+       'icono' => 'chart', 'color' => 'violet', 'href' => url('modules/crm/index.php'),
+       'nota' => 'Cada oportunidad por su probabilidad'],
+      ['label' => 'Ganadas este mes', 'valor' => money((float) $crm['ganadas']['valor']),
+       'icono' => 'check', 'color' => 'emerald', 'href' => url('modules/crm/oportunidades.php'),
+       'nota' => (int) $crm['ganadas']['n'] . ' oportunidad(es) cerrada(s)'],
+  ], 3) ?>
+  <?php if (!empty($crm['tareas'])): ?>
+    <a href="<?= e(url('modules/crm/tareas.php')) ?>"
+       class="card p-4 flex items-start gap-3 hover:border-rose-300 hover:shadow-pop transition">
+      <?= icon('alert', 'w-5 h-5 text-rose-500 mt-0.5 shrink-0') ?>
+      <div class="min-w-0">
+        <p class="font-semibold text-slate-800">
+          <?= (int) $crm['tareas'] ?> <?= (int) $crm['tareas'] === 1 ? 'tarea vencida' : 'tareas vencidas' ?>
+        </p>
+        <p class="text-sm text-slate-500 leading-snug mt-0.5">
+          Seguimientos tuyos cuya fecha ya pasó. Un cliente que espera una llamada que no llega
+          se enfría solo.
+        </p>
+      </div>
+    </a>
   <?php endif; ?>
 </section>
 <?php endif; ?>
