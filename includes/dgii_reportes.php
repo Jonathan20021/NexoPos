@@ -157,6 +157,11 @@ function dgiiValidar(string $formato, array $filas, array $empresa): array
             if (!dgiiNcfValido($f['ncf'])) $errores[] = ['ref' => $ref, 'msg' => 'NCF con estructura inválida: ' . $f['ncf']];
             if (!dgiiSoloDigitos($f['proveedor_rnc'] ?? '')) {
                 $errores[] = ['ref' => $ref, 'msg' => 'El proveedor no tiene RNC o cédula registrada.'];
+            } elseif (!dgiiDocumentoValido($f['proveedor_rnc'])) {
+                // La DGII rechaza el archivo entero por un documento mal formado,
+                // no la línea. Vale más verlo aquí que en el acuse del portal.
+                $avisos[] = ['ref' => $ref, 'msg' => 'RNC/Cédula del proveedor: '
+                    . dgiiRevisarDocumento($f['proveedor_rnc'])['motivo']];
             }
             if (!isset(dgiiTiposBienServicio()[(int) $f['tipo_bien_servicio']])) {
                 $errores[] = ['ref' => $ref, 'msg' => 'Tipo de bienes y servicios fuera del catálogo oficial.'];
@@ -194,6 +199,9 @@ function dgiiValidar(string $formato, array $filas, array $empresa): array
             // Crédito fiscal sin RNC del comprador: la DGII lo rechaza.
             if ($f['tipo_comprobante'] === 'credito_fiscal' && !dgiiSoloDigitos($f['cliente_doc'] ?? '')) {
                 $errores[] = ['ref' => $ref, 'msg' => 'Comprobante de crédito fiscal sin RNC/Cédula del cliente.'];
+            } elseif (dgiiSoloDigitos($f['cliente_doc'] ?? '') !== '' && !dgiiDocumentoValido($f['cliente_doc'])) {
+                $avisos[] = ['ref' => $ref, 'msg' => 'RNC/Cédula del cliente: '
+                    . dgiiRevisarDocumento($f['cliente_doc'])['motivo']];
             }
             if ($f['tipo_comprobante'] === 'consumidor' && !dgiiSoloDigitos($f['cliente_doc'] ?? '')) {
                 $avisos[] = ['ref' => $ref, 'msg' => 'Consumidor final sin documento: se reportará con los campos 1 y 2 en blanco.'];

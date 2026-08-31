@@ -150,6 +150,73 @@ function dgiiTipoIdPorDocumento(?string $doc): ?int
     };
 }
 
+/**
+ * ¿El RNC o la cédula pueden existir de verdad?
+ *
+ * Los dos llevan dígito verificador, así que un número mal tecleado se detecta
+ * sin consultar a nadie. Y conviene detectarlo temprano: la DGII rechaza el
+ * archivo 606 o 607 ENTERO por un solo RNC mal formado —no la línea, el archivo—
+ * y en la TSS un empleado con la cédula cambiada sencillamente no cuadra, así
+ * que sus cotizaciones no se pueden declarar.
+ *
+ * RNC (9 dígitos): se pesan los ocho primeros por 7,9,8,6,5,4,3,2, se toma el
+ * resto entre 11 y el verificador es 11 menos ese resto; resto 0 da 2 y resto 1
+ * da 1.
+ *
+ * Cédula (11 dígitos): los diez primeros alternan peso 1 y 2, a los productos
+ * de dos cifras se les resta 9 y el verificador es lo que falta para la decena.
+ *
+ * Devuelve ['digitos','tipo','valido','motivo']. `valido` es false también
+ * cuando no hay documento: quien llame decide si eso le importa.
+ *
+ * ESTO AVISA, NO PROHÍBE. Se factura a extranjeros con pasaporte y a entidades
+ * con numeraciones que no siguen la regla; bloquear el guardado dejaría a la
+ * caja sin poder atender a un cliente real. El sitio donde sí es un error duro
+ * es el archivo que se le manda a la DGII.
+ */
+function dgiiRevisarDocumento(?string $doc): array
+{
+    $d = dgiiSoloDigitos($doc);
+
+    if ($d === '') {
+        return ['digitos' => '', 'tipo' => null, 'valido' => false, 'motivo' => 'Sin documento.'];
+    }
+
+    if (strlen($d) === 9) {
+        $pesos = [7, 9, 8, 6, 5, 4, 3, 2];
+        $suma  = 0;
+        for ($i = 0; $i < 8; $i++) $suma += (int) $d[$i] * $pesos[$i];
+        $resto = $suma % 11;
+        $dv    = $resto === 0 ? 2 : ($resto === 1 ? 1 : 11 - $resto);
+
+        return ['digitos' => $d, 'tipo' => 'rnc', 'valido' => $dv === (int) $d[8],
+                'motivo' => $dv === (int) $d[8] ? ''
+                    : 'El dígito verificador del RNC no cuadra: con esos ocho primeros dígitos debería terminar en ' . $dv . '.'];
+    }
+
+    if (strlen($d) === 11) {
+        $suma = 0;
+        for ($i = 0; $i < 10; $i++) {
+            $x = (int) $d[$i] * (($i % 2) ? 2 : 1);
+            $suma += $x > 9 ? $x - 9 : $x;
+        }
+        $dv = (10 - $suma % 10) % 10;
+
+        return ['digitos' => $d, 'tipo' => 'cedula', 'valido' => $dv === (int) $d[10],
+                'motivo' => $dv === (int) $d[10] ? ''
+                    : 'El dígito verificador de la cédula no cuadra: con esos diez primeros dígitos debería terminar en ' . $dv . '.'];
+    }
+
+    return ['digitos' => $d, 'tipo' => null, 'valido' => false,
+            'motivo' => 'Un RNC tiene 9 dígitos y una cédula 11; este tiene ' . strlen($d) . '.'];
+}
+
+/** Atajo: ¿es un RNC o una cédula con el verificador correcto? */
+function dgiiDocumentoValido(?string $doc): bool
+{
+    return dgiiRevisarDocumento($doc)['valido'];
+}
+
 /** Valida la estructura de un NCF: 11 o 13 posiciones (e-CF), o 19 para comprobantes previos a mayo 2018. */
 function dgiiNcfValido(?string $ncf): bool
 {

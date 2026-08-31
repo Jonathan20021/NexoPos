@@ -509,6 +509,7 @@ La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
 ```bash
 php pruebas/nomina.php
 php pruebas/ecf.php
+php pruebas/documentos.php
 ```
 
 `pruebas/nomina.php` cubre el cálculo de nómina dominicana (`includes/nomina.php`):
@@ -526,3 +527,14 @@ del sobre (`status.code` 0, «Transacción exitosa») solo dice que la consulta
 llegó y volvió; el del comprobante (`data.responseCode`, `data.responseMessage`)
 es el de la DGII. Leer el primero hacía que una factura rechazada apareciera en
 pantalla con el motivo «Transacción exitosa».
+
+`pruebas/documentos.php` cubre el RNC y la cédula (`dgiiRevisarDocumento()` en
+`includes/dgii.php`). Los dos llevan dígito verificador, así que un número mal
+tecleado se detecta sin consultar a nadie —y conviene: la DGII rechaza el
+archivo 606/607 **entero** por un solo RNC mal formado, y en la TSS un empleado
+con la cédula cambiada no cuadra y se queda sin cotizar.
+
+**Esa comprobación avisa, nunca bloquea.** Se factura a extranjeros con
+pasaporte y a entidades con numeraciones que no siguen la regla: impedir el
+guardado dejaría a la caja sin poder atender a un cliente real. El único sitio
+donde sí es un error duro es el archivo que se le manda a la DGII.

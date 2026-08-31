@@ -85,6 +85,20 @@ if (isPost()) {
                 audit('clientes', 'crear', "Cliente creado: $nombre", ['tabla' => 'clientes', 'registro_id' => $nid]);
                 flash('success', 'Cliente creado correctamente.');
             }
+
+            // Avisa, no impide. Un RNC mal tecleado no se nota hasta que la DGII
+            // devuelve el 607 del mes —y lo devuelve entero, no la línea—, así
+            // que conviene verlo al guardar. Se guarda igual: se factura a
+            // extranjeros con pasaporte y a entidades con numeraciones que no
+            // siguen la regla, y dejar a la caja sin poder atender a un cliente
+            // real sería peor que el aviso.
+            if ($rncCedula !== '') {
+                $revDoc = dgiiRevisarDocumento($rncCedula);
+                if (!$revDoc['valido']) {
+                    flash('warning', 'Revisa el RNC/cédula ' . $rncCedula . ': ' . $revDoc['motivo']
+                        . ' Se guardó igual, pero así saldrá en el 607 y la DGII puede devolver el archivo completo.');
+                }
+            }
         }
         redirect('modules/pos/clientes.php');
     }

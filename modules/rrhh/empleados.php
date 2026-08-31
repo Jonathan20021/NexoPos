@@ -92,6 +92,18 @@ if (isPost()) {
                 audit('rrhh_empleados', 'crear', "Empleado creado: $nombre $apellido", ['tabla' => 'empleados', 'registro_id' => $nid]);
                 flash('success', 'Empleado creado correctamente.');
             }
+
+            // Avisa, no impide. La cédula lleva dígito verificador, así que un
+            // número mal tecleado se ve al momento; y en la TSS la cédula es lo
+            // que identifica a la persona, de modo que si no cuadra ese empleado
+            // se queda sin cotizar el mes entero. Aun así se guarda: hay
+            // personal extranjero y casos que no siguen la regla, y bloquear el
+            // alta dejaría a alguien sin ficha por una comprobación de formato.
+            $revCedula = dgiiRevisarDocumento($cedula);
+            if (!$revCedula['valido']) {
+                flash('warning', 'Revisa la cédula ' . $cedula . ': ' . $revCedula['motivo']
+                    . ' Se guardó igual, pero con ese número la TSS no va a reconocer al empleado.');
+            }
         }
         redirect('modules/rrhh/empleados.php');
     }

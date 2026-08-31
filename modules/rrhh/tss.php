@@ -315,6 +315,34 @@ layout_start('TSS · Tesorería de la Seguridad Social',
     <?php if (!$d['filas']): ?>
       <?= empty_state('Sin datos para ' . $mes, 'No hay nómina confirmada ni plantilla activa en ese mes.', 'users') ?>
     <?php else: ?>
+      <?php
+        // En la TSS el empleado se identifica por la cédula. Si está mal tecleada
+        // no cuadra con nadie y esa persona se queda sin cotizar el mes entero,
+        // aunque el cálculo de aquí esté perfecto. El dígito verificador lo
+        // delata sin tener que consultar el portal.
+        $cedulasMalas = [];
+        foreach ($d['filas'] as $ff) {
+            $rev = dgiiRevisarDocumento($ff['cedula'] ?? '');
+            if (!$rev['valido']) $cedulasMalas[] = $ff['nombre'] . ' (' . ($ff['cedula'] ?: 'sin cédula') . ')';
+        }
+      ?>
+      <?php if ($cedulasMalas): ?>
+        <div class="mx-4 mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5">
+          <?= icon('alert', 'w-5 h-5 text-amber-600 mt-0.5 shrink-0') ?>
+          <div class="text-sm text-amber-900 min-w-0">
+            <p class="font-semibold">
+              <?= count($cedulasMalas) ?>
+              <?= count($cedulasMalas) === 1 ? 'empleado tiene la cédula' : 'empleados tienen la cédula' ?>
+              mal escrita.
+            </p>
+            <p class="mt-0.5 leading-snug">
+              En la TSS la cédula es lo que identifica a la persona: así no va a cuadrar y ese mes
+              se queda sin cotizar. Corrígela en su ficha antes de cargar la autodeterminación.
+            </p>
+            <p class="mt-1 text-[13px] break-words"><?= e(implode(' · ', $cedulasMalas)) ?></p>
+          </div>
+        </div>
+      <?php endif; ?>
       <div class="tabla-ancha">
         <table class="data-table">
           <thead><tr>
@@ -328,7 +356,12 @@ layout_start('TSS · Tesorería de la Seguridad Social',
               <tr>
                 <td class="whitespace-nowrap">
                   <p class="font-semibold text-slate-700"><?= e($f['nombre']) ?></p>
-                  <p class="text-xs text-slate-400"><?= e($f['cedula'] ?: 'sin cédula') ?>
+                  <?php $revCed = dgiiRevisarDocumento($f['cedula'] ?? ''); ?>
+                  <p class="text-xs <?= $revCed['valido'] ? 'text-slate-400' : 'text-amber-700 font-medium' ?>">
+                    <?= e($f['cedula'] ?: 'sin cédula') ?>
+                    <?php if (!$revCed['valido']): ?>
+                      <span class="badge badge-amber ml-1" title="<?= e($revCed['motivo']) ?>">cédula</span>
+                    <?php endif; ?>
                     <?php foreach (array_keys(array_filter($f['topado'])) as $r): ?>
                       <span class="badge badge-violet ml-1">tope <?= strtoupper($r) ?></span>
                     <?php endforeach; ?></p>

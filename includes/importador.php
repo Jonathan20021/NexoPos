@@ -659,6 +659,15 @@ function imp_analizar_clientes(array $filas, array $mapa, array $opts): array
             $email = '';
         }
 
+        // Un RNC mal tecleado no se nota hasta que la DGII devuelve el 607 del
+        // mes —y devuelve el archivo entero, no la línea—. Con mil filas de
+        // golpe, verlo aquí ahorra el viaje. Solo se mira cuando viene todo en
+        // dígitos: un documento con letras es un pasaporte y no sigue la regla.
+        if ($rnc !== '' && ctype_digit($rnc) && !dgiiDocumentoValido($rnc)) {
+            $avisos[] = ['fila' => $linea, 'motivo' => 'RNC/cédula ' . $rnc . ': '
+                . dgiiRevisarDocumento($rnc)['motivo'] . ' Se carga igual.'];
+        }
+
         // Dentro del mismo archivo, el mismo cliente repetido es una sola ficha.
         $clave = $rnc !== '' ? 'r:' . $rnc : ($codigo !== '' ? 'c:' . mb_strtolower($codigo) : 'n:' . mb_strtolower($nombre));
         if (isset($vistos[$clave])) {
@@ -848,7 +857,7 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
     }
 
     // --- Validación por documento ---
-    $monto = 0.0; $duplicados = 0; $sinCliente = 0;
+    $monto = 0.0; $duplicados = 0; $sinCliente = 0; $rncMalos = 0;
     $numerosVistos = [];
 
     foreach ($grupos as $g) {
@@ -872,6 +881,8 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
             continue;
         }
         if ($g['cliente'] === '' && $g['cliente_rnc'] === '') $sinCliente++;
+        if ($g['cliente_rnc'] !== '' && ctype_digit($g['cliente_rnc'])
+            && !dgiiDocumentoValido($g['cliente_rnc'])) $rncMalos++;
 
         $monto += $g['subtotal'] - $g['descuento'];
         $docs[] = $g;
@@ -882,6 +893,10 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
     }
     if ($sinCliente > 0) {
         $avisos[] = ['fila' => 0, 'motivo' => $sinCliente . ' venta(s) sin cliente: quedarán como consumidor final.'];
+    }
+    if ($rncMalos > 0) {
+        $avisos[] = ['fila' => 0, 'motivo' => $rncMalos . ' venta(s) traen un RNC/cédula cuyo dígito verificador no cuadra: '
+            . 'se cargan igual, pero revísalos antes de declarar el 607 (la DGII devuelve el archivo completo).'];
     }
     if ($duplicados > 0) {
         $avisos[] = ['fila' => 0, 'motivo' => $duplicados . ' factura(s) ya estaban registradas y se omitirán (así reimportar el mismo archivo no duplica nada).'];
