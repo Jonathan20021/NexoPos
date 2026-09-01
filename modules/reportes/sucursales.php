@@ -1,7 +1,9 @@
 <?php
 /** Comparativo de sucursales: cada local, lado a lado, con los mismos criterios. */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.ejecutivo');
+// Lo abre la CEO con su paquete de dirección, y también quien tenga solo este
+// informe: comparar locales no obliga a ver la utilidad de toda la empresa.
+require_any_perm(['reportes.ejecutivo', 'reportes.sucursales']);
 
 $p = rep_periodo('mes');
 $visibles = sucursales_visibles();

@@ -84,8 +84,21 @@ function require_login(): void
 
 function require_perm(string $perm): void
 {
+    require_any_perm([$perm]);
+}
+
+/**
+ * Basta con UNO de los permisos.
+ *
+ * Existe porque hay pantallas a las que se llega por dos caminos: el informe
+ * de sucursales lo abre la CEO con su paquete completo y también quien solo
+ * tiene ese informe concreto. Sin esto había que elegir entre dejar fuera a uno
+ * o regalarle al otro todo el paquete de dirección.
+ */
+function require_any_perm(array $perms): void
+{
     require_login();
-    if (!can($perm)) {
+    if (!can_any($perms)) {
         http_response_code(403);
         require __DIR__ . '/../modules/auth/403.php';
         exit;

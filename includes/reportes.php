@@ -39,7 +39,9 @@ function rep_catalogo(): array
                 ['ejecutivo.php', 'Panel ejecutivo', 'KPIs del periodo, tendencia de 12 meses, márgenes, metas y alertas en una sola pantalla.', 'dashboard'],
                 ['comparativo.php', 'Comparativo de periodos', 'Mes contra mes y año contra año, con variación por sucursal, canal y categoría.', 'chart'],
                 ['clientes.php', 'Clientes y concentración', 'Ranking ABC (Pareto), recencia, frecuencia y riesgo de dependencia de pocos clientes.', 'users'],
-                ['sucursales.php', 'Comparativo de sucursales', 'Venta, margen, ticket y productividad por local, lado a lado.', 'store'],
+                // Quinto elemento = permiso PROPIO del informe. Quien lo tenga ve
+                // este y solo este, sin entrar al resto del grupo.
+                ['sucursales.php', 'Comparativo de sucursales', 'Venta, margen, ticket y productividad por local, lado a lado.', 'store', 'reportes.sucursales'],
             ],
         ],
         'finanzas' => [
@@ -97,13 +99,27 @@ function rep_catalogo(): array
     ];
 }
 
-/** Reportes visibles para el usuario actual (respeta permisos). */
+/**
+ * Reportes visibles para el usuario actual.
+ *
+ * Los permisos van por GRUPO —dirección, finanzas, contabilidad, operación,
+ * sanidad—, que es lo razonable para casi todo. Pero había informes atrapados
+ * en el grupo equivocado para ciertos puestos: comparar la venta de los locales
+ * vivía dentro del paquete de la CEO, así que dárselo a una encargada le abría
+ * también la utilidad de la empresa y el ranking de clientes.
+ *
+ * Por eso un informe puede declarar su PROPIO permiso (quinto elemento). Quien
+ * tenga el del grupo sigue viéndolo todo; quien solo tenga el del informe ve
+ * ese y nada más, y el grupo aparece con esa única tarjeta dentro.
+ */
 function rep_catalogo_visible(): array
 {
     $out = [];
     foreach (rep_catalogo() as $k => $g) {
-        if (!can($g['permiso'])) continue;
-        $out[$k] = $g;
+        if (can($g['permiso'])) { $out[$k] = $g; continue; }
+        $sueltos = array_values(array_filter($g['reportes'],
+            fn($r) => isset($r[4]) && can($r[4])));
+        if ($sueltos) $out[$k] = array_merge($g, ['reportes' => $sueltos]);
     }
     return $out;
 }

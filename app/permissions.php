@@ -121,6 +121,7 @@ function permission_catalog(): array
                 'finanzas'     => 'Reportes financieros',
                 'contabilidad' => 'Reportes contables y fiscales',
                 'operacion'    => 'Reportes de operación y ventas',
+                'sucursales'   => 'Comparativo de sucursales (sin abrir el resto de dirección)',
                 'sanidad'      => 'Reportes de cumplimiento sanitario',
             ]],
         ],
