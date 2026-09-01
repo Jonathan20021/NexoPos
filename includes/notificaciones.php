@@ -291,6 +291,7 @@ function notif_generar(): void
     notif_gen_ncf();
     notif_gen_caja();
     notif_gen_transferencias();
+    notif_gen_transferencias_por_aprobar();
     notif_gen_crm();
     notif_gen_pedidos();
     notif_gen_metas();
@@ -673,6 +674,44 @@ function notif_gen_caja(): void
 }
 
 /** Transferencias enviadas que la sucursal destino no ha recibido. */
+/**
+ * Transferencias esperando que alguien apruebe la salida.
+ *
+ * Sin esto, la mercancía se queda parada en el origen hasta que a quien
+ * aprueba se le ocurra entrar a mirar. Se avisa a la sucursal de ORIGEN, que es
+ * de donde va a salir, y solo a quien puede aprobar.
+ *
+ * Prioridad alta desde el primer día: una transferencia parada es una tienda
+ * esperando mercancía que cree que ya salió.
+ */
+function notif_gen_transferencias_por_aprobar(): void
+{
+    $rows = qAll(
+        "SELECT t.sucursal_origen_id AS sid, su.nombre AS sucursal, COUNT(*) AS n,
+                MIN(t.created_at) AS mas_vieja
+           FROM transferencias t
+           JOIN sucursales su ON su.id = t.sucursal_origen_id
+          WHERE t.estado = 'pendiente'
+          GROUP BY t.sucursal_origen_id, su.nombre"
+    );
+    $items = [];
+    foreach ($rows as $r) {
+        $n = (int) $r['n'];
+        $items[] = [
+            'clave' => 'transferencia_por_aprobar:' . (int) $r['sid'], 'categoria' => 'inventario',
+            'prioridad' => 'alta',
+            'titulo' => $n . ' transferencia' . ($n === 1 ? '' : 's') . ' esperando aprobación',
+            'mensaje' => 'Mercancía que quiere salir de ' . $r['sucursal']
+                . ($r['mas_vieja'] ? ' desde ' . fechaCorta($r['mas_vieja']) : '')
+                . '. No se mueve hasta que se apruebe.',
+            'url' => 'modules/inventario/transferencias.php?estado=pendiente',
+            'icono' => 'clock', 'color' => 'amber',
+            'sucursal_id' => (int) $r['sid'], 'permiso' => 'transferencias.aprobar',
+        ];
+    }
+    notif_sync('transferencia_por_aprobar', $items);
+}
+
 function notif_gen_transferencias(): void
 {
     $rows = qAll(
