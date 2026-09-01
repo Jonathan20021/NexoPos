@@ -286,6 +286,145 @@ function transferenciaDevolverABorrador(int $id, string $motivo): void
     dbUpdate('transferencias', ['estado' => 'borrador', 'motivo_rechazo' => mb_substr(trim($motivo), 0, 255)], 'id=?', [$id]);
 }
 
+/**
+ * Quién puede aprobar una salida: activos, con permiso y con correo válido.
+ *
+ * Los super administradores entran por serlo, sin necesidad de tener la fila del
+ * permiso. Se excluye a quien lo solicitó: no se avisa a alguien de que apruebe
+ * lo que él mismo acaba de pedir, que además no podría.
+ */
+function transferenciaAprobadores(?int $exceptoUsuarioId = null): array
+{
+    $rows = qAll(
+        "SELECT u.id, u.nombre, u.apellido, u.email
+           FROM usuarios u JOIN roles r ON r.id = u.rol_id
+          WHERE u.activo = 1 AND u.email IS NOT NULL AND u.email <> ''
+            AND (r.es_super = 1 OR EXISTS (
+                  SELECT 1 FROM rol_permisos rp JOIN permisos p ON p.id = rp.permiso_id
+                   WHERE rp.rol_id = r.id AND p.clave = 'transferencias.aprobar'))"
+    );
+    if ($exceptoUsuarioId) {
+        $rows = array_values(array_filter($rows, fn($u) => (int) $u['id'] !== $exceptoUsuarioId));
+    }
+    return $rows;
+}
+
+/**
+ * Avisa por correo de que hay mercancía esperando autorización.
+ *
+ * FUERA de la transacción, siempre. La solicitud ya está guardada: que el
+ * servidor de correo esté caído no puede deshacerla, ni dejar a quien la pidió
+ * esperando a que un SMTP conteste.
+ *
+ * El correo NO trae un botón que apruebe directamente. Aprobar mueve
+ * inventario, y un enlace que lo haga con solo abrirlo vale lo que valga el
+ * buzón: se entra a la aplicación y se aprueba allí.
+ *
+ * @return array{enviados:int,fallidos:int,configurado:bool,destinatarios:array<string>}
+ */
+function transferenciaAvisarAprobadores(int $id): array
+{
+    $t = qOne(
+        "SELECT t.*, so.nombre AS origen, sd.nombre AS destino,
+                CONCAT(u.nombre,' ',u.apellido) AS solicita
+           FROM transferencias t
+           JOIN sucursales so ON so.id = t.sucursal_origen_id
+           JOIN sucursales sd ON sd.id = t.sucursal_destino_id
+           LEFT JOIN usuarios u ON u.id = t.usuario_id
+          WHERE t.id = ?", [$id]
+    );
+    if (!$t || $t['estado'] !== 'pendiente') return ['enviados' => 0, 'fallidos' => 0, 'destinatarios' => []];
+
+    $para = transferenciaAprobadores((int) $t['usuario_id']);
+    $hayCorreo = function_exists('mail_configurado') && mail_configurado();
+    if (!$para || !$hayCorreo) {
+        return ['enviados' => 0, 'fallidos' => 0, 'configurado' => $hayCorreo,
+                'destinatarios' => array_column($para, 'email')];
+    }
+
+    $lineas = qAll(
+        "SELECT p.nombre, td.cantidad FROM transferencia_detalles td
+           JOIN productos p ON p.id = td.producto_id
+          WHERE td.transferencia_id = ? ORDER BY p.nombre", [$id]
+    );
+    $html = transferenciaCorreoHtml($t, $lineas);
+    $asunto = 'Autoriza la salida de mercancía · ' . $t['numero'] . ' · ' . $t['origen'];
+
+    $env = 0; $fall = 0;
+    foreach ($para as $u) {
+        $r = mail_enviar($u['email'], $asunto, $html);
+        empty($r['ok']) ? $fall++ : $env++;
+    }
+    return ['enviados' => $env, 'fallidos' => $fall, 'configurado' => true,
+            'destinatarios' => array_column($para, 'email')];
+}
+
+/**
+ * Traduce el resultado del aviso a un flash. Se dice SIEMPRE, también cuando no
+ * se pudo avisar: quien solicita tiene que saber si alguien se enteró o si le
+ * toca ir a buscar a quien aprueba.
+ *
+ * @return array{0:string,1:string} [tipo, mensaje] para flash(...)
+ */
+function transferenciaFlashAviso(array $r): array
+{
+    if (!empty($r['enviados'])) {
+        return ['info', 'Se avisó por correo a ' . $r['enviados'] . ' persona(s) con permiso para autorizarla.'];
+    }
+    if (empty($r['destinatarios'])) {
+        return ['warning', 'Nadie con permiso para aprobar tiene correo registrado: avísale tú, o esa mercancía no sale.'];
+    }
+    // Se distingue «no hay correo montado» de «el correo falló»: lo primero se
+    // arregla en Configuración y lo segundo se reintenta.
+    if (empty($r['configurado'])) {
+        return ['warning', 'El correo no está configurado, así que no salió ningún aviso. '
+            . 'Quien aprueba lo verá en sus alertas y en el panel de autorizaciones.'];
+    }
+    return ['warning', 'No se pudo enviar el aviso por correo. Quien aprueba lo verá igualmente en sus alertas y en el panel de autorizaciones.'];
+}
+
+/** El cuerpo del aviso, con la marca de la empresa. */
+function transferenciaCorreoHtml(array $t, array $lineas): string
+{
+    $empresa = $GLOBALS['empresa'] ?? [];
+    $filas = '';
+    foreach ($lineas as $l) {
+        $filas .= '<tr>'
+            . '<td style="padding:8px 0;border-bottom:1px solid #E2E8F0;font:400 14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#334155;">'
+            . e($l['nombre']) . '</td>'
+            . '<td align="right" style="padding:8px 0;border-bottom:1px solid #E2E8F0;font:600 14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0F172A;">'
+            . e(qty($l['cantidad'])) . '</td></tr>';
+    }
+    $dato = static fn(string $k, string $v): string =>
+        '<p style="margin:0 0 6px;font:400 14px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#475569;">'
+        . '<strong style="color:#0F172A;">' . e($k) . ':</strong> ' . e($v) . '</p>';
+
+    $contenido =
+        '<p style="margin:0 0 16px;font:400 15px/1.7 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#334155;">'
+      . 'Hay mercancía esperando tu autorización para salir. <strong>No se ha movido nada todavía</strong>: '
+      . 'el inventario del origen sigue intacto hasta que apruebes.</p>'
+      . $dato('Documento', $t['numero'])
+      . $dato('Sale de', $t['origen'])
+      . $dato('Va a', $t['destino'])
+      . $dato('Lo solicita', (string) ($t['solicita'] ?: '—'))
+      . $dato('Motivo', (string) $t['notas'])
+      . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 4px;">'
+      . '<tr><th align="left" style="padding:0 0 6px;font:600 12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#94A3B8;text-transform:uppercase;">Producto</th>'
+      . '<th align="right" style="padding:0 0 6px;font:600 12px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#94A3B8;text-transform:uppercase;">Cantidad</th></tr>'
+      . $filas . '</table>'
+      // URL absoluta: el enlace se abre desde Gmail, no desde el dominio. Se
+      // reutiliza el ayudante que ya resolvía esto para los correos de marketing.
+      . mail_boton('Revisar y autorizar',
+          function_exists('mkt_url_abs')
+              ? mkt_url_abs('modules/inventario/aprobaciones.php')
+              : url('modules/inventario/aprobaciones.php'))
+      . '<p style="margin:18px 0 0;font:400 12px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#94A3B8;">'
+      . 'Se autoriza dentro de la aplicación, no desde este correo. Quien solicita una salida no puede aprobarla.</p>';
+
+    return mail_plantilla('Autoriza una salida de mercancía', $contenido, $empresa,
+        $t['numero'] . ' · sale de ' . $t['origen'] . ' · ' . $t['notas']);
+}
+
 /** Devuelve el stock al origen (compartido por rechazar y anular). En transacción. */
 function transferenciaDevolverStock(array $t): void
 {

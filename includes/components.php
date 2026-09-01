@@ -43,6 +43,8 @@ function nav_groups(): array
             ['Proveedores', 'briefcase', url('modules/inventario/proveedores.php'), 'proveedores.ver'],
             ['Cuentas por Pagar', 'wallet', url('modules/inventario/cuentas_pagar.php'), 'cxp.ver'],
             ['Transferencias', 'transfer', url('modules/inventario/transferencias.php'), 'transferencias.ver'],
+            // Va justo después: quien autoriza entra aquí, no al listado.
+            ['Autorizaciones', 'check', url('modules/inventario/aprobaciones.php'), 'transferencias.aprobar'],
         ]],
         ['Recursos Humanos', [
             ['Empleados', 'id', url('modules/rrhh/empleados.php'), 'rrhh_empleados.ver'],

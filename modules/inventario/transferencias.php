@@ -51,10 +51,14 @@ if (isPost()) {
                 if ($enviarYa) transferenciaSolicitar($tid);
                 return $tid;
             });
-            audit('transferencias', $enviarYa ? 'enviar' : 'crear', ($enviarYa ? 'Transferencia enviada' : 'Borrador de transferencia creado') . " #$tid", ['tabla' => 'transferencias', 'registro_id' => $tid]);
+            // El aviso va FUERA de la transacción: la solicitud ya está guardada y
+            // un servidor de correo caído no puede deshacerla.
+            $avisoCorreo = $enviarYa ? transferenciaAvisarAprobadores($tid) : null;
+            audit('transferencias', $enviarYa ? 'enviar' : 'crear', ($enviarYa ? 'Transferencia enviada a aprobación' : 'Borrador de transferencia creado') . " #$tid", ['tabla' => 'transferencias', 'registro_id' => $tid]);
             flash('success', $enviarYa
-                ? 'Transferencia enviada a aprobación. La mercancía NO sale del origen hasta que alguien la apruebe.'
+                ? 'Enviada a aprobación. La mercancía NO sale del origen hasta que alguien la apruebe.'
                 : 'Borrador guardado. Puedes editarlo y mandarlo a aprobación cuando esté listo.');
+            if ($avisoCorreo) flash(...transferenciaFlashAviso($avisoCorreo));
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -107,8 +111,10 @@ if (isPost()) {
         $id = postInt('id');
         try {
             txReintentable(fn() => transferenciaSolicitar($id));
+            $avisoCorreo = transferenciaAvisarAprobadores($id);
             audit('transferencias', 'enviar', "Transferencia #$id enviada a aprobación", ['tabla' => 'transferencias', 'registro_id' => $id]);
             flash('success', 'Enviada a aprobación. La mercancía sigue en el origen hasta que alguien la apruebe.');
+            flash(...transferenciaFlashAviso($avisoCorreo));
         } catch (Throwable $e) { flash('error', $e->getMessage()); }
         redirect('modules/inventario/transferencias.php');
     }
