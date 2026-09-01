@@ -8,6 +8,10 @@ function transferenciaValidarEntrada(): array
     $origen = postInt('sucursal_origen_id');
     $destino = postInt('sucursal_destino_id');
     $fecha = post('fecha') ?: date('Y-m-d');
+    // La dirección lo pidió: no sale mercancía de una tienda sin que quede
+    // escrito por qué. Vale para el borrador y para todo lo que venga después.
+    $motivo = trim(post('notas'));
+    if ($motivo === '') throw new RuntimeException('Escribe el motivo de la transferencia: por qué sale esa mercancía.');
     $lineas = json_decode(post('lineas', '[]'), true);
     if ($origen <= 0 || $destino <= 0 || $origen === $destino || !is_array($lineas) || !$lineas) {
         throw new RuntimeException('Selecciona origen y destino distintos y agrega productos.');
@@ -23,7 +27,8 @@ function transferenciaValidarEntrada(): array
         $det[$pid] = ['pid' => $pid, 'cant' => ($det[$pid]['cant'] ?? 0) + $cant];
     }
     if (!$det) throw new RuntimeException('No hay líneas válidas.');
-    return ['origen' => $origen, 'destino' => $destino, 'fecha' => $fecha, 'det' => array_values($det)];
+    return ['origen' => $origen, 'destino' => $destino, 'fecha' => $fecha,
+            'motivo' => mb_substr($motivo, 0, 255), 'det' => array_values($det)];
 }
 
 if (isPost()) {
@@ -39,15 +44,17 @@ if (isPost()) {
             $in = transferenciaValidarEntrada();
             $tid = txReintentable(function () use ($in, $enviarYa) {
                 $numero = nextNumero('transferencias', 'numero', 'TRF');
-                $tid = dbInsert('transferencias', ['numero' => $numero, 'sucursal_origen_id' => $in['origen'], 'sucursal_destino_id' => $in['destino'], 'fecha' => $in['fecha'], 'estado' => 'borrador', 'usuario_id' => current_user()['id']]);
+                $tid = dbInsert('transferencias', ['numero' => $numero, 'sucursal_origen_id' => $in['origen'], 'sucursal_destino_id' => $in['destino'], 'fecha' => $in['fecha'], 'notas' => $in['motivo'], 'estado' => 'borrador', 'usuario_id' => current_user()['id']]);
                 foreach ($in['det'] as $d) {
                     dbInsert('transferencia_detalles', ['transferencia_id' => $tid, 'producto_id' => $d['pid'], 'cantidad' => $d['cant']]);
                 }
-                if ($enviarYa) transferenciaEnviar($tid);
+                if ($enviarYa) transferenciaSolicitar($tid);
                 return $tid;
             });
             audit('transferencias', $enviarYa ? 'enviar' : 'crear', ($enviarYa ? 'Transferencia enviada' : 'Borrador de transferencia creado') . " #$tid", ['tabla' => 'transferencias', 'registro_id' => $tid]);
-            flash('success', $enviarYa ? 'Transferencia enviada. Stock descontado del origen.' : 'Borrador guardado. Puedes editarlo y enviarlo cuando esté listo.');
+            flash('success', $enviarYa
+                ? 'Transferencia enviada a aprobación. La mercancía NO sale del origen hasta que alguien la apruebe.'
+                : 'Borrador guardado. Puedes editarlo y mandarlo a aprobación cuando esté listo.');
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -64,7 +71,7 @@ if (isPost()) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede editar un borrador.');
                 if (!can_access_sucursal($t['sucursal_origen_id'])) deny_access();
-                dbUpdate('transferencias', ['sucursal_origen_id' => $in['origen'], 'sucursal_destino_id' => $in['destino'], 'fecha' => $in['fecha']], 'id=?', [$id]);
+                dbUpdate('transferencias', ['sucursal_origen_id' => $in['origen'], 'sucursal_destino_id' => $in['destino'], 'fecha' => $in['fecha'], 'notas' => $in['motivo']], 'id=?', [$id]);
                 q("DELETE FROM transferencia_detalles WHERE transferencia_id=?", [$id]);
                 foreach ($in['det'] as $d) {
                     dbInsert('transferencia_detalles', ['transferencia_id' => $id, 'producto_id' => $d['pid'], 'cantidad' => $d['cant']]);
@@ -94,19 +101,42 @@ if (isPost()) {
         redirect('modules/inventario/transferencias.php');
     }
 
-    // Enviar un borrador ya guardado.
+    // Mandar un borrador a aprobación. NO mueve stock todavía.
     if ($accion === 'enviar') {
         require_perm('transferencias.enviar');
         $id = postInt('id');
         try {
+            txReintentable(fn() => transferenciaSolicitar($id));
+            audit('transferencias', 'enviar', "Transferencia #$id enviada a aprobación", ['tabla' => 'transferencias', 'registro_id' => $id]);
+            flash('success', 'Enviada a aprobación. La mercancía sigue en el origen hasta que alguien la apruebe.');
+        } catch (Throwable $e) { flash('error', $e->getMessage()); }
+        redirect('modules/inventario/transferencias.php');
+    }
+
+    // Aprobar: AQUÍ sale la mercancía.
+    if ($accion === 'aprobar') {
+        require_perm('transferencias.aprobar');
+        $id = postInt('id');
+        try {
             // Descuenta stock de varios productos a la vez. Si choca con una venta
-            // simultánea de los mismos, toca reintentar: la convención pide
-            // txReintentable() para todo lo que mueva stock o dinero, y aquí se
-            // había quedado en tx(), que le suelta el error de InnoDB en la cara a
-            // quien solo quería mandar mercancía a otra sucursal.
+            // simultánea de los mismos, toca reintentar en vez de soltarle el error
+            // de InnoDB a quien solo estaba aprobando una salida.
             txReintentable(fn() => transferenciaEnviar($id));
-            audit('transferencias', 'enviar', "Transferencia enviada #$id", ['tabla' => 'transferencias', 'registro_id' => $id]);
-            flash('success', 'Transferencia enviada. Stock descontado del origen.');
+            audit('transferencias', 'enviar', "Transferencia #$id aprobada: la mercancía salió del origen", ['tabla' => 'transferencias', 'registro_id' => $id]);
+            flash('success', 'Aprobada. Stock descontado del origen.');
+        } catch (Throwable $e) { flash('error', $e->getMessage()); }
+        redirect('modules/inventario/transferencias.php');
+    }
+
+    // Devolver a borrador con el motivo de por qué no se aprueba.
+    if ($accion === 'devolver') {
+        require_perm('transferencias.aprobar');
+        $id = postInt('id');
+        try {
+            $motivo = trim(post('motivo_rechazo'));
+            txReintentable(fn() => transferenciaDevolverABorrador($id, $motivo));
+            audit('transferencias', 'editar', "Transferencia #$id devuelta a borrador: $motivo", ['tabla' => 'transferencias', 'registro_id' => $id]);
+            flash('success', 'Devuelta a borrador. Quien la solicitó verá el motivo.');
         } catch (Throwable $e) { flash('error', $e->getMessage()); }
         redirect('modules/inventario/transferencias.php');
     }
@@ -249,11 +279,12 @@ endif;
 // Se mide sobre el alcance de sucursal, no sobre el filtro de pantalla.
 $resumen = qOne(
     "SELECT COALESCE(SUM(t.estado = 'borrador'), 0) borradores,
+            COALESCE(SUM(t.estado = 'pendiente'), 0) por_aprobar,
             COALESCE(SUM(t.estado = 'enviada'), 0)  en_camino,
             COALESCE(SUM(t.estado = 'enviada' AND t.enviada_at < DATE_SUB(NOW(), INTERVAL 7 DAY)), 0) varadas,
             COALESCE(SUM(t.estado = 'recibida' AND t.recibida_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')), 0) recibidas_mes
        FROM transferencias t WHERE $scope"
-) ?: ['borradores' => 0, 'en_camino' => 0, 'varadas' => 0, 'recibidas_mes' => 0];
+) ?: ['borradores' => 0, 'por_aprobar' => 0, 'en_camino' => 0, 'varadas' => 0, 'recibidas_mes' => 0];
 
 echo kpis([
     ['label' => 'En camino', 'valor' => number_format((int) $resumen['en_camino']), 'icono' => 'truck',
@@ -262,9 +293,10 @@ echo kpis([
         ? number_format((int) $resumen['varadas']) . ' llevan más de 7 días sin recibirse'
         : 'Ninguna atrasada',
      'href' => (int) $resumen['en_camino'] > 0 ? '?estado=enviada' : ''],
-    ['label' => 'Borradores', 'valor' => number_format((int) $resumen['borradores']), 'icono' => 'clipboard',
-     'color' => (int) $resumen['borradores'] > 0 ? 'amber' : 'slate', 'nota' => 'Sin enviar todavía',
-     'href' => (int) $resumen['borradores'] > 0 ? '?estado=borrador' : ''],
+    ['label' => 'Por aprobar', 'valor' => number_format((int) $resumen['por_aprobar']), 'icono' => 'clock',
+     'color' => (int) $resumen['por_aprobar'] > 0 ? 'amber' : 'slate',
+     'nota' => 'La mercancía sigue en el origen',
+     'href' => (int) $resumen['por_aprobar'] > 0 ? '?estado=pendiente' : ''],
     ['label' => 'Recibidas este mes', 'valor' => number_format((int) $resumen['recibidas_mes']), 'icono' => 'check',
      'color' => 'emerald', 'nota' => 'Ya sumaron al destino', 'href' => '?estado=recibida'],
 ], 3);
@@ -277,7 +309,7 @@ echo kpis([
       <input type="search" name="q" data-buscar value="<?= e($q) ?>" placeholder="Número o sucursal..." aria-label="Buscar transferencia" autocomplete="off" class="input w-64">
       <select name="estado" aria-label="Estado" class="select cursor-pointer">
         <option value="">Todos los estados</option>
-        <?php foreach (['borrador' => 'Borrador', 'enviada' => 'Enviada', 'recibida' => 'Recibida', 'rechazada' => 'Rechazada', 'anulada' => 'Anulada'] as $k => $v): ?>
+        <?php foreach (['borrador' => 'Borrador', 'pendiente' => 'Por aprobar', 'enviada' => 'Enviada', 'recibida' => 'Recibida', 'rechazada' => 'Rechazada', 'anulada' => 'Anulada'] as $k => $v): ?>
           <option value="<?= $k ?>" <?= $estadoT === $k ? 'selected' : '' ?>><?= $v ?></option>
         <?php endforeach; ?>
       </select>
@@ -309,13 +341,23 @@ echo kpis([
                   $esDestino = can_access_sucursal($t['sucursal_destino_id']);
                   if ($t['estado'] === 'borrador' && $esOrigen): ?>
                     <?php if (can('transferencias.crear')): ?>
-                      <button type="button" onclick="<?= jsEvent('trf:edit', ['id' => (int) $t['id'], 'origen' => (int) $t['sucursal_origen_id'], 'destino' => (int) $t['sucursal_destino_id'], 'fecha' => $t['fecha'], 'lineas' => $lineasPorTrf[$t['id']] ?? []]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar borrador"><?= icon('edit', 'w-4 h-4') ?></button>
+                      <button type="button" onclick="<?= jsEvent('trf:edit', ['id' => (int) $t['id'], 'origen' => (int) $t['sucursal_origen_id'], 'destino' => (int) $t['sucursal_destino_id'], 'fecha' => $t['fecha'], 'notas' => (string) $t['notas'], 'lineas' => $lineasPorTrf[$t['id']] ?? []]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar borrador"><?= icon('edit', 'w-4 h-4') ?></button>
                     <?php endif; ?>
                     <?php if (can('transferencias.enviar')): ?>
                       <form method="post" class="inline" onsubmit="return confirm('¿Enviar la transferencia? Se descontará el stock del origen.')"><?= csrf_field() ?><input type="hidden" name="accion" value="enviar"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-blue-500 hover:text-blue-600 hover:bg-blue-50" title="Enviar"><?= icon('transfer', 'w-4 h-4') ?></button></form>
                     <?php endif; ?>
                     <?php if (can('transferencias.crear')): ?>
                       <form method="post" class="inline" onsubmit="return confirm('¿Eliminar este borrador?')"><?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar borrador"><?= icon('trash', 'w-4 h-4') ?></button></form>
+                    <?php endif; ?>
+                  <?php endif; ?>
+
+                  <?php // ---- Pendiente: la mercancía TODAVÍA no ha salido ----
+                  if ($t['estado'] === 'pendiente'): ?>
+                    <?php if (can('transferencias.aprobar')): ?>
+                      <form method="post" class="inline" onsubmit="return confirm('¿Aprobar la salida? El stock se descuenta del origen ahora.')"><?= csrf_field() ?><input type="hidden" name="accion" value="aprobar"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50" title="Aprobar la salida"><?= icon('check', 'w-4 h-4') ?></button></form>
+                      <button type="button" onclick="<?= jsEvent('trf:devolver', ['id' => (int) $t['id'], 'numero' => $t['numero']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50" title="Devolver a borrador"><?= icon('undo', 'w-4 h-4') ?></button>
+                    <?php else: ?>
+                      <span class="px-2 text-xs text-slate-400" title="Hace falta alguien con permiso de aprobación">esperando aprobación</span>
                     <?php endif; ?>
                   <?php endif; ?>
 
@@ -355,6 +397,12 @@ echo kpis([
           <div><label class="label">Fecha</label><input type="date" name="fecha" x-model="fecha" class="input"></div>
         </div>
         <p x-show="origen===destino" class="text-sm text-rose-600">El origen y el destino deben ser distintos.</p>
+        <div>
+          <label class="label">Motivo de la salida *</label>
+          <input name="notas" x-model="notas" required maxlength="255" class="input"
+                 placeholder="Ej. Reposición de vitrina, pedido de cliente, traslado por cierre de tienda...">
+          <p class="mt-1 text-xs text-slate-500">Queda en el kardex junto al movimiento, para que meses después se sepa por qué salió esa mercancía.</p>
+        </div>
         <div class="flex items-end gap-2">
           <div class="flex-1"><label class="label">Agregar producto</label><select x-model.number="nuevoProd" class="select"><option value="0">Selecciona...</option><?php foreach ($productosJs as $p): ?><option value="<?= $p['id'] ?>"><?= e($p['nombre']) ?></option><?php endforeach; ?></select></div>
           <button type="button" @click="addLinea()" class="btn btn-soft"><?= icon('plus', 'w-4 h-4') ?> Agregar</button>
@@ -367,7 +415,7 @@ echo kpis([
             </tbody>
           </table>
         </div>
-        <p class="text-xs text-slate-500">El <strong>borrador</strong> no descuenta stock: puedes editarlo y enviarlo cuando esté listo.</p>
+        <p class="text-xs text-slate-500">Ni el <strong>borrador</strong> ni la solicitud descuentan stock. La mercancía sale de la tienda cuando alguien con permiso <strong>aprueba</strong> la salida, y no antes.</p>
       </div>
       <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
         <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
@@ -379,10 +427,28 @@ echo kpis([
           <span class="flex gap-2">
             <button type="submit" name="modo" value="borrador" :disabled="lineas.length===0 || origen===destino" class="btn btn-ghost disabled:opacity-50"><?= icon('save', 'w-4 h-4') ?> Guardar borrador</button>
             <?php if (can('transferencias.enviar')): ?>
-              <button type="submit" name="modo" value="enviar" :disabled="lineas.length===0 || origen===destino" class="btn btn-primary disabled:opacity-50"><?= icon('transfer', 'w-4 h-4') ?> Enviar ahora</button>
+              <button type="submit" name="modo" value="enviar" :disabled="lineas.length===0 || origen===destino" class="btn btn-primary disabled:opacity-50"><?= icon('transfer', 'w-4 h-4') ?> Mandar a aprobación</button>
             <?php endif; ?>
           </span>
         </template>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal devolver a borrador (no se aprueba la salida) -->
+<div x-data="{ open:false, id:0, numero:'' }" @trf:devolver.window="id=$event.detail.id; numero=$event.detail.numero; open=true" @keydown.escape.window="open=false" x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-md" @click.stop>
+    <form method="post">
+      <?= csrf_field() ?><input type="hidden" name="accion" value="devolver"><input type="hidden" name="id" :value="id">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100"><h3 class="font-bold text-slate-800">No aprobar <span x-text="numero"></span></h3><button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button></div>
+      <div class="p-6 space-y-3">
+        <p class="text-sm text-slate-500">Vuelve a borrador y quien la solicitó verá el motivo. La mercancía no se ha movido.</p>
+        <div><label class="label">Por qué no se aprueba *</label><input name="motivo_rechazo" required maxlength="255" class="input" placeholder="Ej. Falta la autorización de la gerencia, cantidad equivocada..."></div>
+      </div>
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
+        <button class="btn btn-primary"><?= icon('undo', 'w-4 h-4') ?> Devolver a borrador</button>
       </div>
     </form>
   </div>
@@ -407,11 +473,11 @@ echo kpis([
 function trfForm() {
   const DEF_ORIGEN = <?= (int) ($sucursales[0]['id'] ?? 0) ?>, DEF_DESTINO = <?= (int) ($sucursales[1]['id'] ?? 0) ?>;
   return {
-    open: false, id: 0, nuevoProd: 0, lineas: [], origen: DEF_ORIGEN, destino: DEF_DESTINO, fecha: '<?= date('Y-m-d') ?>',
+    open: false, id: 0, nuevoProd: 0, lineas: [], origen: DEF_ORIGEN, destino: DEF_DESTINO, fecha: '<?= date('Y-m-d') ?>', notas: '',
     productos: <?= json_encode($productosJs, JSON_UNESCAPED_UNICODE) ?>,
-    reset() { this.id = 0; this.lineas = []; this.nuevoProd = 0; this.origen = DEF_ORIGEN; this.destino = DEF_DESTINO; this.fecha = '<?= date('Y-m-d') ?>'; },
+    reset() { this.id = 0; this.lineas = []; this.nuevoProd = 0; this.origen = DEF_ORIGEN; this.destino = DEF_DESTINO; this.fecha = '<?= date('Y-m-d') ?>'; this.notas = ''; },
     openEdit(d) {
-      this.id = d.id; this.origen = d.origen; this.destino = d.destino; this.fecha = d.fecha;
+      this.id = d.id; this.origen = d.origen; this.destino = d.destino; this.fecha = d.fecha; this.notas = d.notas || '';
       this.lineas = (d.lineas || []).map(l => ({ producto_id: l.producto_id, nombre: l.nombre, cantidad: l.cantidad }));
       this.nuevoProd = 0; this.open = true;
     },

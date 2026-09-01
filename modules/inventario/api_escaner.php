@@ -147,6 +147,12 @@ if ($accion === 'mover') {
     if (!$p) api_salir(404, ['ok' => false, 'error' => 'El producto ya no existe.']);
     if ($p['tipo'] !== 'producto') api_salir(422, ['ok' => false, 'error' => 'Un servicio no lleva existencias.']);
 
+    // Sacar mercancía exige explicar por qué; meterla no. Antes la salida caía a
+    // un texto genérico («Escáner de almacén · salida») y el kardex quedaba con
+    // una baja sin motivo, que es justo lo que la dirección no quiere ver.
+    if ($tipo === 'salida' && $motivo === '') {
+        api_salir(422, ['ok' => false, 'error' => 'Escribe el motivo de la salida: por qué sale esa mercancía.']);
+    }
     $delta = $tipo === 'salida' ? -$cantidad : $cantidad;
 
     try {

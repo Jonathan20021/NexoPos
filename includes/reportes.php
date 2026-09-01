@@ -65,7 +65,9 @@ function rep_catalogo(): array
                 ['libro_diario.php', 'Libro diario', 'Todos los asientos del periodo: ventas, compras, gastos, nómina y movimientos de caja.', 'list'],
                 ['balance.php', 'Balance general', 'Activo, pasivo y patrimonio a una fecha, derivado de los saldos del sistema.', 'layers'],
                 ['impuestos.php', 'ITBIS y retenciones', 'ITBIS cobrado vs. adelantado, retenciones y saldo a pagar del periodo.', 'percent'],
-                ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box'],
+                // Quinto elemento = permiso propio: revisar existencias no obliga a
+                // abrir el libro diario ni la nómina. Ver rep_catalogo_visible().
+                ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box', 'reportes.inventario'],
                 ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
                 // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
                 // contratada. Es la cifra para decidir si un local se sostiene.

@@ -39,7 +39,18 @@ function permission_catalog(): array
             'proveedores'    => ['label' => 'Proveedores', 'acciones' => $crud],
             'compras'        => ['label' => 'Compras', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'anular' => 'Anular']],
             'cxp'            => ['label' => 'Cuentas por Pagar', 'acciones' => ['ver' => 'Ver', 'pagar' => 'Registrar pagos']],
-            'transferencias' => ['label' => 'Transferencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear/editar borrador', 'enviar' => 'Enviar', 'recibir' => 'Recibir', 'rechazar' => 'Rechazar', 'anular' => 'Anular']],
+            // «Enviar» solicita; «aprobar» es lo que de verdad saca la mercancía de la
+            // tienda. Se separan a propósito: quien pide el traslado no debería ser
+            // quien lo autoriza.
+            'transferencias' => ['label' => 'Transferencias', 'acciones' => [
+                'ver'      => 'Ver',
+                'crear'    => 'Crear/editar borrador',
+                'enviar'   => 'Mandar a aprobación',
+                'aprobar'  => 'Aprobar la salida (aquí sale la mercancía)',
+                'recibir'  => 'Recibir',
+                'rechazar' => 'Rechazar',
+                'anular'   => 'Anular',
+            ]],
             // Aplicar se separa de crear a propósito: es la firma que entra la
             // mercancía al inventario y reescribe el costo de venta del catálogo.
             'liquidaciones'  => ['label' => 'Liquidación de importaciones', 'acciones' => [
@@ -122,6 +133,7 @@ function permission_catalog(): array
                 'contabilidad' => 'Reportes contables y fiscales',
                 'operacion'    => 'Reportes de operación y ventas',
                 'sucursales'   => 'Comparativo de sucursales (sin abrir el resto de dirección)',
+                'inventario'   => 'Inventario valorizado (sin abrir el resto de contabilidad)',
                 'sanidad'      => 'Reportes de cumplimiento sanitario',
             ]],
         ],

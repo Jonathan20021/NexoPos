@@ -214,15 +214,26 @@ function validarAperturaCaja(int $cajaId, int $usuarioId): array
 // ---------------------------------------------------------------------------
 
 /**
- * Envía una transferencia en borrador: valida stock y lo descuenta del origen.
- * Se comparte entre "crear y enviar directo" y "enviar un borrador guardado".
+ * Manda un borrador a aprobación. NO mueve stock.
+ *
+ * Antes esto descontaba el stock del origen de una vez. La dirección lo pidió
+ * al revés: la mercancía no sale de una tienda sin que alguien lo apruebe y sin
+ * que quede escrito por qué. Así que solicitar y despachar son dos actos, y el
+ * inventario no se toca hasta el segundo.
+ *
+ * El stock se comprueba igualmente aquí, para no dejar pasar a aprobación algo
+ * que se sabe que no se puede servir. La comprobación de verdad, la que manda,
+ * es la de `transferenciaEnviar()`: entre la solicitud y la aprobación puede
+ * haberse vendido lo que había.
+ *
  * Debe llamarse DENTRO de una transacción.
  */
-function transferenciaEnviar(int $id): void
+function transferenciaSolicitar(int $id): void
 {
     $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
-    if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede enviar una transferencia en borrador.');
-    if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede enviar esta transferencia.');
+    if (!$t || $t['estado'] !== 'borrador') throw new RuntimeException('Solo se puede mandar a aprobación un borrador.');
+    if (!can_access_sucursal($t['sucursal_origen_id'])) throw new RuntimeException('Solo la sucursal de origen puede solicitar esta transferencia.');
+    if (trim((string) $t['notas']) === '') throw new RuntimeException('Escribe el motivo de la transferencia antes de mandarla a aprobación.');
     $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]);
     if (!$det) throw new RuntimeException('El borrador no tiene productos.');
     foreach ($det as $d) {
@@ -231,10 +242,48 @@ function transferenciaEnviar(int $id): void
             throw new RuntimeException('Stock insuficiente en origen para «' . $nom . '».');
         }
     }
-    foreach ($det as $d) {
-        ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], -(float) $d['cantidad'], 'transferencia_salida', 'transferencia', $id, 0, 'Transferencia ' . $t['numero'] . ' (salida)');
+    dbUpdate('transferencias', ['estado' => 'pendiente'], 'id=?', [$id]);
+}
+
+/**
+ * Aprueba la salida: AQUÍ es donde la mercancía deja la tienda de origen.
+ *
+ * Quien aprueba no puede ser quien solicitó. Aprobar lo propio no es una
+ * aprobación, y ese era justamente el control que se pedía. Un super
+ * administrador tampoco se salta esto: si él la creó, que la apruebe otro.
+ *
+ * Debe llamarse DENTRO de una transacción.
+ */
+function transferenciaEnviar(int $id): void
+{
+    $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
+    if (!$t || $t['estado'] !== 'pendiente') throw new RuntimeException('Solo se puede aprobar una transferencia pendiente.');
+    $uid = (int) (current_user()['id'] ?? 0);
+    if ($uid > 0 && (int) $t['usuario_id'] === $uid) {
+        throw new RuntimeException('No puedes aprobar una transferencia que tú mismo solicitaste. Pídele a otra persona con permiso de aprobación que la revise.');
     }
-    dbUpdate('transferencias', ['estado' => 'enviada', 'enviada_por' => current_user()['id'] ?? null, 'enviada_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
+    $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]);
+    if (!$det) throw new RuntimeException('La transferencia no tiene productos.');
+    foreach ($det as $d) {
+        if (stockActual((int) $d['producto_id'], (int) $t['sucursal_origen_id']) < (float) $d['cantidad']) {
+            $nom = qVal("SELECT nombre FROM productos WHERE id=?", [$d['producto_id']]);
+            throw new RuntimeException('Stock insuficiente en origen para «' . $nom . '». Se vendió entre la solicitud y la aprobación.');
+        }
+    }
+    foreach ($det as $d) {
+        ajustarStock((int) $d['producto_id'], (int) $t['sucursal_origen_id'], -(float) $d['cantidad'], 'transferencia_salida', 'transferencia', $id, 0,
+            'Transferencia ' . $t['numero'] . ' (salida) · ' . $t['notas']);
+    }
+    dbUpdate('transferencias', ['estado' => 'enviada', 'enviada_por' => $uid ?: null, 'enviada_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
+}
+
+/** Devuelve una pendiente a borrador, con el motivo del rechazo. En transacción. */
+function transferenciaDevolverABorrador(int $id, string $motivo): void
+{
+    $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
+    if (!$t || $t['estado'] !== 'pendiente') throw new RuntimeException('Solo se puede devolver una transferencia pendiente.');
+    if (trim($motivo) === '') throw new RuntimeException('Indica por qué no se aprueba.');
+    dbUpdate('transferencias', ['estado' => 'borrador', 'motivo_rechazo' => mb_substr(trim($motivo), 0, 255)], 'id=?', [$id]);
 }
 
 /** Devuelve el stock al origen (compartido por rechazar y anular). En transacción. */

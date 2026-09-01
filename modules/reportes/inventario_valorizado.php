@@ -4,7 +4,9 @@
  * A costo (lo que vale en el balance) y a precio de venta (lo que puede generar).
  */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.contabilidad');
+// Quien revisa existencias no necesita el libro diario ni la nómina, que es lo
+// que arrastraba el paquete de contabilidad.
+require_any_perm(['reportes.contabilidad', 'reportes.inventario']);
 
 $p = rep_periodo('mes');
 [$scopeS, $scopeSP] = rep_scope('s.sucursal_id');

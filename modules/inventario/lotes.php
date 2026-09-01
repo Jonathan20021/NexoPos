@@ -65,7 +65,10 @@ if (isPost()) {
         if ($accion === 'baja') {
             require_perm('sanidad.baja');
             $cant = postNum('cantidad');
-            $motivo = trim(post('motivo')) ?: 'Baja sanitaria';
+            // «Baja sanitaria» a secas no explica nada: dar de baja mercancía es
+            // sacarla del inventario, y eso lleva motivo escrito.
+            $motivo = trim(post('motivo'));
+            if ($motivo === '') throw new RuntimeException('Escribe por qué se da de baja este lote.');
             if ($cant <= 0) throw new RuntimeException('La cantidad debe ser mayor que cero.');
             if ($cant > (float) $lote['cantidad'] + 0.0001) throw new RuntimeException('El lote solo tiene ' . qty($lote['cantidad']) . '.');
 
