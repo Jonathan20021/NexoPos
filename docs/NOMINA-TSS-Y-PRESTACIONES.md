@@ -95,6 +95,20 @@ La pantalla tiene cuatro pestañas: parámetros (con su historial de vigencias),
 declaración del mes (base cotizable y aportes de las dos partes, exportable),
 **pago del mes** (§3) y novedades.
 
+### Las tasas van validadas
+Los campos se teclean en **porcentaje** (7.09) y se guardan en tanto por uno
+(0.0709). Saltarse la coma —709— se guardaba tal cual: una tasa del 709%.
+Comprobado sobre el padrón real, la quincena siguiente le retiene a un sueldo de
+29,998 unos **43,047 de AFP y 45,596 de SFS sobre una base de 14,999**, y el neto
+de las 57 personas queda en **cero**, sin un aviso y sin nada raro en pantalla.
+
+`tssValidarParametros()` rechaza cualquier tasa fuera de [0, 25%] —ninguna de la
+Ley 87-01 pasa del 7.10%, y ese margen generoso atrapa igual el error de
+multiplicar por cien—, los topes fuera de [0, 100] salarios mínimos y un mínimo
+cotizable de siete cifras. Una tasa en **cero** sí se guarda —un régimen puede
+desaparecer por ley— pero avisa en voz alta: dejar de retenerle a la plantilla
+entera no puede pasar en silencio.
+
 ### Las novedades se anotan solas
 `tssNovedad()` existía desde la P22 y **nadie la llamaba**: la pestaña deducía
 ingresos y salidas del padrón y no veía jamás un cambio de salario, que es

@@ -186,6 +186,92 @@ function tssSimularTopes(?array $p = null): array
     ];
 }
 
+
+/**
+ * Comprueba que unas tasas y unos topes tengan sentido antes de guardarlos.
+ *
+ * ── Por qué hace falta ──
+ *
+ * Los campos del formulario se escriben en PORCENTAJE (7.09) y se guardan en
+ * tanto por uno (0.0709). Teclear 709 en vez de 7.09 \u2014una coma que se salta\u2014 se
+ * guardaba tal cual: la tasa quedaba en 7.09, o sea 709%. Comprobado sobre el
+ * padr\u00f3n real: a un sueldo de 29,998 la quincena siguiente le retiene 43,047 de
+ * AFP y 45,596 de SFS sobre una base de 14,999, y el neto de las 57 personas
+ * queda en CERO. Sin un aviso, sin nada raro en pantalla.
+ *
+ * Ninguna tasa de la Ley 87-01 pasa del 7.10%. El tope del 25% es generoso a
+ * prop\u00f3sito \u2014deja sitio a cualquier cambio legal razonable\u2014 y aun as\u00ed atrapa el
+ * error de multiplicar por cien, que es el \u00fanico que de verdad ocurre.
+ *
+ * Devuelve la lista de problemas; vac\u00eda significa que se puede guardar.
+ */
+function tssValidarParametros(array $d): array
+{
+    $errores = [];
+
+    $tasas = [
+        'sfs_empleado'      => 'SFS del empleado',
+        'sfs_empleador'     => 'SFS de la empresa',
+        'afp_empleado'      => 'AFP del empleado',
+        'afp_empleador'     => 'AFP de la empresa',
+        'srl_empleador'     => 'Riesgos laborales',
+        'infotep_empleador' => 'INFOTEP',
+    ];
+    foreach ($tasas as $k => $etiqueta) {
+        $v = (float) ($d[$k] ?? 0);
+        if ($v < 0) {
+            $errores[] = "$etiqueta no puede ser negativa.";
+        } elseif ($v > 0.25) {
+            $errores[] = "$etiqueta est\u00e1 en " . number_format($v * 100, 2) . '%. '
+                . 'Ninguna tasa de la Ley 87-01 pasa del 7.10%: revisa si te falta la coma decimal.';
+        }
+    }
+
+    foreach (['tope_sfs_sm' => 'SFS', 'tope_afp_sm' => 'AFP', 'tope_srl_sm' => 'riesgos laborales'] as $k => $etiqueta) {
+        $v = (float) ($d[$k] ?? 0);
+        if ($v < 0 || $v > 100) {
+            $errores[] = "El tope de $etiqueta est\u00e1 en $v salarios m\u00ednimos. Se espera un multiplicador "
+                . 'peque\u00f1o (hoy son 10, 20 y 4).';
+        }
+    }
+
+    $smc = (float) ($d['salario_minimo_cotizable'] ?? 0);
+    if ($smc < 0) {
+        $errores[] = 'El salario m\u00ednimo cotizable no puede ser negativo.';
+    } elseif ($smc > 1000000) {
+        $errores[] = 'El salario m\u00ednimo cotizable est\u00e1 en ' . number_format($smc, 2)
+            . '. Es el m\u00ednimo NACIONAL, no el sueldo de nadie: revisa la cifra.';
+    }
+
+    if (!empty($d['aplicar_topes']) && $smc <= 0) {
+        $errores[] = 'No se pueden encender los topes sin el salario m\u00ednimo cotizable: '
+            . 'sin esa cifra no hay tope que calcular.';
+    }
+
+    return $errores;
+}
+
+/**
+ * Tasas que se guardan en cero. No es un error \u2014un r\u00e9gimen puede desaparecer por
+ * ley\u2014 pero s\u00ed algo que hay que decir en voz alta antes de dejar de retenerle a
+ * la plantilla entera.
+ */
+function tssTasasEnCero(array $d): array
+{
+    $out = [];
+    foreach ([
+        'sfs_empleado'      => 'SFS del empleado',
+        'sfs_empleador'     => 'SFS de la empresa',
+        'afp_empleado'      => 'AFP del empleado',
+        'afp_empleador'     => 'AFP de la empresa',
+        'srl_empleador'     => 'Riesgos laborales',
+        'infotep_empleador' => 'INFOTEP',
+    ] as $k => $etiqueta) {
+        if ((float) ($d[$k] ?? 0) == 0.0) $out[] = $etiqueta;
+    }
+    return $out;
+}
+
 /* ============================================================
  *  NOVEDADES
  * ============================================================ */

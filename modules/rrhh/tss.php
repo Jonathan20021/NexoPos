@@ -67,10 +67,6 @@ if (isPost()) {
             redirect('modules/rrhh/tss.php');
         }
         $aplicar = post('aplicar_topes') ? 1 : 0;
-        if ($aplicar && $smc <= 0) {
-            flash('error', 'No se pueden encender los topes sin el salario mínimo cotizable: sin esa cifra no hay tope que calcular.');
-            redirect('modules/rrhh/tss.php');
-        }
 
         $datos = [
             'vigencia_desde' => $desde,
@@ -93,6 +89,15 @@ if (isPost()) {
             $datos['confirmado_at']  = date('Y-m-d H:i:s');
         }
 
+        // Las tasas se teclean en porcentaje y se guardan en tanto por uno: una
+        // coma que se salta convierte 7.09 en 709% y deja el neto de las 57
+        // personas en cero sin decir nada. Ver tssValidarParametros().
+        $problemas = tssValidarParametros($datos);
+        if ($problemas) {
+            foreach ($problemas as $pr) flash('error', $pr);
+            redirect('modules/rrhh/tss.php');
+        }
+
         try {
             $ya = qVal("SELECT id FROM tss_parametros WHERE vigencia_desde = ?", [$desde]);
             if ($ya) { dbUpdate('tss_parametros', $datos, 'id = ?', [(int) $ya]); $verbo = 'actualizada'; }
@@ -102,6 +107,13 @@ if (isPost()) {
                 ['tabla' => 'tss_parametros', 'registro_id' => (int) ($ya ?: 0)]);
             flash('success', 'Parámetros guardados. Vigencia ' . $verbo . ' desde ' . fechaCorta($desde) . '.'
                 . ($aplicar ? ' Los topes quedan ENCENDIDOS: la próxima nómina ya cotiza con ellos.' : ''));
+            // Cero es legal —un régimen puede desaparecer— pero dejar de retenerle
+            // a la plantilla entera no puede pasar en silencio.
+            $ceros = tssTasasEnCero($datos);
+            if ($ceros) {
+                flash('warning', 'Quedan en CERO: ' . implode(', ', $ceros)
+                    . '. A partir de esta vigencia no se retendrá ni se aportará nada por ese concepto.');
+            }
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
