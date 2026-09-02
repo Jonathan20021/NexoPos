@@ -124,6 +124,30 @@ nómina. Lo resuelve `rep_catalogo_visible()`.
 | **Horarios y tráfico** | A qué hora y qué día se vende, para ajustar turnos e inventario. | — |
 | **Movimiento entre tiendas** | Qué salió de dónde y a dónde, con su motivo y quién autorizó la salida. | `transferencias.ver` |
 
+### Qué mover y a dónde
+`modules/reportes/reposicion.php` — el paso siguiente a *Existencias por tienda*.
+Aquel dice dónde está la mercancía; este dice qué mover.
+
+Para cada artículo en cada tienda:
+
+    venta diaria = unidades vendidas en la ventana / días de la ventana
+    necesita     = MAX(stock mínimo, venta diaria × días de cobertura)
+    déficit      = necesita − existencia
+    excedente    = existencia − necesita
+
+Luego reparte lo que sobra en unas tiendas hacia lo que falta en otras,
+empezando por el excedente más grande —así salen menos traslados y más gordos—
+y agrupa el resultado **por ruta**, que es como se crean los traslados. Lo que no
+alcanza a cubrirse no se inventa: sale como «hay que comprar».
+
+Los **días de cobertura** son la única suposición y está arriba, editable. La
+venta diaria no lo es: es lo que de verdad se vendió, neto de devoluciones.
+
+Cuando no hay nada que proponer, la pantalla distingue dos casos que no son lo
+mismo: que todo esté surtido, o que **no haya con qué calcularlo** —ningún
+artículo con stock mínimo y ninguna venta en la ventana—. Decir lo primero
+cuando pasa lo segundo es mentir con cara tranquilizadora.
+
 ### Criterio contable (por qué los números cuadran entre reportes)
 - **Ingresos = `subtotal − descuento`**, sin ITBIS. El ITBIS se cobra por cuenta de la DGII:
   meterlo como ingreso infla la venta y falsea el margen.
