@@ -68,6 +68,7 @@ function rep_catalogo(): array
                 // Quinto elemento = permiso propio: revisar existencias no obliga a
                 // abrir el libro diario ni la nómina. Ver rep_catalogo_visible().
                 ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box', 'reportes.inventario'],
+                ['existencias_tiendas.php', 'Existencias por tienda', 'El mismo artículo en todos los locales, lado a lado, con lo que está bajo mínimo o en cero.', 'layers', 'reportes.inventario'],
                 ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
                 // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
                 // contratada. Es la cifra para decidir si un local se sostiene.
@@ -82,7 +83,9 @@ function rep_catalogo(): array
             'reportes' => [
                 ['expediente_auditoria.php', 'Expediente de auditoria', 'El documento consolidado para entregar en una inspeccion: semaforo de cumplimiento, registros, vencidos y proveedores.', 'file'],
                 ['registros_sanitarios.php', 'Registros sanitarios', 'Vigencia del registro de cada producto regulado: sin registro, vencidos y por vencer.', 'shield'],
-                ['vencimientos.php', 'Control de vencimientos', 'Mercancia vencida y proxima a vencer por lote y sucursal, con el dinero inmovilizado.', 'clock'],
+                // Permiso propio: vigilar caducidades es trabajo de inventario, no
+                // hace falta el expediente de auditoría sanitaria entero.
+                ['vencimientos.php', 'Control de vencimientos', 'Mercancia vencida y proxima a vencer por lote y sucursal, con el dinero inmovilizado.', 'clock', 'reportes.vencimientos'],
                 ['trazabilidad.php', 'Trazabilidad de lote', 'Retiro del mercado: de que proveedor entro un lote y a que clientes salio, con sus facturas.', 'search'],
                 ['proveedores_sanitario.php', 'Ficha sanitaria de proveedores', 'Licencia, vigencia y que productos regulados surte cada proveedor.', 'truck'],
             ],
@@ -96,6 +99,8 @@ function rep_catalogo(): array
                 ['productos.php', 'Desempeño de productos', 'Más vendidos, sin rotación, quiebres de stock y días de inventario.', 'package'],
                 ['vendedores.php', 'Desempeño del equipo', 'Venta, margen, ticket promedio, descuentos y cumplimiento de meta por vendedor.', 'users'],
                 ['horarios.php', 'Horarios y tráfico', 'A qué hora y qué día se vende, para ajustar turnos e inventario.', 'clock'],
+                // Lo abre quien mueve la mercancía, no solo quien analiza ventas.
+                ['transferencias.php', 'Movimiento entre tiendas', 'Qué salió de dónde y a dónde, con su motivo y quién autorizó la salida.', 'transfer', 'transferencias.ver'],
             ],
         ],
     ];

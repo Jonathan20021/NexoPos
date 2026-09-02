@@ -10,7 +10,9 @@
  * antes es lo que hay que mover o retirar hoy.
  */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.sanidad');
+// Vigilar caducidades es trabajo de inventario: no obliga a abrir el
+// expediente de auditoría sanitaria ni las fichas de los proveedores.
+require_any_perm(['reportes.sanidad', 'reportes.vencimientos']);
 
 if (!san_disponible()) {
     layout_start('Control de vencimientos', 'Módulo no instalado');
