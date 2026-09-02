@@ -35,6 +35,41 @@ if (isPost()) {
             flash('error', 'La fecha inicial no puede ser posterior a la fecha final.');
             redirect('modules/rrhh/nomina.php');
         }
+
+        // ---- Dos nóminas del MISMO período cuentan dos veces ----
+        //
+        // No hay nada que impida procesar la quincena del 1 al 15 dos veces. Y
+        // si las dos se confirman, todo lo que suma por período las suma a las
+        // dos: la declaración de la TSS, el aporte patronal, el costo del
+        // personal en el resultado. Es un error de dedo caro y silencioso.
+        //
+        // El período idéntico se bloquea. El que solo se SOLAPA se avisa, porque
+        // una corrida extra sobre parte del mes —una liquidación de horas, un
+        // pago aparte— sí puede ser lo que se quiere.
+        // `nominas.estado` es borrador/procesada/pagada: no existe «anulada».
+        // La única forma de liberar un período es eliminar la nómina, y eso solo
+        // se puede si no está pagada. El mensaje dice eso y no otra cosa.
+        $iguales = qAll(
+            "SELECT id, descripcion, estado FROM nominas
+              WHERE tipo <> 'regalia'
+                AND fecha_desde = ? AND fecha_hasta = ?
+                AND (sucursal_id <=> ?)",
+            [$desde, $hasta, $sucFiltro ?: null]
+        );
+        if ($iguales) {
+            $y = $iguales[0];
+            flash('error', 'Ya existe «' . $y['descripcion'] . '» (' . $y['estado'] . ') para ese mismo período. '
+                . 'Dos nóminas del mismo tramo se suman dos veces en la TSS y en el resultado: '
+                . 'trabaja sobre esa, o elimínala si sobra.');
+            redirect('modules/rrhh/nomina.php');
+        }
+        $solapan = qAll(
+            "SELECT descripcion, fecha_desde, fecha_hasta FROM nominas
+              WHERE tipo <> 'regalia'
+                AND fecha_desde <= ? AND fecha_hasta >= ?
+                AND (sucursal_id <=> ?)",
+            [$hasta, $desde, $sucFiltro ?: null]
+        );
         // Una nómina es de un PERÍODO, no de hoy. Quien entró después de que el
         // período terminara no puede cobrarlo, y quien se fue antes de que
         // empezara tampoco. Antes solo se miraba `estado`, así que una
@@ -110,6 +145,12 @@ if (isPost()) {
                 return $nid;
             });
             audit('rrhh_nomina', 'procesar', "Nómina procesada: $descripcion (" . count($emps) . " empleados)", ['tabla' => 'nominas', 'registro_id' => $nid]);
+            if ($solapan) {
+                $otras = array_map(fn($x) => $x['descripcion'] . ' (' . fechaCorta($x['fecha_desde'])
+                    . ' al ' . fechaCorta($x['fecha_hasta']) . ')', $solapan);
+                flash('warning', 'Ojo: el período se solapa con ' . implode(' · ', $otras)
+                    . '. Quien salga en las dos cotizará y costará doble. Si es a propósito, adelante.');
+            }
             flash('success', 'Nómina generada para ' . count($emps) . ' empleados. '
                 . 'Queda en BORRADOR: captura horas extra, comisiones, préstamos y días antes de confirmarla.');
             if ($fueraIngreso) {

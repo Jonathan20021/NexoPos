@@ -101,9 +101,43 @@ if (isPost()) {
             if ($accion === 'pagar') {
                 require_perm('prestaciones.pagar');
                 if ($l['estado'] !== 'firmada') throw new RuntimeException('Se paga después de firmada.');
-                dbUpdate('prestaciones', ['estado' => 'pagada', 'pagada_at' => date('Y-m-d H:i:s'),
-                    'cuenta_id' => postInt('cuenta_id') ?: null], 'id = ?', [$id]);
-                flash('success', 'Liquidación marcada como pagada.');
+                $cuentaId = postInt('cuenta_id') ?: null;
+                $monto    = (float) $l['total'];
+
+                // Una liquidación es dinero que sale, y hasta ahora se marcaba
+                // pagada sin dejar rastro en el libro de caja: un millón y medio
+                // de pesos que no aparecían en el resultado ni descontaban de
+                // ninguna cuenta. Es el mismo agujero que la nómina ya cerraba.
+                $aviso = txReintentable(function () use ($id, $l, $cuentaId, $monto) {
+                    dbUpdate('prestaciones', ['estado' => 'pagada', 'pagada_at' => date('Y-m-d H:i:s'),
+                        'cuenta_id' => $cuentaId], 'id = ?', [$id]);
+                    if ($monto <= 0) return '';
+
+                    $cuenta = $cuentaId
+                        ? qOne("SELECT * FROM cuentas_financieras WHERE id = ? AND activo = 1 FOR UPDATE", [$cuentaId])
+                        : null;
+                    if ($cuentaId && !$cuenta) throw new RuntimeException('La cuenta elegida no existe o está inactiva.');
+
+                    registrarTransaccion('gasto', $monto, [
+                        'sucursal_id'     => null,
+                        'cuenta_id'       => $cuenta ? (int) $cuenta['id'] : null,
+                        'categoria_id'    => categoriaFinancieraId('gasto', 'Prestaciones laborales'),
+                        'descripcion'     => 'Liquidación de prestaciones ' . $l['numero'],
+                        'referencia_tipo' => 'prestacion',
+                        'referencia_id'   => $id,
+                    ]);
+
+                    // Se avisa si la cuenta queda en rojo, no se bloquea: puede
+                    // faltar el saldo de apertura tanto como estar mal elegida.
+                    if ($cuenta && (float) $cuenta['balance'] - $monto < -0.01) {
+                        return 'La cuenta «' . $cuenta['nombre'] . '» queda en '
+                             . money((float) $cuenta['balance'] - $monto) . '. Revisa si es la cuenta correcta '
+                             . 'o si falta cargarle el saldo de apertura.';
+                    }
+                    return '';
+                });
+                flash('success', 'Liquidación marcada como pagada y registrada en finanzas.');
+                if ($aviso) flash('warning', $aviso);
             }
             if ($accion === 'anular') {
                 require_perm('prestaciones.anular');

@@ -24,6 +24,20 @@ liquidación de quien sale.
   una cuota mayor que lo devengado daba un neto negativo. Lo que no cupo se
   devuelve aparte para que la pantalla lo avise en vez de darlo por cobrado.
 
+### Una nómina por período
+Nada impedía procesar la quincena del 1 al 15 dos veces, y si las dos se
+confirmaban, **todo lo que suma por período las contaba a las dos**: la
+declaración de la TSS, el aporte patronal, el costo del personal en el
+resultado. Un error de dedo caro y silencioso.
+
+Ahora el período idéntico se bloquea nombrando la que ya existe. El que solo se
+**solapa** se avisa después de crearla —una corrida extra sobre parte del mes sí
+puede ser lo que se quiere— y dice quién cotizará doble.
+
+Para liberar un período hay que **eliminar** la nómina: `nominas.estado` es
+borrador/procesada/pagada y no existe «anulada», así que mandar a anularla sería
+mandar a hacer algo imposible.
+
 ### El Excel del contador
 `nominaExportarExcel()` reproduce las 23 columnas de la hoja que el contador ya
 conoce, agrupadas por sucursal y con su fila de totales. Cédulas y cuentas van
@@ -316,6 +330,12 @@ pagan siempre.
 
 El saldo del préstamo viene precargado en las deducciones: la autorización de
 descuento que el trabajador firmó permite compensarlo con la liquidación.
+
+Al marcarla **pagada** se registra el gasto en el libro de caja con su propia
+categoría, *Prestaciones laborales*, y se descuenta de la cuenta elegida. Sin
+eso, marcarla pagada cambiaba el estado y nada más: un millón y medio de pesos
+que no aparecían en el resultado ni salían de ninguna cuenta. Mezclarla con
+«Nómina» tampoco vale — escondería lo que cuestan las salidas del año.
 
 **El documento no lleva ninguna frase de renuncia a derechos**, a propósito. El
 recibo hace constar un pago; lo que se renuncie o no es materia de un acuerdo que

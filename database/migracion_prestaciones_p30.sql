@@ -77,3 +77,8 @@ SELECT rp.rol_id, p.id
   JOIN permisos pv ON pv.id = rp.permiso_id AND pv.clave = 'rrhh_nomina.pagar'
   CROSS JOIN permisos p
  WHERE p.clave IN ('prestaciones.pagar', 'prestaciones.anular');
+
+-- La liquidación es dinero que sale y tiene que entrar al resultado con nombre
+-- propio: mezclarla con «Nómina» esconde lo que cuestan las salidas del año.
+INSERT IGNORE INTO categorias_financieras (tipo, nombre) VALUES
+ ('gasto', 'Prestaciones laborales');
