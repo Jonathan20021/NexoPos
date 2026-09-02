@@ -12,6 +12,10 @@ if (!$ids) $ids = [0];
 $ph = implode(',', array_fill(0, count($ids), '?'));
 
 /* ---------- Ventas y utilidad ---------- */
+// Criterio compartido: entra «completada» y también «devuelta», y lo devuelto se
+// resta abajo. Antes se dejaba fuera la devuelta Y ADEMÁS se restaba la
+// devolución, así que la factura con una unidad devuelta de cinco se castigaba
+// dos veces y el local salía peor de lo que fue.
 $ventas = qAll(
     "SELECT v.sucursal_id, COUNT(*) facturas,
             COALESCE(SUM(v.subtotal - v.descuento),0) ingresos,
@@ -20,15 +24,21 @@ $ventas = qAll(
             COALESCE(SUM(v.itbis),0) itbis,
             COUNT(DISTINCT v.cliente_id) clientes
        FROM ventas v
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND v.sucursal_id IN ($ph)
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND v.sucursal_id IN ($ph)
       GROUP BY v.sucursal_id",
     array_merge([$p['ini'], $p['fin']], $ids)
 );
 $prev = qAll(
     "SELECT v.sucursal_id, COALESCE(SUM(v.subtotal - v.descuento),0) ingresos
        FROM ventas v
-      WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND v.sucursal_id IN ($ph)
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND v.sucursal_id IN ($ph)
       GROUP BY v.sucursal_id",
+    array_merge([$p['prev_ini'], $p['prev_fin']], $ids)
+);
+// El periodo anterior se compara con la misma vara: también neto de devoluciones.
+$prevDev = qAll(
+    "SELECT d.sucursal_id, COALESCE(SUM(d.subtotal),0) t FROM devoluciones d
+      WHERE d.created_at BETWEEN ? AND ? AND d.sucursal_id IN ($ph) GROUP BY d.sucursal_id",
     array_merge([$p['prev_ini'], $p['prev_fin']], $ids)
 );
 $gastos = qAll(
@@ -38,7 +48,15 @@ $gastos = qAll(
     array_merge([$p['desde'], $p['hasta']], $ids)
 );
 $devol = qAll(
-    "SELECT d.sucursal_id, COALESCE(SUM(d.subtotal),0) t, COUNT(*) n FROM devoluciones d
+    // El costo de lo devuelto también sale: la mercancía volvió al almacén y deja
+    // de ser costo de venta. Sin esto, el margen del local salía hundido.
+    "SELECT d.sucursal_id, COALESCE(SUM(d.subtotal),0) t, COUNT(*) n,
+            COALESCE(SUM(dd.costo),0) c
+       FROM devoluciones d
+       LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                    FROM devolucion_detalles x
+                    LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                   GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
       WHERE d.created_at BETWEEN ? AND ? AND d.sucursal_id IN ($ph) GROUP BY d.sucursal_id",
     array_merge([$p['ini'], $p['fin']], $ids)
 );
@@ -62,6 +80,8 @@ $mPrev  = $idx($prev, 'sucursal_id', 'ingresos');
 $mGasto = $idx($gastos, 'sucursal_id', 'g');
 $mDevT  = $idx($devol, 'sucursal_id', 't');
 $mDevN  = $idx($devol, 'sucursal_id', 'n');
+$mDevC  = $idx($devol, 'sucursal_id', 'c');
+$mPrevD = $idx($prevDev, 'sucursal_id', 't');
 $mInv   = $idx($inventario, 'sucursal_id', 'v');
 $mEmp   = $idx($empleados, 'sucursal_id', 'n');
 $mVenta = [];
@@ -72,7 +92,7 @@ foreach ($visibles as $s) {
     $sid = (int) $s['id'];
     $v   = $mVenta[$sid] ?? ['facturas' => 0, 'ingresos' => 0, 'costo' => 0, 'descuentos' => 0, 'itbis' => 0, 'clientes' => 0];
     $ing = (float) $v['ingresos'] - (float) ($mDevT[$sid] ?? 0);
-    $cos = (float) $v['costo'];
+    $cos = (float) $v['costo'] - (float) ($mDevC[$sid] ?? 0);
     $gas = (float) ($mGasto[$sid] ?? 0);
     $emp = (int) ($mEmp[$sid] ?? 0);
     $datos[] = [
@@ -85,7 +105,7 @@ foreach ($visibles as $s) {
         'devoluciones' => (float) ($mDevT[$sid] ?? 0), 'devol_n' => (int) ($mDevN[$sid] ?? 0),
         'inventario' => (float) ($mInv[$sid] ?? 0), 'empleados' => $emp,
         'por_empleado' => $emp > 0 ? $ing / $emp : 0,
-        'delta' => rep_delta($ing, (float) ($mPrev[$sid] ?? 0)),
+        'delta' => rep_delta($ing, (float) ($mPrev[$sid] ?? 0) - (float) ($mPrevD[$sid] ?? 0)),
         'rotacion' => (float) ($mInv[$sid] ?? 0) > 0 ? $cos / (float) $mInv[$sid] : 0,
     ];
 }

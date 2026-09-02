@@ -28,9 +28,20 @@ $valorVenta = (float) $tot['venta'];
 $utilPot    = $valorVenta - $valorCosto;
 
 // Costo de la mercancía vendida del periodo → rotación y días de inventario.
+// Criterio compartido: entra la venta «devuelta» y luego se descuenta el costo
+// de lo que volvió, porque esa mercancía regresó al almacén y ya está contada
+// otra vez en la existencia; si no se resta, la rotación sale inflada.
 $cmv = (float) qVal(
     "SELECT COALESCE(SUM(v.costo_total),0) FROM ventas v
-      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scopeV",
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scopeV",
+    array_merge([$p['ini'], $p['fin']], $scopeVP)
+) - (float) qVal(
+    "SELECT COALESCE(SUM(dd.cantidad * vd.costo_unitario),0)
+       FROM devolucion_detalles dd
+       JOIN devoluciones d ON d.id = dd.devolucion_id
+       JOIN ventas v ON v.id = d.venta_id
+       LEFT JOIN venta_detalles vd ON vd.id = dd.venta_detalle_id
+      WHERE d.created_at BETWEEN ? AND ? AND $scopeV",
     array_merge([$p['ini'], $p['fin']], $scopeVP)
 );
 $rotacion = $valorCosto > 0 ? $cmv / $valorCosto : 0;

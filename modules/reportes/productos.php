@@ -9,8 +9,18 @@ $p = rep_periodo('mes');
 $pv = array_merge([$p['ini'], $p['fin']], $scopeP);
 
 /* ---------- Vendidos en el periodo ---------- */
+// Criterio compartido (includes/reportes.php): entra la venta «completada» y
+// también la «devuelta», y luego se resta lo que volvió. Dejar fuera la devuelta
+// borraba la factura entera del informe aunque solo hubiese vuelto una unidad de
+// cinco, y este informe quedaba por debajo de Dirección y del panel de entrada.
 $vendidos = qAll(
-    "SELECT COALESCE(p.id,0) AS id, COALESCE(p.nombre, vd.descripcion) AS producto, p.codigo,
+    "SELECT COALESCE(p.id, vd.descripcion) AS clave, COALESCE(p.id,0) AS id,
+            -- La descripción se AGREGA, no se agrupa: es texto libre por línea y
+            -- un mismo producto llega con redacciones distintas. Agrupando por
+            -- ella, «Servicios y conceptos» salía cuatro veces en el listado y,
+            -- peor, cada una de esas cuatro filas se restaba la devolución
+            -- entera del producto.
+            COALESCE(p.nombre, MAX(vd.descripcion)) AS producto, p.codigo,
             COALESCE(c.nombre,'Sin categoría') AS categoria, COALESCE(c.color,'slate') AS color,
             SUM(vd.cantidad) AS unidades,
             SUM(vd.subtotal - vd.descuento) AS ingresos,
@@ -21,13 +31,25 @@ $vendidos = qAll(
        JOIN ventas v ON v.id = vd.venta_id
        LEFT JOIN productos p  ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
-      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
       -- Todas las columnas no agregadas van en el GROUP BY: MySQL 8 (producción)
       -- tiene ONLY_FULL_GROUP_BY y rechaza lo contrario con el error 1055.
-      GROUP BY COALESCE(p.id, vd.descripcion), p.id, p.nombre, p.codigo, vd.descripcion, c.nombre, c.color
-      ORDER BY unidades DESC",
+      GROUP BY COALESCE(p.id, vd.descripcion), p.id, p.nombre, p.codigo, c.nombre, c.color",
     $pv
 );
+
+// Lo devuelto se resta línea por línea: unidades, ingreso y costo. El costo baja
+// también porque la mercancía volvió al almacén y deja de ser costo de venta.
+$devLinea = rep_devoluciones_por_linea($p['ini'], $p['fin'], $scope, $scopeP);
+foreach ($vendidos as $i => $v) {
+    $d = $devLinea[(string) $v['clave']] ?? ['unidades' => 0.0, 'base' => 0.0, 'costo' => 0.0];
+    $vendidos[$i]['unidades'] = (float) $v['unidades'] - $d['unidades'];
+    $vendidos[$i]['ingresos'] = (float) $v['ingresos'] - $d['base'];
+    $vendidos[$i]['costo']    = (float) $v['costo']    - $d['costo'];
+}
+// Se ordena DESPUÉS de restar: por la cifra bruta subía a lo alto un producto
+// que se vendió mucho y volvió entero.
+usort($vendidos, fn($a, $b) => $b['unidades'] <=> $a['unidades']);
 $totUnidades = array_sum(array_column($vendidos, 'unidades'));
 $totIngresos = array_sum(array_column($vendidos, 'ingresos'));
 $totCosto    = array_sum(array_column($vendidos, 'costo'));
@@ -45,12 +67,12 @@ $sinVenta = qAll(
             COALESCE((SELECT SUM(s.cantidad) FROM inventario_stock s WHERE s.producto_id = p.id AND $scopeS),0) AS existencia,
             p.precio_compra,
             (SELECT MAX(v2.fecha) FROM venta_detalles vd2 JOIN ventas v2 ON v2.id = vd2.venta_id
-              WHERE vd2.producto_id = p.id AND v2.estado='completada') AS ultima_venta
+              WHERE vd2.producto_id = p.id AND " . rep_estados_venta('v2') . ") AS ultima_venta
        FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
       WHERE p.activo = 1 AND p.tipo = 'producto'
         AND p.id NOT IN (
             SELECT DISTINCT vd.producto_id FROM venta_detalles vd JOIN ventas v ON v.id = vd.venta_id
-             WHERE vd.producto_id IS NOT NULL AND v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope)
+             WHERE vd.producto_id IS NOT NULL AND " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope)
       ORDER BY existencia * p.precio_compra DESC LIMIT 25",
     array_merge($scopeSP, [$p['ini'], $p['fin']], $scopeP)
 );
@@ -63,16 +85,33 @@ $porCategoria = qAll(
        FROM venta_detalles vd JOIN ventas v ON v.id = vd.venta_id
        LEFT JOIN productos p  ON p.id = vd.producto_id
        LEFT JOIN categorias c ON c.id = p.categoria_id
-      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
-      GROUP BY c.id ORDER BY ingresos DESC",
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
+      GROUP BY c.id, c.nombre, c.color",
     $pv
 );
+// La rosca tiene que sumar lo mismo que el KPI de ingresos, así que aquí también
+// se resta lo devuelto: se agrupa por producto y se vuelca sobre su categoría.
+$catDe = [];
+foreach (qAll("SELECT p.id, COALESCE(c.nombre,'Sin categoría') cat FROM productos p
+                 LEFT JOIN categorias c ON c.id = p.categoria_id") as $r) {
+    $catDe[(string) $r['id']] = $r['cat'];
+}
+$devCat = [];
+foreach ($devLinea as $clave => $d) {
+    $cat = $catDe[(string) $clave] ?? 'Sin categoría';
+    $devCat[$cat] = ($devCat[$cat] ?? 0.0) + $d['base'];
+}
+foreach ($porCategoria as $i => $c) {
+    $porCategoria[$i]['ingresos'] = (float) $c['ingresos'] - ($devCat[(string) $c['categoria']] ?? 0.0);
+}
+usort($porCategoria, fn($a, $b) => $b['ingresos'] <=> $a['ingresos']);
 
 /* ---------- Quiebres de stock ---------- */
 $quiebres = qAll(
     "SELECT p.nombre, p.codigo, p.stock_minimo, su.nombre AS sucursal, s.cantidad,
+            p.id AS pid,
             COALESCE((SELECT SUM(vd.cantidad) FROM venta_detalles vd JOIN ventas v2 ON v2.id = vd.venta_id
-                       WHERE vd.producto_id = p.id AND v2.estado='completada' AND v2.fecha BETWEEN ? AND ?),0) AS vendidas
+                       WHERE vd.producto_id = p.id AND " . rep_estados_venta('v2') . " AND v2.fecha BETWEEN ? AND ?),0) AS vendidas
        FROM inventario_stock s
        JOIN productos p   ON p.id = s.producto_id AND p.activo = 1 AND p.tipo = 'producto'
        JOIN sucursales su ON su.id = s.sucursal_id
@@ -80,6 +119,11 @@ $quiebres = qAll(
       ORDER BY s.cantidad ASC, vendidas DESC LIMIT 30",
     array_merge([$p['ini'], $p['fin']], $scopeSP)
 );
+// «Vendidas» también neto: si volvió, no se vendió.
+foreach ($quiebres as $i => $qb) {
+    $quiebres[$i]['vendidas'] = max(0, (float) $qb['vendidas']
+        - ($devLinea[(string) $qb['pid']]['unidades'] ?? 0.0));
+}
 
 if (export_solicitado()) {
     $filas = [];

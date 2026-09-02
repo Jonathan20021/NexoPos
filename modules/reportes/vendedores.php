@@ -21,7 +21,7 @@ $vendedores = qAll(
        JOIN usuarios u   ON u.id = v.usuario_id
        LEFT JOIN roles r ON r.id = u.rol_id
        LEFT JOIN sucursales su ON su.id = u.sucursal_id
-      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
       GROUP BY v.usuario_id ORDER BY ingresos DESC",
     $pv
 );
@@ -29,18 +29,46 @@ $vendedores = qAll(
 $prev = [];
 foreach (qAll(
     "SELECT v.usuario_id, COALESCE(SUM(v.subtotal - v.descuento),0) ingresos
-       FROM ventas v WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY v.usuario_id",
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY v.usuario_id",
     array_merge([$p['prev_ini'], $p['prev_fin']], $scopeP)
 ) as $r) $prev[(int) $r['usuario_id']] = (float) $r['ingresos'];
+// El periodo anterior se mide con la misma vara: también neto de devoluciones.
+foreach (qAll(
+    "SELECT v.usuario_id, COALESCE(SUM(d.subtotal),0) t
+       FROM devoluciones d JOIN ventas v ON v.id = d.venta_id
+      WHERE d.created_at BETWEEN ? AND ? AND $scope GROUP BY v.usuario_id",
+    array_merge([$p['prev_ini'], $p['prev_fin']], $scopeP)
+) as $r) $prev[(int) $r['usuario_id']] = ($prev[(int) $r['usuario_id']] ?? 0.0) - (float) $r['t'];
 
-// Devoluciones atribuidas al vendedor de la venta original.
+// Devoluciones atribuidas al vendedor de la venta original. Se guarda además el
+// costo de lo devuelto: la mercancía volvió al almacén y deja de ser costo de
+// venta, así que el margen del vendedor no puede cargar con él.
 $devol = [];
 foreach (qAll(
-    "SELECT v.usuario_id, COALESCE(SUM(d.subtotal),0) t, COUNT(*) n
-       FROM devoluciones d JOIN ventas v ON v.id = d.venta_id
+    "SELECT v.usuario_id, COALESCE(SUM(d.subtotal),0) t, COUNT(*) n,
+            COALESCE(SUM(dd.costo),0) c
+       FROM devoluciones d
+       JOIN ventas v ON v.id = d.venta_id
+       LEFT JOIN (SELECT x.devolucion_id, SUM(x.cantidad * vd.costo_unitario) costo
+                    FROM devolucion_detalles x
+                    LEFT JOIN venta_detalles vd ON vd.id = x.venta_detalle_id
+                   GROUP BY x.devolucion_id) dd ON dd.devolucion_id = d.id
       WHERE d.created_at BETWEEN ? AND ? AND $scope GROUP BY v.usuario_id",
     $pv
 ) as $r) $devol[(int) $r['usuario_id']] = $r;
+
+// Criterio compartido: la venta «devuelta» cuenta y luego se le resta lo que
+// volvió. Antes se caía la factura entera del informe aunque solo hubiese vuelto
+// una unidad de cinco, y lo devuelto NO se descontaba del ingreso: la columna de
+// devoluciones estaba ahí para mirarla, pero el ingreso, el margen, el ticket y
+// el avance de la meta seguían contando la venta completa.
+foreach ($vendedores as $i => $v) {
+    $d = $devol[(int) $v['id']] ?? null;
+    if (!$d) continue;
+    $vendedores[$i]['ingresos'] = (float) $v['ingresos'] - (float) $d['t'];
+    $vendedores[$i]['costo']    = (float) $v['costo']    - (float) $d['c'];
+}
+usort($vendedores, fn($a, $b) => (float) $b['ingresos'] <=> (float) $a['ingresos']);
 
 // Metas activas por vendedor.
 $metas = [];
@@ -70,7 +98,7 @@ $totCosto    = array_sum(array_column($vendedores, 'costo'));
 $porCanal = qAll(
     "SELECT v.usuario_id, COALESCE(NULLIF(v.canal_venta,''),'Sin especificar') canal,
             COALESCE(SUM(v.subtotal - v.descuento),0) ingresos
-       FROM ventas v WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope
       GROUP BY v.usuario_id, canal",
     $pv
 );

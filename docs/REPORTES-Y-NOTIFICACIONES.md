@@ -133,8 +133,31 @@ nómina. Lo resuelve `rep_catalogo_visible()`.
   Se filtran siempre con `rep_where_gastos()`.
 - **Otros ingresos** excluyen las ventas y los cobros de abonos (cobrar algo ya facturado
   no es ingreso nuevo).
+- **Qué venta cuenta**: `rep_estados_venta()` → `estado IN ('completada','devuelta')`, y
+  después se resta lo devuelto con `rep_devoluciones*()`. Dejar fuera la `devuelta` borra la
+  factura ENTERA aunque solo hubiese vuelto una unidad de cinco; contarla sin restar la
+  devolución cuenta mercancía que ya está otra vez en el almacén. Hay que hacer las dos cosas.
+- **El costo también se resta**: lo devuelto vuelve al inventario y deja de ser costo de
+  venta. Si solo se resta el ingreso, el margen sale hundido.
 
 Saltarse esto es lo que hace que dos reportes del mismo sistema den cifras distintas.
+
+#### Quién aplica el criterio
+Lo siguen el Panel de entrada, el Panel ejecutivo, el Comparativo de periodos, el Estado de
+resultados, Desempeño de productos, Desempeño del equipo, Comparativo de sucursales e
+Inventario valorizado (para la rotación).
+
+Dos excepciones a propósito:
+- **Horarios y tráfico** cuenta la venta «devuelta» pero NO resta la devolución: mide a qué
+  hora entró gente y compró, y esa compra ocurrió a esa hora aunque parte volviera después.
+  El propio informe lo dice en pantalla.
+- **Libro de ventas** lista cada factura con su estado, así que no agrega nada que netear.
+
+Siguen pendientes de alinear —y por eso pueden discrepar— Rentabilidad, Clientes y
+concentración, Libro diario, Balance general, ITBIS y retenciones, Análisis de gastos y las
+tres pantallas del Área de Dirección. En las contables (libro diario, balance, ITBIS) el
+tratamiento de la devolución es una decisión contable, no un descuido: la venta original
+emitió su NCF y la devolución emite su nota de crédito, y ambas tienen que aparecer.
 
 ### Exportación
 Los 20 reportes se descargan en **Excel (.xlsx)** y en **PDF con el logo de la empresa**

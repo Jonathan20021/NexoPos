@@ -11,10 +11,14 @@ $p = rep_periodo('mes');
 $pv = array_merge([$p['ini'], $p['fin']], $scopeP);
 
 /* ---------- Por hora ---------- */
+// Aquí SÍ entra la venta «devuelta» pero NO se resta la devolución, al revés que
+// en los informes de dinero. Este informe mide tráfico: a qué hora entró gente y
+// compró. Esa compra ocurrió a esa hora aunque parte volviera tres días después,
+// y la devolución pertenece a la hora en que se hizo, no a la de la venta.
 $porHora = array_fill(0, 24, ['n' => 0, 'ingresos' => 0.0]);
 foreach (qAll(
     "SELECT HOUR(v.fecha) h, COUNT(*) n, COALESCE(SUM(v.subtotal - v.descuento),0) ingresos
-       FROM ventas v WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY h",
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY h",
     $pv
 ) as $r) $porHora[(int) $r['h']] = ['n' => (int) $r['n'], 'ingresos' => (float) $r['ingresos']];
 
@@ -24,7 +28,7 @@ $porDia = array_fill(0, 7, ['n' => 0, 'ingresos' => 0.0, 'fechas' => 0]);
 foreach (qAll(
     "SELECT DAYOFWEEK(v.fecha) d, COUNT(*) n, COALESCE(SUM(v.subtotal - v.descuento),0) ingresos,
             COUNT(DISTINCT DATE(v.fecha)) fechas
-       FROM ventas v WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY d",
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY d",
     $pv
 ) as $r) {
     $porDia[(int) $r['d'] - 1] = ['n' => (int) $r['n'], 'ingresos' => (float) $r['ingresos'], 'fechas' => (int) $r['fechas']];
@@ -38,7 +42,7 @@ $franjas = [
 $mapa = [];
 foreach (qAll(
     "SELECT DAYOFWEEK(v.fecha) d, HOUR(v.fecha) h, COALESCE(SUM(v.subtotal - v.descuento),0) ingresos, COUNT(*) n
-       FROM ventas v WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY d, h",
+       FROM ventas v WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope GROUP BY d, h",
     $pv
 ) as $r) {
     $d = (int) $r['d'] - 1;
@@ -99,6 +103,16 @@ echo rep_abrir('Horarios y tráfico', $p, ['sucursal' => true]);
      'icono' => 'trending', 'color' => 'amber',
      'nota' => array_sum(array_column($porDia, 'fechas')) . ' día(s) con ventas'],
 ]) ?>
+
+<div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
+  <?= icon('clock', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
+  <p class="text-sm text-slate-600">
+    Las cifras de este informe son <strong>lo facturado en el momento de la venta</strong>, sin
+    restar devoluciones: aquí se mide a qué hora entra la gente y compra, y esa compra ocurrió a
+    esa hora aunque parte volviera días después. Para el ingreso neto del periodo están el
+    <em>Estado de resultados</em> y el <em>Desempeño de productos</em>.
+  </p>
+</div>
 
 <!-- Curva horaria -->
 <?= rep_seccion('Ventas por hora del día', 'Dónde se concentra el tráfico', 'clock', 'blue') ?>
