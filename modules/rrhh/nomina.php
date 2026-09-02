@@ -94,6 +94,8 @@ if (isPost()) {
                          'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $c['salarioPeriodo'],
+                        // Congelado: la ficha cambia, el documento no.
+                        'salario_mensual' => (float) $e['salario'],
                         'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
@@ -210,6 +212,7 @@ if (isPost()) {
                                                       'otras_deducciones' => $cuota], $factor);
             dbInsert('nomina_detalles', [
                 'nomina_id' => $nid, 'empleado_id' => (int) $e['id'], 'salario_base' => $c['salarioPeriodo'],
+                'salario_mensual' => (float) $e['salario'],
                 'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
                 'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                 'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
@@ -311,6 +314,9 @@ if (isPost()) {
                     }
                     dbUpdate('nomina_detalles', $vals + [
                         'salario_base'      => $c['salarioPeriodo'],
+                        // Al actualizar contra el padrón el sueldo SÍ se
+                        // refresca: es justo lo que hace esta acción.
+                        'salario_mensual'   => (float) $emp['salario'],
                         'total_ingresos'    => $c['totalIngresos'],
                         'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'],
                         'total_deducciones' => $c['totalDeducciones'],
@@ -328,6 +334,7 @@ if (isPost()) {
                          'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => (int) $emp['id'], 'salario_base' => $c['salarioPeriodo'],
+                        'salario_mensual' => (float) $emp['salario'],
                         'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
@@ -402,6 +409,7 @@ if (isPost()) {
 
                     dbUpdate('nomina_detalles', $vals + [
                         'salario_base'      => $c['salarioPeriodo'],
+                        'salario_mensual'   => (float) $d['salario'],
                         'total_ingresos'    => $c['totalIngresos'],
                         'afp' => $c['afp'], 'sfs' => $c['sfs'], 'isr' => $c['isr'],
                         'total_deducciones' => $c['totalDeducciones'],

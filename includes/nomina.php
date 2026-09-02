@@ -331,7 +331,12 @@ function nominaColumnasExcel(): array
 function nominaLineasAgrupadas(int $nominaId): array
 {
     return qAll(
-        "SELECT nd.*, e.nombre, e.apellido, e.cedula, e.salario AS _sueldo_mensual,
+        // El sueldo mensual sale de la LÍNEA, no del padrón: una nómina cerrada
+        // es un documento cerrado, y con `e.salario` bastaba un aumento para que
+        // reexportar una quincena vieja diera la columna D con el sueldo nuevo y
+        // la E con el viejo. El COALESCE cubre las filas anteriores a la P32.
+        "SELECT nd.*, e.nombre, e.apellido, e.cedula,
+                COALESCE(NULLIF(nd.salario_mensual, 0), e.salario) AS _sueldo_mensual,
                 e.cuenta_bancaria, e.banco, e.metodo_pago,
                 /* La CEO lo dijo en una frase: «no hay oficina, la distribución
                    administrativa es por departamento». Una tienda SÍ es un grupo

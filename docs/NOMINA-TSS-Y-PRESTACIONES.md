@@ -24,6 +24,23 @@ liquidación de quien sale.
   una cuota mayor que lo devengado daba un neto negativo. Lo que no cupo se
   devuelve aparte para que la pantalla lo avise en vez de darlo por cobrado.
 
+### El Excel del contador
+`nominaExportarExcel()` reproduce las 23 columnas de la hoja que el contador ya
+conoce, agrupadas por sucursal y con su fila de totales. Cédulas y cuentas van
+como **texto**: de ir como número pierden el cero inicial, que es justo lo que le
+pasó al Excel del cliente en dos cuentas.
+
+Las columnas D («Sueldo Mensual») y E («Sueldo Quincenal») salen las dos de la
+línea de nómina, que es histórica. Antes la D salía de `empleados.salario` —el
+sueldo de HOY— así que bastaba un aumento para que reexportar una quincena ya
+cerrada diera D con el sueldo nuevo y E con el viejo: 170,000 contra 75,000, sin
+relación entre sí. Un documento cerrado que se reexporta distinto no vale como
+respaldo, así que desde la P32 el sueldo mensual se **congela** en
+`nomina_detalles.salario_mensual` al generar.
+
+El archivo cuadra por dentro con la fórmula corregida
+`U = N + G − S − T`, distinta de la del Excel del cliente (ver abajo).
+
 ### El archivo del banco
 `nominaExportarBanco()` —botón «Archivo banco» de la nómina— arma el CSV de
 transferencias. Entra quien cobra **por transferencia** y tiene cuenta; el resto
@@ -307,3 +324,4 @@ redacta un abogado, no una plantilla del sistema.
 - `migracion_prestaciones_p30.sql` — tabla `prestaciones` y sus permisos.
 - `migracion_tss_p22.sql` — parámetros y novedades de la TSS.
 - `migracion_tss_pagos_p31.sql` — tabla `tss_pagos`, categorías de gasto y `tss.pagar`.
+- `migracion_salario_nomina_p32.sql` — `nomina_detalles.salario_mensual` congelado.
