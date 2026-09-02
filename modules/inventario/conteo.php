@@ -80,7 +80,15 @@ if (isPost()) {
         try {
             if ($c['estado'] !== 'abierto') throw new RuntimeException('Este conteo ya fue cerrado.');
 
-            $resumen = txReintentable(function () use ($id) {
+            // La dirección exige una nota que explique cualquier reducción del
+            // inventario. El ajuste a mano ya la pedía; el conteo no, y era el
+            // camino por el que veinte unidades pasaban a quince sin que nadie
+            // dijera qué había pasado. Se valida DENTRO de la transacción,
+            // contra las líneas reales, porque entre abrir el modal y pulsar
+            // aplicar alguien pudo cambiar lo contado.
+            $justificacion = mb_substr(trim((string) post('justificacion')), 0, 300);
+
+            $resumen = txReintentable(function () use ($id, $justificacion) {
                 $conteo = qOne("SELECT * FROM conteos WHERE id = ? FOR UPDATE", [$id]);
                 if (!$conteo || $conteo['estado'] !== 'abierto') {
                     throw new RuntimeException('Otro usuario acaba de cerrar este conteo.');
@@ -97,6 +105,16 @@ if (isPost()) {
                       ORDER BY d.producto_id",
                     [$id]
                 );
+
+                // ¿Este conteo va a bajar existencia? Si sí, sin explicación no se aplica.
+                $baja = false;
+                foreach ($lineas as $l) {
+                    if ((float) $l['stock_contado'] - (float) $l['stock_teorico'] < -0.0001) { $baja = true; break; }
+                }
+                if ($baja && $justificacion === '') {
+                    throw new RuntimeException('Este conteo reduce el inventario. Escribe una nota que explique '
+                        . 'por qué falta esa mercancía antes de aplicarlo.');
+                }
 
                 $ajustados = 0; $sobrante = 0.0; $faltante = 0.0; $omitidos = []; $sinLote = [];
                 foreach ($lineas as $l) {
@@ -124,7 +142,10 @@ if (isPost()) {
                         $sinLote[] = $l['nombre'];
                     }
                     ajustarStock((int) $l['producto_id'], $sucursalId, $delta, 'ajuste', 'conteo', $id,
-                        (float) $l['costo_unitario'], 'Conteo ' . $conteo['numero']);
+                        (float) $l['costo_unitario'],
+                        // El número solo dice de dónde salió; la nota dice qué pasó.
+                        // Los dos juntos son lo que lee el informe de ajustes y mermas.
+                        'Conteo ' . $conteo['numero'] . ($justificacion !== '' ? ' · ' . $justificacion : ''));
                     $ajustados++;
                     $valor = $delta * (float) $l['costo_unitario'];
                     if ($delta > 0) $sobrante += $valor; else $faltante += $valor;
@@ -132,6 +153,7 @@ if (isPost()) {
 
                 dbUpdate('conteos', [
                     'estado' => 'aplicado',
+                    'justificacion' => $justificacion ?: null,
                     'aplicado_por' => current_user()['id'] ?? null,
                     'aplicado_at' => date('Y-m-d H:i:s'),
                 ], 'id = ?', [$id]);
@@ -190,6 +212,7 @@ $totales = qOne(
     "SELECT COUNT(*) productos,
             SUM(d.stock_contado IS NOT NULL) contados,
             SUM(d.stock_contado IS NOT NULL AND ABS(d.stock_contado - d.stock_teorico) > 0.0001) diferencias,
+            SUM(d.stock_contado IS NOT NULL AND d.stock_contado < d.stock_teorico - 0.0001) lineas_faltantes,
             COALESCE(SUM(CASE WHEN d.stock_contado IS NOT NULL AND d.stock_contado > d.stock_teorico
                          THEN (d.stock_contado - d.stock_teorico) * d.costo_unitario ELSE 0 END),0) sobrante,
             COALESCE(SUM(CASE WHEN d.stock_contado IS NOT NULL AND d.stock_contado < d.stock_teorico
@@ -267,6 +290,12 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
         <?php if ($c['estado'] === 'aplicado'): ?>
           Los ajustes ya se registraron en el kardex por <?= e($c['aplicado_por_nombre'] ?: '—') ?> el <?= fechaHora($c['aplicado_at']) ?>.
           Este conteo queda como constancia y no se puede modificar.
+          <?php if (trim((string) ($c['justificacion'] ?? '')) !== ''): ?>
+            <span class="block mt-1.5 text-slate-700">
+              <span class="text-slate-500">Explicación de las diferencias:</span>
+              «<?= e($c['justificacion']) ?>»
+            </span>
+          <?php endif; ?>
         <?php else: ?>
           Se canceló el <?= fechaHora($c['cancelado_at']) ?>. No se tocó el inventario.
         <?php endif; ?>
@@ -472,6 +501,29 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
             </p>
           </div>
         <?php endif; ?>
+        <?php $hayFaltantes = (int) ($totales['lineas_faltantes'] ?? 0) > 0; ?>
+        <div class="px-6 pt-4">
+          <label class="label" for="cnt_justificacion">
+            Explicación de las diferencias
+            <?php if ($hayFaltantes): ?>
+              <span class="text-rose-600">*</span>
+            <?php else: ?>
+              <span class="text-slate-400 font-normal">(opcional)</span>
+            <?php endif; ?>
+          </label>
+          <textarea id="cnt_justificacion" name="justificacion" rows="2" maxlength="300" class="input"
+                    <?= $hayFaltantes ? 'required' : '' ?>
+                    placeholder="<?= $hayFaltantes
+                        ? 'Por qué falta esa mercancía: rotura, muestra, robo, error de captura…'
+                        : 'Opcional: qué explica lo que apareció de más' ?>"></textarea>
+          <?php if ($hayFaltantes): ?>
+            <p class="text-[12px] text-slate-500 mt-1.5 leading-relaxed">
+              Este conteo baja la existencia de
+              <strong><?= number_format((int) $totales['lineas_faltantes']) ?> producto(s)</strong>.
+              La nota queda pegada a cada movimiento del kardex y sale en el informe de ajustes y mermas.
+            </p>
+          <?php endif; ?>
+        </div>
         <div class="flex gap-2 p-6 pt-4">
           <button type="button" @click="open=false" class="btn btn-ghost flex-1">Volver</button>
           <button type="submit" class="btn btn-primary flex-1"><?= icon('check', 'w-4 h-4') ?> Sí, aplicar</button>

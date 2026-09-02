@@ -1563,6 +1563,9 @@ CREATE TABLE conteos (
   descripcion    VARCHAR(150) NOT NULL,
   estado         ENUM('abierto','aplicado','cancelado') NOT NULL DEFAULT 'abierto',
   notas          VARCHAR(500) NULL,
+  -- Por qué falta la mercancía cuando el conteo BAJA la existencia. Obligatoria
+  -- en ese caso: es la nota que la dirección exige para cualquier reducción.
+  justificacion  VARCHAR(300) NULL,
   usuario_id     INT UNSIGNED NULL,
   aplicado_por   INT UNSIGNED NULL,
   aplicado_at    DATETIME NULL,

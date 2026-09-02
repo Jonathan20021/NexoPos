@@ -292,6 +292,7 @@ function notif_generar(): void
     notif_gen_caja();
     notif_gen_transferencias();
     notif_gen_transferencias_por_aprobar();
+    notif_gen_conteos();
     notif_gen_crm();
     notif_gen_pedidos();
     notif_gen_metas();
@@ -737,6 +738,54 @@ function notif_gen_transferencias(): void
         ];
     }
     notif_sync('transferencia_pendiente', $items);
+}
+
+/**
+ * Conteos físicos empezados y sin aplicar.
+ *
+ * Un conteo abierto es trabajo a medias que además ENVEJECE: la existencia
+ * teórica que se guardó al abrirlo se va separando de la real con cada venta,
+ * así que cuanto más tarde en aplicarse, menos significa la diferencia que
+ * calcule. Y mientras tanto nadie ve el descuadre que se encontró.
+ *
+ * Se avisa desde el primer día, pero solo sube a prioridad alta a los tres:
+ * un conteo grande se hace en varias jornadas y no hay que darle la lata a
+ * quien lo está haciendo bien.
+ */
+function notif_gen_conteos(): void
+{
+    $rows = qAll(
+        "SELECT c.id, c.numero, c.sucursal_id AS sid, su.nombre AS sucursal, c.created_at,
+                COUNT(d.id) AS lineas,
+                COALESCE(SUM(d.stock_contado IS NOT NULL), 0) AS contadas,
+                COALESCE(SUM(d.stock_contado IS NOT NULL
+                             AND ABS(d.stock_contado - d.stock_teorico) > 0.0001), 0) AS con_diferencia
+           FROM conteos c
+           JOIN sucursales su ON su.id = c.sucursal_id
+           LEFT JOIN conteo_detalles d ON d.conteo_id = c.id
+          WHERE c.estado = 'abierto'
+          GROUP BY c.id, c.numero, c.sucursal_id, su.nombre, c.created_at"
+    );
+    $items = [];
+    foreach ($rows as $r) {
+        $dias   = max(0, (int) floor((time() - strtotime((string) $r['created_at'])) / 86400));
+        $faltan = (int) $r['lineas'] - (int) $r['contadas'];
+        $dif    = (int) $r['con_diferencia'];
+        $items[] = [
+            'clave' => 'conteo_abierto:' . (int) $r['id'], 'categoria' => 'inventario',
+            'prioridad' => $dias >= 3 ? 'alta' : 'media',
+            'titulo' => 'Conteo ' . $r['numero'] . ' sin aplicar',
+            'mensaje' => $r['sucursal'] . ' · '
+                . ($faltan > 0 ? $faltan . ' artículo(s) sin contar' : 'contado entero')
+                . ($dif > 0 ? ' · ' . $dif . ' con diferencia' : ' · sin diferencias')
+                . ($dias > 0 ? ' · lleva ' . $dias . ' día(s) abierto' : '')
+                . '. Mientras no se aplique, el inventario no se corrige.',
+            'url' => 'modules/inventario/conteo.php?id=' . (int) $r['id'],
+            'icono' => 'clipboard', 'color' => $dias >= 3 ? 'amber' : 'sky',
+            'sucursal_id' => (int) $r['sid'], 'permiso' => 'conteos.ver',
+        ];
+    }
+    notif_sync('conteo_abierto', $items);
 }
 
 /** Tareas del CRM vencidas, dirigidas al responsable. */

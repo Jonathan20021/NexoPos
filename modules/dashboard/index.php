@@ -59,9 +59,14 @@ $verRRHH       = $verEmpleados || $verNomina || $verTss || $verPrestamos || $ver
 // por pagar o el embudo de ventas también entra por aquí.
 $verCompras = can_any(['compras.ver', 'proveedores.ver', 'cxp.ver']);
 $verCrm     = can('crm.ver');
+// Mover mercancía entre tiendas y contarla es media jornada de quien lleva el
+// inventario, y no aparecía por ningún lado en la pantalla de entrada.
+$verTraslados = can('transferencias.ver');
+$verConteos   = can('conteos.ver');
+$verOperacion = $verTraslados || $verConteos;
 
 $verNada       = !$verVentas && !$verCaja && !$verProductos && !$verInventario
-                 && !$verMetas && !$verRRHH && !$verCompras && !$verCrm;
+                 && !$verMetas && !$verRRHH && !$verCompras && !$verCrm && !$verOperacion;
 
 $hoy       = date('Y-m-d');
 $inicioMes = date('Y-m-01');
@@ -276,6 +281,38 @@ if ($sid === null && count(sucursales_visibles()) > 1) {
     usort($porSucursal, fn($a, $b) => $b['total'] <=> $a['total']);
 }
 $totalSuc = array_sum(array_column($porSucursal, 'total')) ?: 1;
+
+/* ============================================================
+ *  MERCANCÍA EN MOVIMIENTO: TRASLADOS Y CONTEOS
+ * ============================================================ */
+$oper = [];
+if ($verOperacion) {
+    if ($verTraslados) {
+        // Origen y destino se miran por separado: lo que espera aprobación es
+        // asunto de la tienda que lo manda, y lo que está por recibir, de la que
+        // lo espera. Un mismo traslado no es lo mismo desde cada lado.
+        $scopeO = $sid === null ? '1=1' : 't.sucursal_origen_id = ' . (int) $sid;
+        $scopeD = $sid === null ? '1=1' : 't.sucursal_destino_id = ' . (int) $sid;
+        $oper['por_aprobar'] = (int) qVal("SELECT COUNT(*) FROM transferencias t WHERE t.estado='pendiente' AND $scopeO");
+        $oper['por_recibir'] = (int) qVal("SELECT COUNT(*) FROM transferencias t WHERE t.estado='enviada' AND $scopeD");
+        $oper['varadas']     = (int) qVal(
+            "SELECT COUNT(*) FROM transferencias t
+              WHERE t.estado='enviada' AND t.enviada_at < DATE_SUB(NOW(), INTERVAL 7 DAY) AND $scopeD");
+        $oper['borradores']  = (int) qVal("SELECT COUNT(*) FROM transferencias t WHERE t.estado='borrador' AND $scopeO");
+    }
+    if ($verConteos) {
+        $scopeCo = $sid === null ? '1=1' : 'c.sucursal_id = ' . (int) $sid;
+        $oper['conteos'] = qAll(
+            "SELECT c.id, c.numero, su.nombre AS sucursal, c.created_at,
+                    COUNT(d.id) lineas, COALESCE(SUM(d.stock_contado IS NOT NULL),0) contadas
+               FROM conteos c
+               JOIN sucursales su ON su.id = c.sucursal_id
+               LEFT JOIN conteo_detalles d ON d.conteo_id = c.id
+              WHERE c.estado='abierto' AND $scopeCo
+              GROUP BY c.id, c.numero, su.nombre, c.created_at
+              ORDER BY c.created_at LIMIT 4");
+    }
+}
 
 /* ============================================================
  *  COMPRAS Y PROVEEDORES
@@ -967,6 +1004,73 @@ $verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
           <?php endforeach; ?>
         </tbody>
       </table>
+    </div>
+  <?php endif; ?>
+</section>
+<?php endif; ?>
+
+<!-- ============ MERCANCÍA EN MOVIMIENTO ============ -->
+<?php if ($verOperacion): ?>
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-4">
+    <?= icon('transfer', 'w-5 h-5 text-slate-400') ?>
+    <h2 class="text-lg font-bold text-slate-800">Mercancía en movimiento</h2>
+  </div>
+  <?php
+  $to = [];
+  if ($verTraslados) {
+      $to[] = ['label' => 'Esperando autorización', 'valor' => number_format($oper['por_aprobar']),
+          'icono' => 'clock', 'color' => $oper['por_aprobar'] > 0 ? 'amber' : 'slate',
+          'href' => url('modules/inventario/transferencias.php?estado=pendiente'),
+          'nota' => $oper['por_aprobar'] > 0 ? 'La mercancía sigue en el origen' : 'Nada detenido'];
+      $to[] = ['label' => 'Por recibir', 'valor' => number_format($oper['por_recibir']),
+          'icono' => 'truck', 'color' => $oper['varadas'] > 0 ? 'rose' : ($oper['por_recibir'] > 0 ? 'sky' : 'slate'),
+          'href' => url('modules/inventario/transferencias.php?estado=enviada'),
+          'nota' => $oper['varadas'] > 0
+              ? number_format($oper['varadas']) . ($oper['varadas'] === 1 ? ' lleva' : ' llevan') . ' más de 7 días en el aire'
+              : 'Mercancía en camino hacia aquí'];
+      $to[] = ['label' => 'Borradores de traslado', 'valor' => number_format($oper['borradores']),
+          'icono' => 'edit', 'color' => $oper['borradores'] > 0 ? 'indigo' : 'slate',
+          'href' => url('modules/inventario/transferencias.php?estado=borrador'),
+          'nota' => 'Sin mandar a aprobación'];
+  }
+  if ($verConteos) {
+      $nc = count($oper['conteos'] ?? []);
+      $to[] = ['label' => 'Conteos sin aplicar', 'valor' => number_format($nc),
+          'icono' => 'clipboard', 'color' => $nc > 0 ? 'amber' : 'emerald',
+          'href' => url('modules/inventario/conteos.php'),
+          'nota' => $nc > 0 ? 'El inventario no se corrige hasta aplicarlos' : 'Ningún conteo abierto'];
+  }
+  echo kpis($to, min(4, max(2, count($to))));
+  ?>
+  <?php if (!empty($oper['conteos'])): ?>
+    <div class="card overflow-hidden">
+      <?= toolbar('<h3 class="font-bold text-slate-800">Conteos que quedaron a medias</h3>',
+          '<a href="' . e(url('modules/inventario/conteos.php')) . '" class="btn btn-ghost btn-sm">Ver todos</a>') ?>
+      <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead><tr><th>Conteo</th><th>Tienda</th><th class="text-center">Avance</th><th>Abierto</th><th></th></tr></thead>
+          <tbody>
+            <?php foreach ($oper['conteos'] as $c):
+                $lin = (int) $c['lineas']; $con = (int) $c['contadas'];
+                $pct = $lin > 0 ? round($con / $lin * 100) : 0; ?>
+              <tr>
+                <td class="font-semibold text-slate-700"><?= e($c['numero']) ?></td>
+                <td class="text-slate-600"><?= e($c['sucursal']) ?></td>
+                <td class="text-center">
+                  <span class="text-sm font-semibold text-slate-700"><?= $con ?>/<?= $lin ?></span>
+                  <span class="block text-[11px] text-slate-400"><?= $pct ?>% contado</span>
+                </td>
+                <td class="text-slate-500 text-[13px] whitespace-nowrap"><?= e(tiempoRelativo($c['created_at'])) ?></td>
+                <td class="text-right">
+                  <a href="<?= e(url('modules/inventario/conteo.php?id=' . (int) $c['id'])) ?>"
+                     class="btn btn-soft btn-sm">Continuar</a>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
     </div>
   <?php endif; ?>
 </section>

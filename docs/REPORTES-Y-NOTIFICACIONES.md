@@ -32,6 +32,8 @@ diez peticiones en el mismo segundo, solo una hace el trabajo.
 | Secuencia NCF por vencer o vencida | Media/Crítica | Se renueva la autorización |
 | Cajas abiertas de días anteriores | Media/Alta | Se cierra la caja |
 | Transferencias enviadas sin recibir | Alta | La sucursal destino las recibe |
+| Traslados esperando autorización | Media/Alta | Quien aprueba los autoriza o los devuelve |
+| Conteos físicos abiertos sin aplicar | Media/Alta | Se aplican o se cancelan |
 | Tareas del CRM vencidas (al responsable) | Alta | Se completan o cancelan |
 | Pedidos en línea sin confirmar | Alta | Se confirman |
 | Metas de venta en riesgo | Media | Se recupera el ritmo o cierra el periodo |
@@ -41,6 +43,9 @@ diez peticiones en el mismo segundo, solo una hace el trabajo.
 | Declaración 606/607/608 e IT-1 del mes | Media/Alta | Pasa el día 20 |
 | Cumpleaños de empleados | Informativa | Cambia el día |
 | Productos con precio bajo el costo | Media | Se corrige la lista de precios |
+| Registros sanitarios y lotes por vencer | Media/Crítica | Se renueva el registro o sale el lote |
+| e-CF rechazados o sin respuesta de la DGII | Alta | Se corrige y se reenvía |
+| Intentos de acceso fallidos seguidos | Alta | Cesan o se bloquea la cuenta |
 
 ### Quién ve qué
 Cada notificación lleva `permiso`, `sucursal_id` y opcionalmente `usuario_id`.
@@ -57,44 +62,67 @@ La marca de leída es **por usuario**: que el gerente la lea no la apaga para el
 
 ## 2. Centro de Reportes
 
-`modules/reportes/index.php` es el índice: 20 reportes agrupados en cuatro bloques,
-cada uno con su permiso independiente.
+`modules/reportes/index.php` es el índice: 32 informes en seis bloques. Cada bloque
+tiene su permiso; además, un informe suelto puede llevar el suyo propio y entonces se
+ve sin abrir el resto del grupo (columna «permiso propio»). Así la encargada de
+inventario abre las existencias de las trece tiendas sin ver el libro diario ni la
+nómina. Lo resuelve `rep_catalogo_visible()`.
+
+### Área de Dirección (`direccion.ver`)
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Panel de Dirección** | Año contra año, mes contra mes, ventas por marca y mercancía en camino, en una sola pantalla. | — |
+| **Año contra año** | Matriz de doce meses con los dos años lado a lado y la variación de cada mes, por tienda, sucursal y categoría. | — |
+| **Reportería de costos** | Costo de lo vendido, margen real, inventario a costo, recargo de importación y artículos que se venden bajo costo. | — |
 
 ### Dirección General (`reportes.ejecutivo`)
-| Reporte | Para qué |
-|---|---|
-| **Panel ejecutivo** | KPIs con variación contra el periodo anterior, tendencia de 12 meses, resultado por sucursal, canal de captación, productos más rentables, mejores clientes, metas, embudo CRM y salud financiera. |
-| **Comparativo de periodos** | Actual vs. anterior vs. mismo periodo del año pasado, con desglose por sucursal, canal, vendedor y categoría. |
-| **Clientes y concentración** | Ranking ABC (Pareto), riesgo de dependencia de pocos clientes, y lista de clientes dormidos para llamar. |
-| **Comparativo de sucursales** | Cada local lado a lado: venta, margen, gastos, utilidad, ticket, inventario y venta por empleado. |
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Panel ejecutivo** | KPIs del periodo, tendencia de 12 meses, márgenes, metas y alertas en una sola pantalla. | — |
+| **Comparativo de periodos** | Mes contra mes y año contra año, con variación por sucursal, canal y categoría. | — |
+| **Clientes y concentración** | Ranking ABC (Pareto), recencia, frecuencia y riesgo de dependencia de pocos clientes. | — |
+| **Comparativo de sucursales** | Venta, margen, ticket y productividad por local, lado a lado. | `reportes.sucursales` |
 
 ### Finanzas (`reportes.finanzas`)
-| Reporte | Para qué |
-|---|---|
-| **Estado de resultados** | P&L con % sobre ingresos y comparación contra el periodo anterior, con el gasto abierto por categoría. |
-| **Flujo de efectivo** | Entradas, salidas, saldo acumulado día a día, por cuenta y por concepto. Liquidez, no rentabilidad. |
-| **Cuentas por cobrar** | Antigüedad 0-30/31-60/61-90/91-120/+120 por cliente, reconstruida aplicando los abonos a las facturas más viejas (FIFO). |
-| **Cuentas por pagar** | Deuda con proveedores por antigüedad y compras del periodo con ITBIS y retenciones. |
-| **Análisis de gastos** | Gasto por categoría y sucursal, comparado contra el periodo anterior y contra los ingresos. |
-| **Rentabilidad** | Margen por producto, categoría, marca, vendedor o sucursal; detecta ventas por debajo del costo. |
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Estado de resultados** | P&L mensual con % sobre ventas y comparación contra el periodo anterior. | — |
+| **Flujo de efectivo** | Entradas, salidas y saldo acumulado por día y por cuenta. | — |
+| **Cuentas por cobrar** | Antigüedad de saldos 0-30/31-60/61-90/+90 por cliente y exposición al crédito. | — |
+| **Cuentas por pagar** | Compras a crédito por proveedor con antigüedad y vencimientos. | — |
+| **Análisis de gastos** | Gasto por categoría y sucursal, tendencia mensual y peso sobre la venta. | — |
+| **Rentabilidad** | Margen por producto, categoría, sucursal y vendedor. Detecta ventas bajo costo. | — |
 
 ### Contabilidad (`reportes.contabilidad`)
-| Reporte | Para qué |
-|---|---|
-| **Libro diario** | Asientos debe/haber derivados de las operaciones reales, con balanza de comprobación. Se entrega tal cual a la contabilidad externa. |
-| **Balance general** | Activo, pasivo y patrimonio a una fecha, con razón corriente, prueba ácida y endeudamiento. |
-| **ITBIS y retenciones** | La liquidación que va al IT-1: débito fiscal − crédito fiscal − retenciones, con histórico de 12 meses. |
-| **Inventario valorizado** | Existencias a costo y a precio de venta, rotación, días de inventario y mercancía dormida. |
-| **Resumen de nómina** | Bruto, AFP, SFS, ISR y neto por empleado y departamento, más el aporte patronal TSS estimado. |
-| **Auxiliar de cuentas** | Mayor por cuenta financiera con saldo corrido, para cruzar contra el estado de cuenta del banco. |
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Libro diario** | Todos los asientos del periodo: ventas, compras, gastos, nómina y movimientos de caja. | — |
+| **Balance general** | Activo, pasivo y patrimonio a una fecha, derivado de los saldos del sistema. | — |
+| **ITBIS y retenciones** | ITBIS cobrado vs. adelantado, retenciones y saldo a pagar del periodo. | — |
+| **Inventario valorizado** | Existencias a costo y a precio de venta, por sucursal y categoría. | `reportes.inventario` |
+| **Existencias por tienda** | El mismo artículo en todos los locales, lado a lado, con lo que está bajo mínimo o en cero. | `reportes.inventario` |
+| **Ajustes y mermas** | Todo lo que bajó o subió la existencia sin una venta detrás, con su nota, su responsable y su costo. | `reportes.inventario` |
+| **Resumen de nómina** | Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento. | — |
+| **Costo de la plantilla** | Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales. | — |
+| **Auxiliar de cuentas** | Mayor por cuenta financiera con saldo inicial, movimientos y saldo final. | — |
+
+### Cumplimiento sanitario (`reportes.sanidad`)
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Expediente de auditoria** | El documento consolidado para entregar en una inspeccion: semaforo de cumplimiento, registros, vencidos y proveedores. | — |
+| **Registros sanitarios** | Vigencia del registro de cada producto regulado: sin registro, vencidos y por vencer. | — |
+| **Control de vencimientos** | Mercancia vencida y proxima a vencer por lote y sucursal, con el dinero inmovilizado. | `reportes.vencimientos` |
+| **Trazabilidad de lote** | Retiro del mercado: de que proveedor entro un lote y a que clientes salio, con sus facturas. | — |
+| **Ficha sanitaria de proveedores** | Licencia, vigencia y que productos regulados surte cada proveedor. | — |
 
 ### Operación y Ventas (`reportes.operacion`)
-| Reporte | Para qué |
-|---|---|
-| **Libro de ventas** | Factura por factura con NCF, cliente, vendedor, forma de pago y margen. Filtros por estado, comprobante y vendedor. |
-| **Desempeño de productos** | Más vendidos, cobertura en días, riesgo de quiebre y productos que no rotaron. |
-| **Desempeño del equipo** | Venta, margen, ticket, clientes, descuentos, devoluciones, cumplimiento de meta y comisión por vendedor. |
-| **Horarios y tráfico** | A qué hora y qué día se vende, con mapa de calor semanal y rendimiento por turno de caja. |
+| Reporte | Para qué | Permiso propio |
+|---|---|---|
+| **Libro de ventas** | Detalle factura por factura con NCF, cliente, vendedor, método de pago y margen. | — |
+| **Desempeño de productos** | Más vendidos, sin rotación, quiebres de stock y días de inventario. | — |
+| **Desempeño del equipo** | Venta, margen, ticket promedio, descuentos y cumplimiento de meta por vendedor. | — |
+| **Horarios y tráfico** | A qué hora y qué día se vende, para ajustar turnos e inventario. | — |
+| **Movimiento entre tiendas** | Qué salió de dónde y a dónde, con su motivo y quién autorizó la salida. | `transferencias.ver` |
 
 ### Criterio contable (por qué los números cuadran entre reportes)
 - **Ingresos = `subtotal − descuento`**, sin ITBIS. El ITBIS se cobra por cuenta de la DGII:

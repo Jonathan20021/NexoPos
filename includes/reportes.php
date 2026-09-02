@@ -69,6 +69,9 @@ function rep_catalogo(): array
                 // abrir el libro diario ni la nómina. Ver rep_catalogo_visible().
                 ['inventario_valorizado.php', 'Inventario valorizado', 'Existencias a costo y a precio de venta, por sucursal y categoría.', 'box', 'reportes.inventario'],
                 ['existencias_tiendas.php', 'Existencias por tienda', 'El mismo artículo en todos los locales, lado a lado, con lo que está bajo mínimo o en cero.', 'layers', 'reportes.inventario'],
+                // Responde la pregunta que la dirección hizo por escrito: si había
+                // veinte y ahora hay quince, quién lo bajó y con qué explicación.
+                ['ajustes.php', 'Ajustes y mermas', 'Todo lo que bajó o subió la existencia sin una venta detrás, con su nota, su responsable y su costo.', 'trending-down', 'reportes.inventario'],
                 ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
                 // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
                 // contratada. Es la cifra para decidir si un local se sostiene.

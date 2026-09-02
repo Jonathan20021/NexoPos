@@ -55,3 +55,6 @@ desktop.ini
 .idea/
 *.swp
 *~
+
+# --- Volcados HTML de las pruebas de pantalla (barrido de QA) ---
+/_audit/
