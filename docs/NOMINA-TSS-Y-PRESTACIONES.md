@@ -343,6 +343,58 @@ redacta un abogado, no una plantilla del sistema.
 
 ---
 
+## 6b. Los informes de William
+
+| Informe | Qué contesta |
+|---|---|
+| **Resumen de nómina** | Qué se pagó en un periodo, por empleado y por departamento, con el aporte patronal y el costo real |
+| **Costo de la plantilla** | Cuánto cuesta AL MES la gente contratada hoy, por sucursal y por marca |
+| **Provisiones laborales** | Cuánto se DEBE hoy por derechos ya devengados y no pagados |
+| **Variación entre nóminas** | Por qué esta quincena costó distinto que la anterior |
+
+### Provisiones laborales
+`modules/reportes/provisiones.php`
+
+La nómina dice lo que se pagó; este dice lo que se debe. Regalía devengada del
+año, vacaciones generadas del año de servicio en curso y cesantía acumulada —que
+es la mayor de las tres con diferencia y la que crece cada año sin que nadie la
+vea—. Agrupado por sucursal y por marca.
+
+Cada renglón sale de las mismas funciones que la liquidación (`plab_*`,
+`regaliaDeEmpleado`), no de una fórmula paralela: el día que alguien se vaya, el
+número del informe y el de su liquidación tienen que ser el mismo.
+
+Dos cosas que dice en voz alta:
+
+- **La cesantía solo es exigible** en desahucio, despido injustificado o dimisión
+  justificada; quien renuncia no la cobra. Provisionarla al 100% es el criterio
+  conservador y la decisión es del contador, así que se puede sacar del total.
+- **Si el padrón tiene fechas de ingreso marcador**, el pasivo sale ridículamente
+  bajo y parece una buena noticia. La antigüedad es el motor de la cesantía.
+
+El **preaviso no se provisiona** —es un evento, no un derecho que se acumule— y
+sale a la derecha solo como referencia. Tampoco entran las vacaciones de años
+anteriores: el sistema no sabe qué se disfrutó si no se registró.
+
+### Variación entre nóminas
+`modules/reportes/variacion_nomina.php`
+
+«La quincena subió ochenta mil pesos, ¿por qué?» se contestaba abriendo las dos
+corridas en dos pestañas. Aquí la diferencia se descompone en **altas, bajas,
+cambios de sueldo, días trabajados y cada concepto variable**, y las causas
+**suman exactamente la diferencia**: si no cuadran, la pantalla lo dice en rojo,
+porque una explicación que no cuadra es peor que ninguna.
+
+Un aumento y un cambio de días se separan aunque ocurran a la vez. El sueldo del
+período es `mensual × factor × días/díasBase`, y la resta se escribe en dos trozos:
+
+    por el aumento .... (mensual_B − mensual_A) × factor × díasB/díasBaseB
+    por los días ...... mensual_A × factor × (díasB/díasBaseB − díasA/díasBaseA)
+
+No es una aproximación: sumadas dan exactamente la diferencia del sueldo.
+
+---
+
 ## 7. Permisos
 
 | Clave | Qué abre |

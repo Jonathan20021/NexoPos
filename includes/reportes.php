@@ -78,6 +78,9 @@ function rep_catalogo(): array
                 // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
                 // contratada. Es la cifra para decidir si un local se sostiene.
                 ['costo_plantilla.php', 'Costo de la plantilla', 'Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales.', 'users', 'reportes.nomina'],
+                // El pasivo, no el gasto: lo que se debe aunque nadie lo haya cobrado.
+                ['provisiones.php', 'Provisiones laborales', 'Regalía devengada, vacaciones acumuladas y cesantía: lo que se debe hoy aunque no se haya pagado.', 'scale', 'reportes.nomina'],
+                ['variacion_nomina.php', 'Variación entre nóminas', 'Por qué una quincena costó distinto que la anterior: altas, bajas, aumentos, días y variables.', 'chart', 'reportes.nomina'],
                 ['auxiliar_cuentas.php', 'Auxiliar de cuentas', 'Mayor por cuenta financiera con saldo inicial, movimientos y saldo final.', 'briefcase'],
             ],
         ],
