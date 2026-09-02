@@ -24,6 +24,23 @@ liquidación de quien sale.
   una cuota mayor que lo devengado daba un neto negativo. Lo que no cupo se
   devuelve aparte para que la pantalla lo avise en vez de darlo por cobrado.
 
+### El archivo del banco
+`nominaExportarBanco()` —botón «Archivo banco» de la nómina— arma el CSV de
+transferencias. Entra quien cobra **por transferencia** y tiene cuenta; el resto
+sale **nombrado en el pie**, nunca callado:
+
+- `REVISAR: la cuenta no tiene 11 dígitos` — dos cuentas del padrón perdieron el
+  cero inicial dentro del propio Excel del cliente, por venir guardadas como
+  número.
+- `FUERA DEL ARCHIVO: sin cuenta, se pagan aparte`.
+- `FUERA DEL ARCHIVO: no cobran por transferencia` — y si además tienen una
+  cuenta guardada lo dice, porque suele ser un método mal puesto en la ficha.
+
+Ese último caso era un riesgo real: el archivo se armaba mirando solo si había
+cuenta, así que a quien le cierran la cuenta y se le pasa a efectivo sin borrar
+el número viejo entraba en el archivo **y** cobraba en caja. Se le pagaba dos
+veces y no se veía hasta cuadrar el mes.
+
 ### Dos correcciones sobre la hoja del cliente
 Su Excel tiene dos fórmulas que no hacen lo que sus propias columnas dicen. Hoy
 no se nota porque esas columnas están en cero; el día que se usen, sí:

@@ -332,7 +332,7 @@ function nominaLineasAgrupadas(int $nominaId): array
 {
     return qAll(
         "SELECT nd.*, e.nombre, e.apellido, e.cedula, e.salario AS _sueldo_mensual,
-                e.cuenta_bancaria, e.banco,
+                e.cuenta_bancaria, e.banco, e.metodo_pago,
                 /* La CEO lo dijo en una frase: «no hay oficina, la distribución
                    administrativa es por departamento». Una tienda SÍ es un grupo
                    real —L'Occitane Punta Cana vende y factura— pero «Oficina Santo
@@ -471,12 +471,28 @@ function nominaExportarBanco(array $nomina, array $lineas): void
     $sospechosas = [];
     $total = 0.0;
 
+    // A quien se le paga en efectivo NO se le mete en el archivo del banco
+    // aunque tenga una cuenta guardada. Es lo que pasa cuando a alguien le
+    // cierran la cuenta y se le pasa a efectivo sin borrar el número viejo: el
+    // archivo lo incluiría, y además cobraría en caja. Se paga dos veces y nadie
+    // lo ve hasta cuadrar el mes.
+    $noTransferencia = [];
+
     foreach ($lineas as $l) {
         $cuenta = preg_replace('/\D+/', '', (string) ($l['cuenta_bancaria'] ?? ''));
         $nombre = trim($l['nombre'] . ' ' . $l['apellido']);
         $monto  = round((float) $l['salario_neto'], 2);
+        $metodo = (string) ($l['metodo_pago'] ?? 'transferencia');
 
-        if ($cuenta === '' || $monto <= 0) { $sinCuenta[] = $nombre; continue; }
+        if ($monto <= 0) continue;
+        if ($metodo !== 'transferencia') {
+            // Se nombra, no se calla: si tiene cuenta guardada puede ser un
+            // método mal puesto en la ficha, y quien manda el archivo tiene que
+            // decidirlo, no enterarse por el descuadre.
+            $noTransferencia[] = $nombre . ' (' . $metodo . ($cuenta !== '' ? ', tiene cuenta' : '') . ')';
+            continue;
+        }
+        if ($cuenta === '') { $sinCuenta[] = $nombre; continue; }
 
         // Dos cuentas del padrón perdieron el cero inicial DENTRO del propio
         // Excel del cliente, por venir guardadas como número. Se marcan para que
@@ -507,6 +523,10 @@ function nominaExportarBanco(array $nomina, array $lineas): void
     if ($sinCuenta) {
         fputcsv($out, []);
         fputcsv($out, ['FUERA DEL ARCHIVO: sin cuenta, se pagan aparte', implode(' · ', $sinCuenta)]);
+    }
+    if ($noTransferencia) {
+        fputcsv($out, []);
+        fputcsv($out, ['FUERA DEL ARCHIVO: no cobran por transferencia', implode(' · ', $noTransferencia)]);
     }
     fclose($out);
     exit;
