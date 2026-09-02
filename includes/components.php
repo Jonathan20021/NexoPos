@@ -465,9 +465,26 @@ function toolbar(string $izquierda, string $derecha = ''): string
 }
 
 /** Contador para la derecha de una toolbar: «1,204 productos». */
+/**
+ * Pluraliza en español lo justo para no escribir «3 novedads».
+ *
+ * La regla de añadir «s» a secas solo vale para las palabras que terminan en
+ * vocal. Con consonante toca «es», y las terminadas en -ión además pierden la
+ * tilde al crecer. No es un pluralizador general —no lo necesita—: para
+ * cualquier caso raro se sigue pudiendo pasar el plural a mano.
+ */
+function plural_es(string $s): string
+{
+    if ($s === '') return $s;
+    if (preg_match('/ión$/u', $s))               return preg_replace('/ión$/u', 'iones', $s);
+    if (preg_match('/[aeiouáéíóú]$/iu', $s))       return $s . 's';
+    if (preg_match('/z$/iu', $s))                 return preg_replace('/z$/iu', 'ces', $s);
+    return $s . 'es';
+}
+
 function toolbar_conteo(int $n, string $singular, string $plural = ''): string
 {
-    $plural = $plural ?: $singular . 's';
+    $plural = $plural ?: plural_es($singular);
     return '<span class="text-sm text-slate-400 whitespace-nowrap tabular-nums">'
         . number_format($n) . ' ' . e($n === 1 ? $singular : $plural) . '</span>';
 }

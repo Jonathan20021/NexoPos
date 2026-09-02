@@ -59,7 +59,21 @@ tope entero no lo corta nunca.
 
 La pantalla tiene cuatro pestañas: parámetros (con su historial de vigencias),
 declaración del mes (base cotizable y aportes de las dos partes, exportable),
-**pago del mes** (§3) y novedades (ingresos, salidas y cambios de salario).
+**pago del mes** (§3) y novedades.
+
+### Las novedades se anotan solas
+`tssNovedad()` existía desde la P22 y **nadie la llamaba**: la pestaña deducía
+ingresos y salidas del padrón y no veía jamás un cambio de salario, que es
+justamente la novedad que cambia lo que se cotiza. Ahora la ficha del empleado
+las anota al guardar — alta, cambio de salario (con el antes y el después),
+salida, reingreso y licencia — y lo dice en pantalla.
+
+Para eso hacía falta que la ficha guardara la **fecha de salida**, que el
+formulario no tenía. De ella cuelgan tres cosas: la última quincena que sí
+corresponde cobrar (`nomina.php` la exige expresamente: «solo si consta su fecha
+de salida»), la novedad de la TSS y la liquidación de prestaciones. Sin ella,
+marcar a alguien inactivo lo borraba de la nómina en curso sin dejar rastro de
+cuándo se fue.
 
 ---
 

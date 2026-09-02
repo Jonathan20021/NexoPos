@@ -26,6 +26,7 @@ if (isPost()) {
         $departamentoId = postInt('departamento_id') ?: null;
         $puestoId      = postInt('puesto_id') ?: null;
         $fechaIngreso  = trim(post('fecha_ingreso'));
+        $fechaSalida   = trim(post('fecha_salida'));
         $tipoContrato  = in_array(post('tipo_contrato'), $tiposContrato, true) ? post('tipo_contrato') : 'indefinido';
         $salario       = postNum('salario');
         $metodoPago    = in_array(post('metodo_pago'), $metodosPago, true) ? post('metodo_pago') : 'efectivo';
@@ -53,13 +54,36 @@ if (isPost()) {
             flash('error', 'La fecha de ingreso no es válida.');
         } elseif (($departamentoId && !$dep) || ($dep && $dep['sucursal_id'] !== null && !can_access_sucursal($dep['sucursal_id']))) {
             flash('error', 'El departamento seleccionado no es válido para esta sucursal.');
-        } elseif ($puestoId && (!$puesto || !$departamentoId || (int) $puesto['departamento_id'] !== $departamentoId)) {
-            flash('error', 'El puesto seleccionado no corresponde al departamento.');
+        // Un puesto con `departamento_id` NULL es TRANSVERSAL: vale para cualquier
+        // área, igual que un departamento con `sucursal_id` NULL vale para
+        // cualquier local. Sin esta excepción, «Encargada de Tiendas» —que no
+        // cuelga de ningún departamento— bloqueaba el guardado de esa ficha para
+        // siempre: no se le podía ni cambiar el sueldo, y el mensaje culpaba a
+        // una combinación que la persona no había elegido.
+        } elseif ($puestoId && (!$puesto
+                  || ($puesto['departamento_id'] !== null
+                      && (int) $puesto['departamento_id'] !== (int) $departamentoId))) {
+            $depPuesto = $puesto && $puesto['departamento_id']
+                ? qVal("SELECT nombre FROM departamentos WHERE id = ?", [$puesto['departamento_id']]) : null;
+            flash('error', $depPuesto
+                ? 'Ese puesto pertenece al departamento «' . $depPuesto . '». Elige ese departamento o cambia el puesto.'
+                : 'El puesto seleccionado no es válido.');
         } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             flash('error', 'El correo electrónico no es válido.');
         } elseif (qVal("SELECT 1 FROM empleados WHERE cedula = ? AND id <> ?", [$cedula, $id])) {
             flash('error', 'Ya existe un empleado con esa cédula.');
         } else {
+            // El estado dice que ya no está; la FECHA dice desde cuándo, y de esa
+            // fecha cuelgan tres cosas: la última quincena que sí le toca cobrar,
+            // la novedad de salida que espera la TSS y toda la liquidación de
+            // prestaciones. Sin ella, marcar a alguien inactivo lo borraba de la
+            // nómina en curso sin dejar rastro de cuándo se fue.
+            $anterior = $id > 0 ? qOne("SELECT salario, estado, fecha_salida FROM empleados WHERE id = ?", [$id]) : null;
+            if ($estado === 'inactivo' && $fechaSalida === '') {
+                $fechaSalida = ($anterior['fecha_salida'] ?? '') ?: date('Y-m-d');
+            }
+            if ($estado !== 'inactivo') $fechaSalida = '';   // volvió: la salida deja de existir
+
             $datos = [
                 'nombre'           => $nombre,
                 'apellido'         => $apellido,
@@ -73,6 +97,7 @@ if (isPost()) {
                 'departamento_id'  => $departamentoId,
                 'puesto_id'        => $puestoId,
                 'fecha_ingreso'    => $fechaIngreso,
+                'fecha_salida'     => $fechaSalida ?: null,
                 'tipo_contrato'    => $tipoContrato,
                 'salario'          => $salario,
                 'metodo_pago'      => $metodoPago,
@@ -85,12 +110,52 @@ if (isPost()) {
                 dbUpdate('empleados', $datos, 'id = ?', [$id]);
                 audit('rrhh_empleados', 'editar', "Empleado actualizado: $nombre $apellido", ['tabla' => 'empleados', 'registro_id' => $id]);
                 flash('success', 'Empleado actualizado correctamente.');
+
+                // ---- Novedades de la TSS ----
+                //
+                // La tabla y la pantalla de novedades existían desde la P22, pero
+                // NADIE las escribía: tssNovedad() no se llamaba desde ningún
+                // sitio. El resultado es que la pestaña deducía ingresos y salidas
+                // del padrón y **jamás veía un cambio de salario**, que es
+                // justamente la novedad que cambia lo que se cotiza. Aquí es
+                // donde ocurren los tres hechos, así que aquí se anotan.
+                $avisos = [];
+                $antes = (float) ($anterior['salario'] ?? 0);
+                if ($anterior && abs($antes - (float) $salario) > 0.005) {
+                    tssNovedad($id, 'cambio_salario', date('Y-m-d'), [
+                        'salario_antes'   => $antes,
+                        'salario_despues' => (float) $salario,
+                        'motivo'          => 'Cambio registrado en la ficha del empleado',
+                    ]);
+                    $avisos[] = 'cambio de salario de ' . money($antes) . ' a ' . money((float) $salario);
+                }
+                if ($anterior && ($anterior['estado'] ?? '') !== 'inactivo' && $estado === 'inactivo' && $fechaSalida !== '') {
+                    tssNovedad($id, 'salida', $fechaSalida, ['motivo' => 'Baja registrada en la ficha']);
+                    $avisos[] = 'salida el ' . fechaCorta($fechaSalida);
+                }
+                if ($anterior && ($anterior['estado'] ?? '') === 'inactivo' && $estado === 'activo') {
+                    tssNovedad($id, 'reingreso', date('Y-m-d'), ['salario_despues' => (float) $salario,
+                                                                'motivo' => 'Reingreso registrado en la ficha']);
+                    $avisos[] = 'reingreso';
+                }
+                if ($anterior && ($anterior['estado'] ?? '') !== 'licencia' && $estado === 'licencia') {
+                    tssNovedad($id, 'licencia', date('Y-m-d'), ['motivo' => 'Licencia registrada en la ficha']);
+                    $avisos[] = 'licencia';
+                }
+                if ($avisos) {
+                    flash('info', 'Anotado para la TSS: ' . implode(' · ', $avisos)
+                        . '. Sale en TSS → Novedades del mes.');
+                }
             } else {
                 require_perm('rrhh_empleados.crear');
                 $datos['codigo'] = nextNumero('empleados', 'codigo', 'EMP', 4);
                 $nid = dbInsert('empleados', $datos);
                 audit('rrhh_empleados', 'crear', "Empleado creado: $nombre $apellido", ['tabla' => 'empleados', 'registro_id' => $nid]);
                 flash('success', 'Empleado creado correctamente.');
+                tssNovedad($nid, 'ingreso', $fechaIngreso ?: date('Y-m-d'), [
+                    'salario_despues' => (float) $salario,
+                    'motivo'          => 'Alta registrada en la ficha del empleado',
+                ]);
             }
 
             // Avisa, no impide. La cédula lleva dígito verificador, así que un
@@ -118,9 +183,16 @@ if (isPost()) {
             || qVal("SELECT 1 FROM asistencias WHERE empleado_id=? LIMIT 1", [$id])
             || qVal("SELECT 1 FROM vacaciones WHERE empleado_id=? LIMIT 1", [$id]);
         if ($tieneHistorial) {
-            dbUpdate('empleados', ['estado' => 'inactivo'], 'id=?', [$id]);
+            // Se deja constancia de CUÁNDO, no solo de que ya no está: de esa
+            // fecha dependen su última quincena, la novedad de la TSS y su
+            // liquidación. Si ya tenía una, se respeta.
+            $yaTenia = qVal("SELECT fecha_salida FROM empleados WHERE id = ?", [$id]);
+            $salida  = $yaTenia ?: date('Y-m-d');
+            dbUpdate('empleados', ['estado' => 'inactivo', 'fecha_salida' => $salida], 'id=?', [$id]);
+            tssNovedad($id, 'salida', $salida, ['motivo' => 'Baja desde el listado de empleados']);
             audit('rrhh_empleados', 'editar', "Empleado desactivado para conservar historial: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
-            flash('warning', 'El empleado tiene historial; se marcó como inactivo en lugar de eliminarlo.');
+            flash('warning', 'El empleado tiene historial; se marcó como inactivo (salida el '
+                . fechaCorta($salida) . ') en lugar de eliminarlo.');
         } else {
             q("DELETE FROM empleados WHERE id = ?", [$id]);
             audit('rrhh_empleados', 'eliminar', "Empleado eliminado: $nombre", ['tabla' => 'empleados', 'registro_id' => $id]);
@@ -250,7 +322,8 @@ echo kpis([
                         'id' => $e['id'], 'nombre' => $e['nombre'], 'apellido' => $e['apellido'], 'cedula' => $e['cedula'],
                         'fecha_nacimiento' => $e['fecha_nacimiento'], 'genero' => $e['genero'] ?? '', 'telefono' => $e['telefono'], 'email' => $e['email'],
                         'direccion' => $e['direccion'], 'sucursal_id' => $e['sucursal_id'] ?? '', 'departamento_id' => $e['departamento_id'] ?? '',
-                        'puesto_id' => $e['puesto_id'] ?? '', 'fecha_ingreso' => $e['fecha_ingreso'], 'tipo_contrato' => $e['tipo_contrato'],
+                        'puesto_id' => $e['puesto_id'] ?? '', 'fecha_ingreso' => $e['fecha_ingreso'],
+                        'fecha_salida' => $e['fecha_salida'] ?? '', 'tipo_contrato' => $e['tipo_contrato'],
                         'salario' => $e['salario'], 'metodo_pago' => $e['metodo_pago'], 'banco' => $e['banco'], 'cuenta_bancaria' => $e['cuenta_bancaria'],
                         'estado' => $e['estado'],
                     ]) ?>"
@@ -277,10 +350,10 @@ echo kpis([
 <div x-data="{
         open:false,
         salarios: <?= e(json_encode($puestosSalario, JSON_UNESCAPED_UNICODE)) ?>,
-        form:{id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'},
+        form:{id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'},
         sugerirSalario(){ const s = this.salarios[this.form.puesto_id]; if (s && (!this.form.salario || parseFloat(this.form.salario) === 0)) this.form.salario = s; }
      }"
-     @emp:new.window="form={id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'}; open=true"
+     @emp:new.window="form={id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'}; open=true"
      @emp:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
@@ -398,6 +471,14 @@ echo kpis([
               <option value="vacaciones">Vacaciones</option>
               <option value="licencia">Licencia</option>
             </select>
+          </div>
+          <div x-show="form.estado === 'inactivo'" x-cloak>
+            <label class="label" for="emp_fsalida">Último día de trabajo</label>
+            <input type="date" id="emp_fsalida" name="fecha_salida" x-model="form.fecha_salida" class="input">
+            <p class="text-[11px] text-slate-400 mt-1">
+              De esta fecha dependen su última quincena, la novedad de salida de la TSS y su liquidación.
+              Si la dejas vacía se pone la de hoy.
+            </p>
           </div>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
