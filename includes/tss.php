@@ -282,31 +282,103 @@ function tssNovedadesDelMes(string $anioMes): array
  * padrón y lo dice, para que nadie mande un archivo creyendo que salió de la
  * nómina real.
  */
+/**
+ * Lo que las nóminas confirmadas aportaron a UN MES, repartido por días.
+ *
+ * ── Por qué no basta con «las nóminas del mes» ──
+ *
+ * Antes se buscaban las que caben ENTERAS dentro del mes
+ * (`fecha_desde >= día 1 AND fecha_hasta <= último día`). Un período a caballo
+ * entre dos meses —del 26 de agosto al 10 de septiembre— no cabe entero en
+ * ninguno de los dos, así que no salía ni en uno ni en otro: **desaparecía de
+ * la TSS**. Y como la función cae al padrón cuando no encuentra nóminas, ese
+ * mes se declaraba con el sueldo de las 57 personas en vez de con lo que de
+ * verdad se pagó a 5. Catorce veces de más, y sin avisar.
+ *
+ * Ahora entra toda nómina que SOLAPE el mes, y su importe se reparte por los
+ * días que caen dentro. Una quincena normal cae entera y se reparte al 100%,
+ * así que el caso corriente no cambia ni un centavo.
+ *
+ * La regalía queda fuera SIEMPRE: no cotiza (arts. 219-222) y su período es el
+ * año completo, así que con una ventana de solape aparecería en los doce meses.
+ *
+ * Devuelve [empleado_id => ['base','afp','sfs','isr','per_capita']] y aparte
+ * cuántas nóminas la alimentaron.
+ */
+function tssLineasDelMes(string $anioMes): array
+{
+    $desde = $anioMes . '-01';
+    $hasta = date('Y-m-t', strtotime($desde));
+
+    $rows = qAll(
+        "SELECT nd.empleado_id, n.id AS nomina_id, n.fecha_desde, n.fecha_hasta,
+                COALESCE(SUM(nd.total_ingresos - nd.prima_vacacional),0) AS base,
+                COALESCE(SUM(nd.afp),0) afp, COALESCE(SUM(nd.sfs),0) sfs,
+                COALESCE(SUM(nd.isr),0) isr, COALESCE(SUM(nd.per_capita),0) per_capita
+           FROM nomina_detalles nd
+           JOIN nominas n ON n.id = nd.nomina_id
+          WHERE n.estado IN ('procesada','pagada')
+            AND n.tipo <> 'regalia'
+            AND n.fecha_desde <= ? AND n.fecha_hasta >= ?
+          GROUP BY nd.empleado_id, n.id, n.fecha_desde, n.fecha_hasta",
+        [$hasta, $desde]
+    );
+
+    $porEmpleado = [];
+    $nominas = [];
+    foreach ($rows as $r) {
+        $dentro = tssDiasSolape($r['fecha_desde'], $r['fecha_hasta'], $desde, $hasta);
+        if ($dentro <= 0) continue;
+        $largo = tssDiasSolape($r['fecha_desde'], $r['fecha_hasta'], $r['fecha_desde'], $r['fecha_hasta']);
+        $parte = $largo > 0 ? $dentro / $largo : 1.0;
+
+        $eid = (int) $r['empleado_id'];
+        $porEmpleado[$eid] ??= ['base' => 0.0, 'afp' => 0.0, 'sfs' => 0.0, 'isr' => 0.0, 'per_capita' => 0.0];
+        foreach (['base', 'afp', 'sfs', 'isr', 'per_capita'] as $k) {
+            $porEmpleado[$eid][$k] += (float) $r[$k] * $parte;
+        }
+        $nominas[(int) $r['nomina_id']] = true;
+    }
+    foreach ($porEmpleado as $eid => $v) {
+        $porEmpleado[$eid] = array_map(fn($x) => round($x, 2), $v);
+    }
+
+    return ['empleados' => $porEmpleado, 'nominas' => count($nominas),
+            'desde' => $desde, 'hasta' => $hasta];
+}
+
+/** Días de solape entre dos rangos, ambos inclusive. 0 si no se tocan. */
+function tssDiasSolape(string $aIni, string $aFin, string $bIni, string $bFin): int
+{
+    $ini = max(substr($aIni, 0, 10), substr($bIni, 0, 10));
+    $fin = min(substr($aFin, 0, 10), substr($bFin, 0, 10));
+    if ($ini > $fin) return 0;
+    return (int) floor((strtotime($fin) - strtotime($ini)) / 86400) + 1;
+}
+
 function tssDeclaracionMes(string $anioMes): array
 {
     $desde = $anioMes . '-01';
     $hasta = date('Y-m-t', strtotime($desde));
     $p = tssParametros($hasta);
 
-    $nominas = qCol("SELECT id FROM nominas WHERE estado IN ('procesada','pagada')
-                       AND fecha_desde >= ? AND fecha_hasta <= ?", [$desde, $hasta]);
+    $lin = tssLineasDelMes($anioMes);
 
     $filas = [];
-    if ($nominas) {
-        $ph = implode(',', array_fill(0, count($nominas), '?'));
-        // La base cotizable del mes es la SUMA de las quincenas del mes: el tope
-        // es mensual, así que se topa una sola vez sobre el total, no en cada
-        // quincena por separado.
-        $rows = qAll(
-            "SELECT e.id, e.nombre, e.apellido, e.cedula, e.salario,
-                    SUM(nd.total_ingresos - nd.prima_vacacional) AS base
-               FROM nomina_detalles nd
-               JOIN empleados e ON e.id = nd.empleado_id
-              WHERE nd.nomina_id IN ($ph)
-              GROUP BY e.id, e.nombre, e.apellido, e.cedula, e.salario
-              ORDER BY e.nombre, e.apellido", $nominas);
+    if ($lin['nominas'] > 0) {
+        $ids = array_keys($lin['empleados']);
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        $rows = [];
+        foreach (qAll("SELECT id, nombre, apellido, cedula, salario FROM empleados
+                        WHERE id IN ($ph) ORDER BY nombre, apellido", $ids) as $e) {
+            $e['base'] = $lin['empleados'][(int) $e['id']]['base'];
+            $rows[] = $e;
+        }
         $fuente = 'nóminas confirmadas del mes';
     } else {
+        // Sin nómina no hay nada declarado: se cae al padrón para poder SIMULAR
+        // el mes, y se dice bien claro de dónde salió. `confirmada` queda en
+        // false para que nadie registre un pago sobre una simulación.
         $rows = qAll("SELECT id, nombre, apellido, cedula, salario, salario AS base
                         FROM empleados WHERE estado='activo' ORDER BY nombre, apellido");
         $fuente = 'salario del padrón (no hay nómina confirmada en el mes)';
@@ -344,7 +416,8 @@ function tssDeclaracionMes(string $anioMes): array
         'desde'     => $desde,
         'hasta'     => $hasta,
         'fuente'    => $fuente,
-        'confirmada'=> (bool) $nominas,
+        'confirmada'=> $lin['nominas'] > 0,
+        'nominas'   => $lin['nominas'],
         'parametros'=> $p,
         'filas'     => $filas,
         'totales'   => $tot,
@@ -399,18 +472,16 @@ function tssObligacionesMes(string $anioMes): array
     $desde = $anioMes . '-01';
     $hasta = date('Y-m-t', strtotime($desde));
 
-    // Lo que las nóminas confirmadas del mes retuvieron de verdad.
-    $ret = qOne(
-        "SELECT COALESCE(SUM(nd.afp),0) afp, COALESCE(SUM(nd.sfs),0) sfs,
-                COALESCE(SUM(nd.isr),0) isr, COALESCE(SUM(nd.per_capita),0) per_capita,
-                COUNT(DISTINCT n.id) nominas, COUNT(*) lineas
-           FROM nomina_detalles nd
-           JOIN nominas n ON n.id = nd.nomina_id
-          WHERE n.estado IN ('procesada','pagada')
-            AND n.tipo <> 'regalia'
-            AND n.fecha_hasta BETWEEN ? AND ?",
-        [$desde, $hasta]
-    ) ?: ['afp' => 0, 'sfs' => 0, 'isr' => 0, 'per_capita' => 0, 'nominas' => 0, 'lineas' => 0];
+    // Lo retenido sale de la MISMA fuente prorrateada que la declaración. Con
+    // dos consultas distintas —una por «fecha_hasta dentro del mes» y otra por
+    // solape— una nómina a caballo entre dos meses contaba en un lado y no en el
+    // otro, y la comparación de abajo acusaba una diferencia que no existía.
+    $lin = tssLineasDelMes($anioMes);
+    $ret = ['afp' => 0.0, 'sfs' => 0.0, 'isr' => 0.0, 'per_capita' => 0.0,
+            'nominas' => $lin['nominas'], 'lineas' => count($lin['empleados'])];
+    foreach ($lin['empleados'] as $v) {
+        foreach (['afp', 'sfs', 'isr', 'per_capita'] as $k) $ret[$k] += $v[$k];
+    }
 
     // Y lo que dice la declaración del mes, que es lo que se le paga a la TSS.
     $d = tssDeclaracionMes($anioMes);
@@ -477,7 +548,10 @@ function tssPagoRegistrar(string $anioMes, string $tipo, array $datos): int
     // nóminas —para que se pueda simular— y sin este corte se podía registrar
     // el pago de un mes de hace tres años calculado con los sueldos de hoy, y
     // meter ese gasto inventado en el resultado.
-    if ((int) $o['nominas'] === 0) {
+    if ((int) $o['nominas'] === 0 || !$o['confirmada']) {
+        // `confirmada` en false significa que la declaración se armó con el
+        // padrón para poder simular. Registrar un pago sobre eso metería en los
+        // libros un gasto que nadie hizo, calculado con los sueldos de hoy.
         throw new RuntimeException('No hay nada que pagar en ' . $anioMes
             . ': ninguna nómina de ese mes está confirmada.');
     }
