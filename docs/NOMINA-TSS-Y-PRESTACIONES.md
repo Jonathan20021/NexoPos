@@ -92,6 +92,27 @@ de salida»), la novedad de la TSS y la liquidación de prestaciones. Sin ella,
 marcar a alguien inactivo lo borraba de la nómina en curso sin dejar rastro de
 cuándo se fue.
 
+### Qué nómina entra en la declaración de un mes
+Entra toda la que **solape** el mes, y su importe se reparte por los días que
+caen dentro (`tssLineasDelMes()`). Una quincena normal cae entera y se reparte al
+100%, así que el caso corriente no cambia ni un centavo.
+
+Antes se buscaban las que caben **enteras** dentro del mes, y un período a
+caballo —del 26 de agosto al 10 de septiembre— no cabe entero en ninguno de los
+dos: desaparecía de la TSS. Peor aún, como la función cae al padrón cuando no
+encuentra nóminas, ese mes se declaraba con el sueldo de las 57 personas
+(RD$ 1,920,877.75) en vez de con lo que de verdad se pagó a cinco (RD$ 134,996):
+catorce veces de más, y la pestaña de pago ofrecía registrar ese importe.
+
+La regalía queda fuera **siempre**. Antes la salvaba el accidente de que su
+período (el año completo) no cabía en ningún mes; con una ventana de solape
+habría aparecido en los doce.
+
+Cuando de verdad no hay nómina, la declaración cae al padrón **para poder
+simular** y lo dice en pantalla; `confirmada` queda en `false` y el registro del
+pago se niega, porque un gasto calculado con los sueldos de hoy sobre un mes sin
+nómina es un gasto que nadie hizo.
+
 ---
 
 ## 3. El pago del mes — y el 20% del costo que no salía en el resultado
