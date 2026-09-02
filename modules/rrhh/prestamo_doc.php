@@ -28,51 +28,6 @@ $totalPagar   = round((float) $p['monto'] + $totalInteres, 2);
 $esAvance     = $p['tipo'] === 'avance';
 $nombre       = trim($p['nombre'] . ' ' . $p['apellido']);
 
-/** Monto en letras: en un documento que se firma, la cifra va también escrita. */
-function pdEnLetras(float $n): string
-{
-    $u = ['', 'UN', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ',
-          'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE'];
-    $d = ['', '', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
-    $c = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS',
-          'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
-
-    // Los veintitantos se escriben en una sola palabra y con sus tildes; no
-    // salen de pegar «VEINTI» al dígito. El documento va en mayúsculas.
-    $veinti = [20 => 'VEINTE', 'VEINTIÚN', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO',
-               'VEINTICINCO', 'VEINTISÉIS', 'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
-
-    $tri = function (int $n) use ($u, $d, $c, $veinti, &$tri): string {
-        if ($n === 0)   return '';
-        if ($n === 100) return 'CIEN';
-        if ($n < 20)    return $u[$n];
-        if ($n < 30)    return $veinti[$n];
-        if ($n < 100) {
-            $dec = intdiv($n, 10); $uni = $n % 10;
-            return $d[$dec] . ($uni ? ' Y ' . $u[$uni] : '');
-        }
-        return $c[intdiv($n, 100)] . ($n % 100 ? ' ' . $tri($n % 100) : '');
-    };
-
-    $ent = (int) floor($n);
-    $cts = (int) round(($n - $ent) * 100);
-    if ($ent === 0) $txt = 'CERO';
-    else {
-        $mill = intdiv($ent, 1000000);
-        $mil  = intdiv($ent % 1000000, 1000);
-        $res  = $ent % 1000;
-        $txt = '';
-        if ($mill) $txt .= ($mill === 1 ? 'UN MILLÓN' : $tri($mill) . ' MILLONES') . ' ';
-        if ($mil)  $txt .= ($mil === 1 ? 'MIL' : $tri($mil) . ' MIL') . ' ';
-        if ($res)  $txt .= $tri($res);
-        $txt = trim($txt);
-    }
-    // «UN MILLÓN PESOS» no se dice: cuando la cifra termina en millón o
-    // millones, el sustantivo va con «DE».
-    $de = preg_match('/MILL(ÓN|ONES)$/u', $txt) ? ' DE' : '';
-    return $txt . $de . ' PESOS DOMINICANOS CON ' . str_pad((string) $cts, 2, '0', STR_PAD_LEFT) . '/100';
-}
-
 $filas = '';
 foreach ($cuotas as $c) {
     $filas .= '<tr>'
@@ -104,7 +59,7 @@ $html .= '<p class="cuerpo">Yo, <strong>' . e($nombre) . '</strong>, portador'
     . (!empty($emp['rnc']) ? ', RNC ' . e($emp['rnc']) : '') . ', declaro que he recibido'
     . ($esAvance ? ' un <strong>avance de sueldo</strong>' : ' un <strong>préstamo</strong>')
     . ' por la suma de <strong>' . money($p['monto']) . '</strong>'
-    . ' (<em>' . e(pdEnLetras((float) $p['monto'])) . '</em>)'
+    . ' (<em>' . e(pdf_en_letras((float) $p['monto'])) . '</em>)'
     . ($p['motivo'] ? ', destinado a <em>' . e($p['motivo']) . '</em>' : '')
     . '.</p>';
 

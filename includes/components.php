@@ -54,6 +54,7 @@ function nav_groups(): array
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],
             ['Préstamos', 'wallet', url('modules/rrhh/prestamos.php'), 'prestamos.ver'],
             ['Amonestaciones', 'alert', url('modules/rrhh/amonestaciones.php'), 'amonestaciones.ver'],
+            ['Prestaciones laborales', 'scale', url('modules/rrhh/prestaciones.php'), 'prestaciones.ver'],
             ['TSS', 'shield', url('modules/rrhh/tss.php'), 'tss.ver'],
             ['Departamentos', 'building', url('modules/rrhh/departamentos.php'), 'rrhh_departamentos.ver'],
         ]],
@@ -92,7 +93,7 @@ function nav_groups(): array
             ['Cuentas por cobrar', 'wallet', url('modules/reportes/cxc.php'), 'reportes.finanzas'],
             ['Contabilidad y DGII', 'shield', url('modules/reportes/libro_diario.php'), 'reportes.contabilidad'],
             ['Expediente de auditoría', 'shield', url('modules/reportes/expediente_auditoria.php'), 'reportes.sanidad'],
-            ['Reporte gerencial', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ver'],
+            ['Reporte gerencial', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ejecutivo'],
         ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],

@@ -103,6 +103,71 @@ function regaliaPagosDelAnio(int $anio): array
 }
 
 /**
+ * La regalía de UNA persona, con el desglose de dónde salió cada peso.
+ *
+ * Vive aparte porque la liquidación de un empleado que se va necesita
+ * exactamente esto para su regalía proporcional, y calcular las 57 filas para
+ * quedarse con una sería tirar el trabajo.
+ *
+ * Devuelve null si esa persona no trabajó ningún día del año.
+ *
+ * @param array $e      Fila de `empleados` (hace falta salario, fecha_ingreso, fecha_salida).
+ * @param array $pagos  Sus líneas de nómina del año (de regaliaPagosDelAnio()).
+ */
+function regaliaDeEmpleado(array $e, int $anio, string $corte, array $pagos, bool $completarConPadron = true): ?array
+{
+    $anioIni = sprintf('%04d-01-01', $anio);
+
+    // Ventana en la que esta persona estuvo empleada dentro del año.
+    $vIni = max($anioIni, (string) ($e['fecha_ingreso'] ?: $anioIni));
+    $vFin = min($corte, (string) ($e['fecha_salida'] ?: $corte));
+    if ($vIni > $vFin) return null;
+
+    $deNomina = 0.0; $diasNomina = 0;
+    foreach ($pagos as $p) {
+        $d = regaliaDiasSolape($p['fecha_desde'], $p['fecha_hasta'], $vIni, $vFin);
+        if ($d <= 0) continue;
+        $largo = regaliaDiasSolape($p['fecha_desde'], $p['fecha_hasta'], $p['fecha_desde'], $p['fecha_hasta']);
+        // Si el período se sale de la ventana, solo entra la parte de dentro.
+        $deNomina   += (float) $p['monto'] * ($largo > 0 ? $d / $largo : 1);
+        $diasNomina += $d;
+    }
+
+    $diasVentana = regaliaDiasSolape($vIni, $vFin, $vIni, $vFin);
+    $diasSueltos = max(0, $diasVentana - $diasNomina);
+
+    // Lo que ninguna nómina cubre, al sueldo del padrón prorrateado por día de
+    // calendario (365/12 = 30.4167 días por mes, que es como se prorratea un
+    // sueldo mensual en un tramo suelto).
+    $dePadron = $completarConPadron && $diasSueltos > 0
+        ? round((float) $e['salario'] / (365 / 12) * $diasSueltos, 2)
+        : 0.0;
+
+    $devengado = round($deNomina + $dePadron, 2);
+
+    return [
+        'empleado_id'   => (int) $e['id'],
+        'codigo'        => $e['codigo'] ?? null,
+        'nombre'        => trim(($e['nombre'] ?? '') . ' ' . ($e['apellido'] ?? '')),
+        'cedula'        => $e['cedula'] ?? null,
+        'grupo'         => ($e['sucursal'] ?? null) ?: (($e['departamento'] ?? null) ?: 'Sin ubicación'),
+        'salario'       => (float) $e['salario'],
+        'fecha_ingreso' => $e['fecha_ingreso'] ?? null,
+        'fecha_salida'  => $e['fecha_salida'] ?? null,
+        'estado'        => $e['estado'] ?? null,
+        'ventana'       => [$vIni, $vFin],
+        'dias_ventana'  => $diasVentana,
+        'dias_nomina'   => $diasNomina,
+        'dias_padron'   => $completarConPadron ? $diasSueltos : 0,
+        'dias_sin'      => $completarConPadron ? 0 : $diasSueltos,
+        'de_nomina'     => round($deNomina, 2),
+        'de_padron'     => $dePadron,
+        'devengado'     => $devengado,
+        'regalia'       => round($devengado / 12, 2),
+    ];
+}
+
+/**
  * El cuadro completo de la regalía de un año.
  *
  * @param bool $completarConPadron Rellenar con el sueldo del padrón los días
@@ -140,56 +205,16 @@ function regaliaCalcular(int $anio, bool $completarConPadron = true): array
             'dias_nomina' => 0, 'dias_padron' => 0, 'con_relleno' => 0];
 
     foreach ($empleados as $e) {
-        $eid = (int) $e['id'];
+        $f = regaliaDeEmpleado($e, $anio, $corte, $pagos[(int) $e['id']] ?? [], $completarConPadron);
+        if ($f === null) continue;   // no trabajó ningún día del año
+        $filas[] = $f;
 
-        // Ventana en la que esta persona estuvo empleada dentro del año.
-        $vIni = max($anioIni, (string) ($e['fecha_ingreso'] ?: $anioIni));
-        $vFin = min($corte, (string) ($e['fecha_salida'] ?: $corte));
-        if ($vIni > $vFin) continue;   // no trabajó ningún día del año
-
-        $deNomina = 0.0; $diasNomina = 0;
-        foreach ($pagos[$eid] ?? [] as $p) {
-            $d = regaliaDiasSolape($p['fecha_desde'], $p['fecha_hasta'], $vIni, $vFin);
-            if ($d <= 0) continue;
-            $largo = regaliaDiasSolape($p['fecha_desde'], $p['fecha_hasta'], $p['fecha_desde'], $p['fecha_hasta']);
-            // Si el período se sale de la ventana, solo entra la parte de dentro.
-            $deNomina  += (float) $p['monto'] * ($largo > 0 ? $d / $largo : 1);
-            $diasNomina += $d;
-        }
-
-        $diasVentana = regaliaDiasSolape($vIni, $vFin, $vIni, $vFin);
-        $diasSueltos = max(0, $diasVentana - $diasNomina);
-
-        // Lo que ninguna nómina cubre, al sueldo del padrón prorrateado por día
-        // de calendario (365/12 = 30.4167 días por mes, que es como se prorratea
-        // un sueldo mensual en un tramo suelto).
-        $demPadron = $completarConPadron && $diasSueltos > 0
-            ? round((float) $e['salario'] / (365 / 12) * $diasSueltos, 2)
-            : 0.0;
-
-        $devengado = round($deNomina + $demPadron, 2);
-        $regalia   = round($devengado / 12, 2);
-
-        $filas[] = [
-            'empleado_id'   => $eid,
-            'codigo'        => $e['codigo'],
-            'nombre'        => trim($e['nombre'] . ' ' . $e['apellido']),
-            'cedula'        => $e['cedula'],
-            'grupo'         => $e['sucursal'] ?: ($e['departamento'] ?: 'Sin ubicación'),
-            'salario'       => (float) $e['salario'],
-            'fecha_ingreso' => $e['fecha_ingreso'],
-            'fecha_salida'  => $e['fecha_salida'],
-            'estado'        => $e['estado'],
-            'ventana'       => [$vIni, $vFin],
-            'dias_ventana'  => $diasVentana,
-            'dias_nomina'   => $diasNomina,
-            'dias_padron'   => $completarConPadron ? $diasSueltos : 0,
-            'dias_sin'      => $completarConPadron ? 0 : $diasSueltos,
-            'de_nomina'     => round($deNomina, 2),
-            'de_padron'     => $demPadron,
-            'devengado'     => $devengado,
-            'regalia'       => $regalia,
-        ];
+        $diasNomina  = $f['dias_nomina'];
+        $diasSueltos = $f['dias_padron'] + $f['dias_sin'];
+        $deNomina    = $f['de_nomina'];
+        $demPadron   = $f['de_padron'];
+        $devengado   = $f['devengado'];
+        $regalia     = $f['regalia'];
 
         $tot['devengado']  += $devengado;
         $tot['de_nomina']  += $deNomina;

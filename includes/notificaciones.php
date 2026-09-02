@@ -299,6 +299,7 @@ function notif_generar(): void
     notif_gen_aprobaciones();
     notif_gen_fiscal();
     notif_gen_rrhh();
+    notif_gen_nomina_calendario();
     notif_gen_margenes();
     notif_gen_sanidad();
     notif_gen_seguridad();
@@ -951,6 +952,133 @@ function notif_gen_fiscal(): void
 }
 
 /** Recordatorios de personal: cumpleaños y contratos temporales por vencer. */
+/**
+ * El calendario de quien lleva la nómina y la TSS.
+ *
+ * Cuatro cosas que hoy solo se saben si alguien se acuerda de mirar, y que
+ * cuando se olvidan cuestan dinero o una multa:
+ *
+ *   · Los topes de cotización de la Ley 87-01 siguen apagados porque falta el
+ *     salario mínimo cotizable. Mientras tanto, un sueldo alto cotiza completo.
+ *   · La regalía pascual vence el 20 de diciembre y no se ha generado.
+ *   · Cerró un mes con nómina confirmada y su autodeterminación está lista.
+ *   · Hay cédulas que no pasan el dígito verificador: ante la TSS esa persona
+ *     no cotiza.
+ */
+function notif_gen_nomina_calendario(): void
+{
+    $items = [];
+    $hoy   = date('Y-m-d');
+
+    /* ---------- 1) Topes de la TSS sin encender ---------- */
+    if (function_exists('tssParametros')) {
+        $p = tssParametros();
+        if ($p !== null && !tssTopesActivos($p)) {
+            $alto = (float) qVal("SELECT COALESCE(MAX(salario),0) FROM empleados WHERE estado = 'activo'");
+            $items[] = [
+                'clave' => 'tss_sin_topes', 'categoria' => 'rrhh', 'prioridad' => 'media',
+                'titulo' => 'Los topes de cotización de la TSS siguen apagados',
+                'mensaje' => (float) $p['salario_minimo_cotizable'] <= 0
+                    ? 'Falta el salario mínimo cotizable vigente: sin él no se pueden aplicar los topes de la '
+                      . 'Ley 87-01 y el sueldo más alto del padrón (' . money($alto) . ') cotiza completo. '
+                      . 'Lo confirma el contador.'
+                    : 'Están configurados pero desactivados. Míralos antes de la próxima nómina.',
+                'url' => 'modules/rrhh/tss.php?tab=parametros',
+                'icono' => 'shield', 'color' => 'amber', 'permiso' => 'tss.configurar',
+            ];
+        }
+    }
+
+    /* ---------- 2) Regalía pascual ---------- */
+    if (function_exists('regaliaNominaDelAnio')) {
+        $anio  = (int) date('Y');
+        $tope  = regaliaFechaTope($anio);
+        $faltan = (int) floor((strtotime($tope) - strtotime($hoy)) / 86400);
+        // Se avisa desde 75 días antes: generarla necesita revisar 57 fichas y
+        // cuadrar el devengado del año, no es cosa de la víspera.
+        if ($faltan <= 75) {
+            $ya = regaliaNominaDelAnio($anio);
+            if (!$ya || $ya['estado'] === 'borrador') {
+                $items[] = [
+                    'clave' => 'regalia_pendiente:' . $anio, 'categoria' => 'rrhh',
+                    'prioridad' => $faltan <= 15 ? 'critica' : ($faltan <= 40 ? 'alta' : 'media'),
+                    'titulo' => $faltan < 0
+                        ? 'La regalía pascual ' . $anio . ' venció el 20 de diciembre'
+                        : 'Regalía pascual ' . $anio . ': quedan ' . $faltan . ' día(s)',
+                    'mensaje' => ($ya
+                        ? 'Está generada como borrador por ' . money($ya['total_neto']) . ', pero sin confirmar ni pagar. '
+                        : 'Todavía no se ha generado. ')
+                        . 'El art. 219 obliga a pagarla a más tardar el 20 de diciembre.',
+                    'url' => 'modules/rrhh/regalia.php?anio=' . $anio,
+                    'icono' => 'sun', 'color' => $faltan <= 15 ? 'rose' : 'amber',
+                    'permiso' => 'rrhh_nomina.ver',
+                ];
+            }
+        }
+    }
+
+    /* ---------- 3) La TSS del mes que cerró ---------- */
+    // Solo se avisa si ese mes tuvo nómina confirmada: sin nómina no hay nada
+    // que declarar y el aviso sería ruido.
+    $mesAnterior = date('Y-m-01', strtotime('first day of last month'));
+    $finAnterior = date('Y-m-t', strtotime($mesAnterior));
+    $conNomina = (int) qVal(
+        "SELECT COUNT(*) FROM nominas
+          WHERE estado IN ('procesada','pagada') AND tipo <> 'regalia'
+            AND fecha_hasta BETWEEN ? AND ?", [$mesAnterior, $finAnterior]);
+    if ($conNomina > 0) {
+        $dia = (int) date('j');
+        $items[] = [
+            'clave' => 'tss_mes:' . substr($mesAnterior, 0, 7), 'categoria' => 'rrhh',
+            'prioridad' => $dia >= 10 ? 'alta' : 'media',
+            'titulo' => 'TSS de ' . mesNombre((int) substr($mesAnterior, 5, 2)) . ' ' . substr($mesAnterior, 0, 4),
+            'mensaje' => 'El mes cerró con ' . $conNomina . ' nómina(s) confirmada(s) y su autodeterminación '
+                . 'ya se puede sacar: cédula, base cotizable por régimen y aportes de las dos partes.',
+            'url' => 'modules/rrhh/tss.php?tab=declaracion&mes=' . substr($mesAnterior, 0, 7),
+            'icono' => 'shield', 'color' => $dia >= 10 ? 'rose' : 'sky',
+            'permiso' => 'tss.ver',
+        ];
+    }
+
+    /* ---------- 4) Cédulas que no cuadran ---------- */
+    if (function_exists('dgiiDocumentoValido')) {
+        $malas = [];
+        foreach (qAll("SELECT id, nombre, apellido, cedula FROM empleados
+                        WHERE estado = 'activo' AND cedula IS NOT NULL AND cedula <> ''") as $e) {
+            if (!dgiiDocumentoValido((string) $e['cedula'])) $malas[] = $e;
+        }
+        if ($malas) {
+            $nombres = array_slice(array_map(fn($x) => trim($x['nombre'] . ' ' . $x['apellido']), $malas), 0, 3);
+            $items[] = [
+                'clave' => 'cedulas_invalidas', 'categoria' => 'rrhh', 'prioridad' => 'alta',
+                'titulo' => count($malas) . ' cédula(s) no pasan el dígito verificador',
+                'mensaje' => 'En la TSS la cédula identifica a la persona: si no cuadra, ese empleado se queda '
+                    . 'sin cotizar. ' . implode(', ', $nombres)
+                    . (count($malas) > 3 ? ' y ' . (count($malas) - 3) . ' más' : '') . '.',
+                'url' => 'modules/rrhh/empleados.php',
+                'icono' => 'id', 'color' => 'rose', 'permiso' => 'rrhh_empleados.ver',
+            ];
+        }
+    }
+
+    /* ---------- 5) Fechas de ingreso que son un marcador de carga ---------- */
+    if (function_exists('regaliaIngresosSospechosos')) {
+        foreach (regaliaIngresosSospechosos((int) date('Y')) as $s) {
+            $items[] = [
+                'clave' => 'ingreso_marcador:' . $s['fecha'], 'categoria' => 'rrhh', 'prioridad' => 'media',
+                'titulo' => $s['empleados'] . ' empleados con la misma fecha de ingreso',
+                'mensaje' => 'Todos figuran ingresando el ' . fechaCorta($s['fecha']) . ', que casi seguro es la '
+                    . 'fecha con la que se cargó el padrón. De ella salen la antigüedad, la regalía, las '
+                    . 'vacaciones y las prestaciones: mientras no se corrija, esos cálculos salen cortos.',
+                'url' => 'modules/rrhh/empleados.php',
+                'icono' => 'calendar', 'color' => 'amber', 'permiso' => 'rrhh_empleados.ver',
+            ];
+        }
+    }
+
+    notif_sync('nomina_calendario', $items);
+}
+
 function notif_gen_rrhh(): void
 {
     $cumple = qAll(

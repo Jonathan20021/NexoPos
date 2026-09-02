@@ -1,6 +1,11 @@
 <?php
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.ver');
+// Esta pantalla es el estado de resultados de la empresa: ingresos, costo de
+// ventas, utilidad bruta y neta. Se guardaba con `reportes.ver`, que es el
+// permiso de ENTRAR al Centro de Reportes, no el de ver la utilidad —así que
+// cualquiera a quien se le diera acceso al hub para un informe suelto se
+// llevaba de paso el P&L completo. Va con permiso de dirección o de finanzas.
+require_any_perm(['reportes.ejecutivo', 'reportes.finanzas']);
 require_once dirname(__DIR__, 2) . '/includes/charts.php';
 
 /* ============================================================
