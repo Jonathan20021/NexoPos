@@ -1027,17 +1027,35 @@ function notif_gen_nomina_calendario(): void
           WHERE estado IN ('procesada','pagada') AND tipo <> 'regalia'
             AND fecha_hasta BETWEEN ? AND ?", [$mesAnterior, $finAnterior]);
     if ($conNomina > 0) {
-        $dia = (int) date('j');
-        $items[] = [
-            'clave' => 'tss_mes:' . substr($mesAnterior, 0, 7), 'categoria' => 'rrhh',
-            'prioridad' => $dia >= 10 ? 'alta' : 'media',
-            'titulo' => 'TSS de ' . mesNombre((int) substr($mesAnterior, 5, 2)) . ' ' . substr($mesAnterior, 0, 4),
-            'mensaje' => 'El mes cerró con ' . $conNomina . ' nómina(s) confirmada(s) y su autodeterminación '
-                . 'ya se puede sacar: cédula, base cotizable por régimen y aportes de las dos partes.',
-            'url' => 'modules/rrhh/tss.php?tab=declaracion&mes=' . substr($mesAnterior, 0, 7),
-            'icono' => 'shield', 'color' => $dia >= 10 ? 'rose' : 'sky',
-            'permiso' => 'tss.ver',
-        ];
+        $dia  = (int) date('j');
+        $per  = substr($mesAnterior, 0, 7);
+        $etiq = mesNombre((int) substr($mesAnterior, 5, 2)) . ' ' . substr($mesAnterior, 0, 4);
+        $ob   = function_exists('tssObligacionesMes') ? tssObligacionesMes($per) : null;
+
+        // Se avisa de lo que FALTA por pagar, no de que existe una declaración.
+        // Mientras no se pague, ese costo —más de un 20% de lo que cuesta la
+        // nómina— no está en el resultado, y ese es el motivo de la alerta.
+        foreach ([
+            ['tss', 'Tesorería de la Seguridad Social', 'shield'],
+            ['isr', 'ISR retenido (IR-3) a la DGII',        'receipt'],
+        ] as [$cual, $aQuien, $ico]) {
+            $monto = $ob ? (float) ($cual === 'tss' ? $ob['tss']['total'] : $ob['isr']['total']) : 0.0;
+            $pagado = $ob ? !empty($ob[$cual]['pago']) : false;
+            if ($monto <= 0 || $pagado) continue;
+            $items[] = [
+                'clave' => 'tss_mes:' . $cual . ':' . $per, 'categoria' => 'rrhh',
+                'prioridad' => $dia >= 15 ? 'critica' : ($dia >= 5 ? 'alta' : 'media'),
+                'titulo' => $aQuien . ' de ' . $etiq . ': ' . money($monto) . ' sin pagar',
+                'mensaje' => 'El mes cerró con ' . $conNomina . ' nómina(s) confirmada(s). '
+                    . ($cual === 'tss'
+                        ? 'Son las retenciones de la gente más el aporte patronal. '
+                        : 'Es el impuesto que se le retuvo a los asalariados. ')
+                    . 'Hasta que no se registre el pago, ese costo no aparece en el resultado.',
+                'url' => 'modules/rrhh/tss.php?tab=pagos&mes=' . $per,
+                'icono' => $ico, 'color' => $dia >= 5 ? 'rose' : 'sky',
+                'permiso' => 'tss.ver',
+            ];
+        }
     }
 
     /* ---------- 4) Cédulas que no cuadran ---------- */

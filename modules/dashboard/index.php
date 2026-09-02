@@ -37,10 +37,16 @@ $verDinero = can('finanzas.ver') || can('reportes.ver') || is_super();
  * Cada bloque se abre ahora con el permiso del módulo que resume. Quien no tenga
  * ninguno ve a dónde ir, no una pantalla en blanco.
  */
-$verVentas     = can_any(['ventas.ver', 'pos.ver', 'pos.vender', 'reportes.ver',
+// `reportes.ver` NO entra en esta lista, y es el mismo error que ya se contó
+// arriba: es el permiso de ENTRAR al Centro de Reportes, no el de ver la
+// facturación. Estaba aquí, así que en cuanto se le dio el hub al administrador
+// de nómina —para que abriera «Resumen de nómina», que es suyo— volvió a ver la
+// venta del mes, el ticket promedio y las últimas facturas. Los permisos que SÍ
+// implican ventas son estos.
+$verVentas     = can_any(['ventas.ver', 'pos.ver', 'pos.vender',
                           'reportes.ejecutivo', 'reportes.operacion', 'finanzas.ver']);
 $verCaja       = can('caja.ver');
-$verSucursales = can_any(['reportes.ejecutivo', 'reportes.ver']);
+$verSucursales = can_any(['reportes.ejecutivo', 'reportes.sucursales']);
 $verProductos  = can_any(['reportes.operacion', 'productos.ver', 'inventario.ver']);
 $verInventario = can_any(['inventario.ver', 'productos.ver']);
 $verMetas      = can('metas.ver');
@@ -382,12 +388,37 @@ if ($verRRHH) {
         }
     }
     if ($verNomina) {
-        $rrhh['nomina'] = qOne("SELECT n.* FROM nominas n WHERE $scopeN
+        // La regalía queda fuera de «última nómina»: su período termina el 31 de
+        // diciembre, así que en cuanto se genera se convierte en la más reciente
+        // y tapa la quincena de verdad hasta fin de año. Tiene su propia pantalla.
+        $rrhh['nomina'] = qOne("SELECT n.* FROM nominas n
+                                 WHERE n.tipo <> 'regalia' AND $scopeN
                                  ORDER BY n.fecha_hasta DESC, n.id DESC LIMIT 1");
         $rrhh['por_pagar'] = (int) qVal("SELECT COUNT(*) FROM nominas n
                                           WHERE n.estado <> 'pagada' AND $scopeN");
     }
-    if ($verTss)       $rrhh['tss']  = tssDeclaracionMes(date('Y-m'));
+    if ($verTss) {
+        $rrhh['tss'] = tssDeclaracionMes(date('Y-m'));
+        // Lo que de verdad hay que hacer no es mirar el mes en curso —que va a
+        // medias— sino pagar lo de los meses ya cerrados. Y mientras eso no se
+        // registre, ese costo (más del 20% de lo que cuesta la nómina) no está
+        // en el resultado. Se miran tres meses hacia atrás: más que eso ya no es
+        // un olvido, es otra conversación.
+        $rrhh['tss_deuda'] = ['total' => 0.0, 'meses' => []];
+        if (function_exists('tssObligacionesMes')) {
+            for ($i = 1; $i <= 3; $i++) {
+                $m = date('Y-m', strtotime("-$i month"));
+                $ob = tssObligacionesMes($m);
+                if ($ob['nominas'] === 0) continue;
+                $falta = 0.0;
+                if (empty($ob['tss']['pago'])) $falta += (float) $ob['tss']['total'];
+                if (empty($ob['isr']['pago'])) $falta += (float) $ob['isr']['total'];
+                if ($falta <= 0.005) continue;
+                $rrhh['tss_deuda']['total'] += $falta;
+                $rrhh['tss_deuda']['meses'][] = $m;
+            }
+        }
+    }
     if ($verPrestamos) $rrhh['pres'] = presResumen();
     if ($verVacaciones) {
         $rrhh['vacaciones'] = (int) qVal("SELECT COUNT(*) FROM vacaciones WHERE estado='solicitada'");
@@ -1164,10 +1195,18 @@ $verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
   }
   if ($verTss) {
       $t = $rrhh['tss']['totales'] ?? [];
+      $deuda = (float) ($rrhh['tss_deuda']['total'] ?? 0);
       $tarjetas[] = ['label' => 'TSS de este mes', 'valor' => money((float) ($t['general'] ?? 0)),
-          'icono' => 'shield', 'color' => 'violet', 'href' => url('modules/rrhh/tss.php'),
+          'icono' => 'shield', 'color' => 'violet',
+          'href' => url('modules/rrhh/tss.php?tab=declaracion'),
           'nota' => 'Empleado ' . money((float) ($t['empleado'] ?? 0), false)
                   . ' · empresa ' . money((float) ($t['empleador'] ?? 0), false)];
+      $tarjetas[] = ['label' => 'TSS e IR-3 sin pagar', 'valor' => money($deuda),
+          'icono' => 'dollar', 'color' => $deuda > 0 ? 'rose' : 'emerald',
+          'href' => url('modules/rrhh/tss.php?tab=pagos'),
+          'nota' => $deuda > 0
+              ? 'De ' . count($rrhh['tss_deuda']['meses']) . ' mes(es) cerrado(s) · no está en el resultado'
+              : 'Los meses cerrados están saldados'];
   }
   if ($verPrestamos) {
       $pr = $rrhh['pres'] ?? [];
@@ -1188,6 +1227,14 @@ $verDerecha = ($metas && $verMetas) || (!$metas && $verInventario);
                    . 'sin cotizar. ' . e(implode(', ', array_slice($c, 0, 4)))
                    . (count($c) > 4 ? ' y ' . (count($c) - 4) . ' más' : '') . '.',
           'href' => url('modules/rrhh/empleados.php')];
+  }
+  if (!empty($rrhh['tss_deuda']['total'])) {
+      $ms = $rrhh['tss_deuda']['meses'];
+      $pendientes[] = ['icono' => 'shield', 'color' => 'rose',
+          'titulo' => money($rrhh['tss_deuda']['total']) . ' de TSS e ISR sin registrar',
+          'texto' => 'De ' . implode(', ', $ms) . '. Son las retenciones de la gente más el aporte '
+                   . 'patronal: mientras no se registre el pago, ese costo no aparece en el resultado.',
+          'href' => url('modules/rrhh/tss.php?tab=pagos&mes=' . $ms[0])];
   }
   if (!empty($rrhh['por_pagar'])) {
       $n = (int) $rrhh['por_pagar'];

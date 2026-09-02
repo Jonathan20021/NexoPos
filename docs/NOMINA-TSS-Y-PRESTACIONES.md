@@ -57,13 +57,57 @@ tope entero no lo corta nunca.
 > encenderlos —nadie debería cambiar lo que se le retiene a 57 personas sin ver
 > primero el número— y la campana lo recuerda.
 
-La pantalla tiene tres pestañas: parámetros (con su historial de vigencias),
-declaración del mes (base cotizable y aportes de las dos partes, exportable) y
-novedades (ingresos, salidas y cambios de salario del período).
+La pantalla tiene cuatro pestañas: parámetros (con su historial de vigencias),
+declaración del mes (base cotizable y aportes de las dos partes, exportable),
+**pago del mes** (§3) y novedades (ingresos, salidas y cambios de salario).
 
 ---
 
-## 3. Volante de pago
+## 3. El pago del mes — y el 20% del costo que no salía en el resultado
+
+Una nómina mueve **tres** cosas y el sistema solo registraba una:
+
+| | Qué es | Cuándo sale el dinero |
+|---|---|---|
+| **Neto** | Lo que cobra la gente | Al pagar la nómina — se registraba |
+| **Retenciones** | AFP, SFS, ISR y per cápita: la empresa las guarda y las remite | Al pagar la TSS y el IR-3 — **no se registraba** |
+| **Aporte patronal** | SFS 7.09%, AFP 7.10%, riesgos 1.10%, INFOTEP 1% | Al pagar la TSS — **no se registraba** |
+
+Medido sobre la segunda quincena de julio de 2026 con el padrón real:
+
+    bruto                950,980.83
+    aporte patronal      154,914.87
+    COSTO REAL         1,105,895.70
+    en el resultado      877,721.39   (solo el neto)
+    FALTABA              228,174.31   (20.6%)
+
+`transacciones` es un libro de **caja**: el gasto entra cuando el dinero sale.
+Así que no hacía falta inventar un asiento de devengo — lo que faltaba era la
+pantalla donde se registra que se pagó. Es la pestaña **Pago del mes** de la
+pantalla de TSS: calcula lo que se debe a la Tesorería y a la DGII por separado
+(son dos pagos con dos plazos), deja registrar cada uno contra una cuenta, y ahí
+es donde el costo entra al resultado, repartido en tres categorías legibles:
+*Nómina*, *Seguridad Social (TSS)* y *Retenciones e impuestos*.
+
+Dos comprobaciones que hace la pantalla:
+
+- **Compara lo retenido con lo declarado.** Lo retenido es lo que las nóminas le
+  quitaron de verdad a la gente; lo declarado es lo que sale de aplicar los
+  parámetros sobre la base del mes completo. Normalmente coinciden, pero el tope
+  de la TSS es **mensual** y la nómina lo aplica quincena a quincena: en cuanto
+  los topes se enciendan, un sueldo alto puede dar distinto. A la Tesorería se le
+  paga lo declarado y la diferencia sale en pantalla, no escondida.
+- **No deja pagar un mes sin nómina confirmada.** `tssDeclaracionMes()` cae al
+  padrón cuando no encuentra nóminas —para poder simular— y sin ese corte se
+  podía registrar el pago de un mes de hace tres años calculado con los sueldos
+  de hoy, y meter ese gasto inventado en el resultado.
+
+Un pago por período y tipo, con índice único: pagar dos veces la TSS de agosto es
+un error de dedo, no un caso de uso.
+
+---
+
+## 4. Volante de pago
 
 `modules/rrhh/volante.php` — `?nomina=<id>` para todos, `&empleado=<id>` para uno.
 
@@ -80,7 +124,7 @@ los conceptos de verdad y cuadra por construcción:
 
 ---
 
-## 4. Regalía pascual
+## 5. Regalía pascual
 
 `includes/regalia.php` · `modules/rrhh/regalia.php`
 
@@ -117,7 +161,7 @@ padrón» la recalcularía como una quincena corriente y la destruiría.
 
 ---
 
-## 5. Prestaciones laborales
+## 6. Prestaciones laborales
 
 `includes/prestaciones.php` · `modules/rrhh/prestaciones.php` ·
 `modules/rrhh/prestacion_doc.php`
@@ -154,12 +198,12 @@ redacta un abogado, no una plantilla del sistema.
 
 ---
 
-## 6. Permisos
+## 7. Permisos
 
 | Clave | Qué abre |
 |---|---|
 | `rrhh_nomina.ver` / `.procesar` / `.pagar` | Nómina y regalía |
-| `tss.ver` / `tss.configurar` | TSS: declaración, novedades y parámetros |
+| `tss.ver` / `tss.configurar` / `tss.pagar` | TSS: declaración, novedades, parámetros y el pago del mes |
 | `reportes.nomina` | *Resumen de nómina* y *Costo de la plantilla*, sin abrir el resto de contabilidad |
 | `prestaciones.ver` / `.crear` / `.pagar` / `.anular` | Liquidaciones |
 
@@ -171,7 +215,7 @@ redacta un abogado, no una plantilla del sistema.
 
 ---
 
-## 7. Lo que avisa la campana
+## 8. Lo que avisa la campana
 
 `notif_gen_nomina_calendario()` en `includes/notificaciones.php`:
 
@@ -180,14 +224,16 @@ redacta un abogado, no una plantilla del sistema.
 | Topes de cotización apagados por falta del salario mínimo cotizable | Se configura y se encienden |
 | Regalía pascual sin generar (desde 75 días antes del 20/12) | Se genera y se confirma |
 | TSS del mes que cerró, con su autodeterminación lista | Cambia el mes |
+| TSS e ISR de un mes cerrado sin pagar, con su importe | Se registra el pago |
 | Cédulas que no pasan el dígito verificador | Se corrigen en la ficha |
 | Empleados con la misma fecha de ingreso (marcador de carga) | Se corrigen las fechas |
 
 ---
 
-## 8. Migraciones
+## 9. Migraciones
 
 - `migracion_permiso_reportes_nomina_p28.sql` — permiso `reportes.nomina`.
 - `migracion_regalia_p29.sql` — tipo `regalia` en `nominas`.
 - `migracion_prestaciones_p30.sql` — tabla `prestaciones` y sus permisos.
 - `migracion_tss_p22.sql` — parámetros y novedades de la TSS.
+- `migracion_tss_pagos_p31.sql` — tabla `tss_pagos`, categorías de gasto y `tss.pagar`.

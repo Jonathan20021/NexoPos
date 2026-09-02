@@ -351,3 +351,172 @@ function tssDeclaracionMes(string $anioMes): array
         'novedades' => tssNovedadesDelMes($anioMes),
     ];
 }
+
+/* ============================================================
+ *  LO QUE HAY QUE PAGAR CADA MES, Y A QUIÉN
+ * ============================================================
+ *
+ * Una nómina genera TRES flujos de dinero y hasta la P31 el sistema solo
+ * registraba uno:
+ *
+ *   1. el NETO, que sale a la gente          → se registraba al pagar la nómina
+ *   2. las RETENCIONES (AFP, SFS e ISR)      → la empresa las guarda y las remite
+ *   3. el APORTE PATRONAL                     → sale íntegro del bolsillo de la empresa
+ *
+ * Los dos últimos no aparecían por ningún lado: sobre la segunda quincena de
+ * julio de 2026 del padrón real, el costo era 1,105,895.70 y en el resultado
+ * entraban 877,721.39 — faltaba el 20.6%.
+ *
+ * Y no van al mismo sitio: AFP y SFS (del empleado y de la empresa) más riesgos
+ * laborales e INFOTEP van a la TESORERÍA; el ISR retenido va a la DGII, en el
+ * IR-3. Son dos pagos con dos plazos distintos, así que se llevan por separado.
+ */
+
+/** ¿Está aplicada la migración de pagos? */
+function tssPagosDisponible(): bool
+{
+    static $ok = null;
+    if ($ok !== null) return $ok;
+    try { qVal("SELECT 1 FROM tss_pagos LIMIT 1"); return $ok = true; }
+    catch (Throwable $e) { return $ok = false; }
+}
+
+/**
+ * Lo que se debe por un mes, y lo que ya se pagó.
+ *
+ * ── Por qué se comparan dos cifras de retención ──
+ *
+ * Lo RETENIDO es lo que las nóminas del mes le quitaron de verdad a la gente
+ * (`nomina_detalles.afp + sfs`). Lo DECLARADO es lo que sale de aplicar los
+ * parámetros vigentes sobre la base del mes completo. Normalmente coinciden,
+ * pero no tienen por qué: el tope de la TSS es MENSUAL y la nómina lo aplica
+ * quincena a quincena, así que en cuanto los topes se enciendan un sueldo alto
+ * puede dar distinto. A la Tesorería se le paga lo declarado; la diferencia con
+ * lo retenido es un ajuste que alguien tiene que ver, no esconder.
+ */
+function tssObligacionesMes(string $anioMes): array
+{
+    $desde = $anioMes . '-01';
+    $hasta = date('Y-m-t', strtotime($desde));
+
+    // Lo que las nóminas confirmadas del mes retuvieron de verdad.
+    $ret = qOne(
+        "SELECT COALESCE(SUM(nd.afp),0) afp, COALESCE(SUM(nd.sfs),0) sfs,
+                COALESCE(SUM(nd.isr),0) isr, COALESCE(SUM(nd.per_capita),0) per_capita,
+                COUNT(DISTINCT n.id) nominas, COUNT(*) lineas
+           FROM nomina_detalles nd
+           JOIN nominas n ON n.id = nd.nomina_id
+          WHERE n.estado IN ('procesada','pagada')
+            AND n.tipo <> 'regalia'
+            AND n.fecha_hasta BETWEEN ? AND ?",
+        [$desde, $hasta]
+    ) ?: ['afp' => 0, 'sfs' => 0, 'isr' => 0, 'per_capita' => 0, 'nominas' => 0, 'lineas' => 0];
+
+    // Y lo que dice la declaración del mes, que es lo que se le paga a la TSS.
+    $d = tssDeclaracionMes($anioMes);
+    $t = $d['totales'];
+
+    $retenidoTss  = round((float) $ret['afp'] + (float) $ret['sfs'], 2);
+    $declaradoTss = round((float) $t['empleado'], 2);
+    $patronal     = round((float) $t['empleador'], 2);
+    $isr          = round((float) $ret['isr'], 2);
+    // La per cápita adicional —el plan de salud de los dependientes— se le
+    // retiene al empleado y la empresa la remite junto con el SFS. No sale de
+    // tssAportes() porque no es una tasa de ley: es lo que cada quien contrató.
+    $perCapita    = round((float) $ret['per_capita'], 2);
+
+    $pagos = [];
+    if (tssPagosDisponible()) {
+        foreach (qAll("SELECT * FROM tss_pagos WHERE periodo = ?", [$anioMes]) as $p) {
+            $pagos[$p['tipo']] = $p;
+        }
+    }
+
+    return [
+        'periodo'    => $anioMes,
+        'desde'      => $desde,
+        'hasta'      => $hasta,
+        'nominas'    => (int) $ret['nominas'],
+        'confirmada' => $d['confirmada'],
+        'fuente'     => $d['fuente'],
+        'tss' => [
+            'retencion_empleado' => $declaradoTss,
+            'retenido_en_nomina' => $retenidoTss,
+            'diferencia'         => round($declaradoTss - $retenidoTss, 2),
+            'aporte_patronal'    => $patronal,
+            'desglose_patronal'  => ['sfs' => $t['sfs_p'], 'afp' => $t['afp_p'],
+                                     'srl' => $t['srl'], 'infotep' => $t['infotep']],
+            'per_capita'         => $perCapita,
+            'total'              => round($declaradoTss + $perCapita + $patronal, 2),
+            'pago'               => $pagos['tss'] ?? null,
+        ],
+        'isr' => [
+            'total' => $isr,
+            'pago'  => $pagos['isr'] ?? null,
+        ],
+        'total_general' => round($declaradoTss + $perCapita + $patronal + $isr, 2),
+    ];
+}
+
+/**
+ * Registra que se pagó la TSS o el ISR de un mes.
+ *
+ * Deja el gasto en el libro de caja: es AQUÍ donde entra al resultado el costo
+ * que la nómina no registraba. Idempotente por (periodo, tipo) gracias al índice
+ * único; si ya está pagado, lo dice en vez de duplicarlo.
+ */
+function tssPagoRegistrar(string $anioMes, string $tipo, array $datos): int
+{
+    if (!in_array($tipo, ['tss', 'isr'], true)) throw new InvalidArgumentException('Tipo de pago no válido.');
+    if (!tssPagosDisponible()) throw new RuntimeException('Falta aplicar database/migracion_tss_pagos_p31.sql.');
+
+    $o = tssObligacionesMes($anioMes);
+
+    // Sin nómina confirmada en el mes no hay obligación que pagar. Hace falta
+    // decirlo aquí porque tssDeclaracionMes() CAE AL PADÓN cuando no encuentra
+    // nóminas —para que se pueda simular— y sin este corte se podía registrar
+    // el pago de un mes de hace tres años calculado con los sueldos de hoy, y
+    // meter ese gasto inventado en el resultado.
+    if ((int) $o['nominas'] === 0) {
+        throw new RuntimeException('No hay nada que pagar en ' . $anioMes
+            . ': ninguna nómina de ese mes está confirmada.');
+    }
+
+    $monto = round((float) ($datos['monto'] ?? ($tipo === 'tss' ? $o['tss']['total'] : $o['isr']['total'])), 2);
+    if ($monto <= 0) throw new RuntimeException('No hay nada que pagar en ' . $anioMes . '.');
+
+    if (qVal("SELECT 1 FROM tss_pagos WHERE periodo = ? AND tipo = ?", [$anioMes, $tipo])) {
+        throw new RuntimeException('El ' . strtoupper($tipo) . ' de ' . $anioMes . ' ya figura pagado.');
+    }
+
+    $cuentaId = (int) ($datos['cuenta_id'] ?? 0) ?: null;
+    $fecha    = $datos['fecha_pago'] ?? date('Y-m-d');
+
+    $id = dbInsert('tss_pagos', [
+        'periodo'         => $anioMes,
+        'tipo'            => $tipo,
+        'monto'           => $monto,
+        'ret_empleado'    => $tipo === 'tss'
+                                 ? round($o['tss']['retencion_empleado'] + $o['tss']['per_capita'], 2)
+                                 : $o['isr']['total'],
+        'aporte_patronal' => $tipo === 'tss' ? $o['tss']['aporte_patronal'] : 0,
+        'fecha_pago'      => $fecha,
+        'cuenta_id'       => $cuentaId,
+        'referencia'      => trim((string) ($datos['referencia'] ?? '')) ?: null,
+        'notas'           => trim((string) ($datos['notas'] ?? '')) ?: null,
+        'usuario_id'      => current_user()['id'] ?? null,
+    ]);
+
+    registrarTransaccion('gasto', $monto, [
+        'sucursal_id'     => null,
+        'cuenta_id'       => $cuentaId,
+        'categoria_id'    => categoriaFinancieraId('gasto',
+                                $tipo === 'tss' ? 'Seguridad Social (TSS)' : 'Retenciones e impuestos'),
+        'descripcion'     => ($tipo === 'tss' ? 'Pago a la TSS · ' : 'ISR retenido a asalariados (IR-3) · ') . $anioMes,
+        'referencia_tipo' => 'tss_pago',
+        'referencia_id'   => $id,
+        'fecha'           => $fecha,
+    ]);
+
+    return $id;
+}

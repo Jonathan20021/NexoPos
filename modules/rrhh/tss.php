@@ -9,7 +9,7 @@
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
 require_perm('tss.ver');
 
-$tab = in_array(get('tab'), ['parametros', 'declaracion', 'novedades'], true) ? get('tab') : 'parametros';
+$tab = in_array(get('tab'), ['parametros', 'declaracion', 'pagos', 'novedades'], true) ? get('tab') : 'parametros';
 $mes = preg_match('/^\d{4}-\d{2}$/', (string) get('mes')) ? get('mes') : date('Y-m');
 
 if (!tssParametros()) {
@@ -25,8 +25,36 @@ if (!tssParametros()) {
  * ============================================================ */
 if (isPost()) {
     verify_csrf();
-    require_perm('tss.configurar');
     $accion = post('accion');
+
+    /* ---------- Registrar el pago del mes ---------- */
+    if ($accion === 'pagar_mes') {
+        require_perm('tss.pagar');
+        $periodo = preg_match('/^\d{4}-\d{2}$/', (string) post('periodo')) ? (string) post('periodo') : '';
+        $cual    = in_array(post('cual'), ['tss', 'isr'], true) ? post('cual') : '';
+        try {
+            if ($periodo === '' || $cual === '') throw new RuntimeException('Falta el período o qué se está pagando.');
+            $id = txReintentable(fn() => tssPagoRegistrar($periodo, $cual, [
+                'monto'      => post('monto') !== '' ? (float) post('monto') : null,
+                'cuenta_id'  => postInt('cuenta_id'),
+                'fecha_pago' => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) post('fecha_pago'))
+                                    ? (string) post('fecha_pago') : date('Y-m-d'),
+                'referencia' => post('referencia'),
+                'notas'      => post('notas'),
+            ]));
+            audit('tss', 'pagar', strtoupper($cual) . ' de ' . $periodo . ' registrada como pagada',
+                ['tabla' => 'tss_pagos', 'registro_id' => $id]);
+            flash('success', ($cual === 'tss' ? 'Pago a la TSS' : 'Pago del ISR retenido')
+                . ' de ' . $periodo . ' registrado. El gasto ya está en el resultado.');
+        } catch (Throwable $ex) {
+            flash('error', $ex->getMessage());
+        }
+        redirect('modules/rrhh/tss.php?tab=pagos&mes=' . $periodo);
+    }
+
+    // El resto de acciones de esta pantalla cambian PARÁMETROS, que es otra cosa
+    // que registrar un pago: se piden por separado.
+    require_perm('tss.configurar');
 
     /* ---------- Nueva vigencia de parámetros ----------
        NUNCA se edita la fila anterior. La nómina de marzo cotizó con el mínimo
@@ -115,7 +143,8 @@ layout_start('TSS · Tesorería de la Seguridad Social',
 ?>
 
 <div class="flex gap-1 overflow-x-auto pb-1 mb-5">
-  <?php foreach (['parametros' => 'Parámetros y topes', 'declaracion' => 'Declaración del mes', 'novedades' => 'Novedades'] as $k => $lbl): ?>
+  <?php foreach (['parametros' => 'Parámetros y topes', 'declaracion' => 'Declaración del mes',
+                  'pagos' => 'Pago del mes', 'novedades' => 'Novedades'] as $k => $lbl): ?>
     <a href="?tab=<?= $k ?><?= $k !== 'parametros' ? '&mes=' . e($mes) : '' ?>"
        class="btn btn-sm whitespace-nowrap <?= $tab === $k ? 'btn-primary' : 'btn-ghost' ?>"><?= e($lbl) ?></a>
   <?php endforeach; ?>
@@ -402,6 +431,230 @@ layout_start('TSS · Tesorería de la Seguridad Social',
       especificación; inventarlo sería peor que no tenerlo.
     </p>
   </div>
+
+<?php elseif ($tab === 'pagos'): ?>
+
+  <?php
+  /* ============================================================
+   *  EL PAGO DEL MES
+   * ============================================================
+   *
+   * Al pagar la nómina solo entraba al resultado el NETO. Lo que se le retiene
+   * a la gente y el aporte patronal —juntos, un 20% largo del costo real— no
+   * aparecían por ningún lado, porque `transacciones` es un libro de CAJA y ese
+   * dinero todavía no había salido. Sale AQUÍ, y aquí es donde entra al gasto.
+   */
+  $ob = tssObligacionesMes($mes);
+  $pagoTss = $ob['tss']['pago'];
+  $pagoIsr = $ob['isr']['pago'];
+  $cuentas = qAll("SELECT id, nombre, tipo, balance FROM cuentas_financieras
+                    WHERE activo = 1 ORDER BY tipo = 'banco' DESC, sucursal_id IS NULL, nombre");
+  $puedePagar = can('tss.pagar') && tssPagosDisponible();
+  ?>
+
+  <form method="get" class="card p-4 mb-5 flex flex-wrap items-end gap-3">
+    <input type="hidden" name="tab" value="pagos">
+    <div><label class="label" for="mesp">Mes</label>
+      <input type="month" id="mesp" name="mes" value="<?= e($mes) ?>" class="input w-auto"></div>
+    <button class="btn btn-primary"><?= icon('filter', 'w-4 h-4') ?> Ver</button>
+    <span class="ml-auto text-sm <?= $ob['confirmada'] ? 'text-slate-400' : 'text-amber-700 font-semibold' ?>">
+      Base tomada de: <?= e($ob['fuente']) ?>
+    </span>
+  </form>
+
+  <?php if (!tssPagosDisponible()): ?>
+    <div class="card p-4 mb-5 flex items-start gap-3 bg-amber-50 border-amber-200">
+      <?= icon('alert', 'w-5 h-5 text-amber-600 mt-0.5 shrink-0') ?>
+      <p class="text-sm text-amber-900">
+        Falta aplicar <code>database/migracion_tss_pagos_p31.sql</code>. Los importes se calculan igual,
+        pero todavía no se puede registrar el pago.
+      </p>
+    </div>
+  <?php endif; ?>
+
+  <?= kpis([
+      ['label' => 'A la Tesorería (TSS)', 'valor' => money($ob['tss']['total']), 'icono' => 'shield',
+       'color' => $pagoTss ? 'emerald' : 'violet',
+       'nota' => $pagoTss ? 'Pagado el ' . fechaCorta($pagoTss['fecha_pago']) : 'Retención + per cápita + aporte patronal'],
+      ['label' => 'A la DGII · IR-3', 'valor' => money($ob['isr']['total']), 'icono' => 'receipt',
+       'color' => $pagoIsr ? 'emerald' : 'amber',
+       'nota' => $pagoIsr ? 'Pagado el ' . fechaCorta($pagoIsr['fecha_pago']) : 'ISR retenido a los asalariados'],
+      ['label' => 'Total del mes', 'valor' => money($ob['total_general']), 'icono' => 'dollar', 'color' => 'blue',
+       'nota' => $ob['nominas'] . ' nómina(s) confirmada(s) en ' . e($mes)],
+      ['label' => 'Ya registrado', 'valor' => money((float) ($pagoTss['monto'] ?? 0) + (float) ($pagoIsr['monto'] ?? 0)),
+       'icono' => 'check', 'color' => ($pagoTss && $pagoIsr) ? 'emerald' : 'slate',
+       'nota' => ($pagoTss && $pagoIsr) ? 'El mes está saldado' : 'Lo que falta no está en el resultado'],
+  ], 4) ?>
+
+  <?php if ($ob['nominas'] === 0): ?>
+    <div class="card p-6"><?= empty_state('Sin nómina confirmada en ' . e($mes),
+        'No hay nada que declarar ni que pagar. Confirma la nómina del mes primero.', 'wallet') ?></div>
+  <?php else: ?>
+
+    <?php if (abs($ob['tss']['diferencia']) >= 0.01): ?>
+      <div class="card p-4 mb-5 flex items-start gap-3 bg-amber-50 border-amber-200">
+        <?= icon('alert', 'w-5 h-5 text-amber-600 mt-0.5 shrink-0') ?>
+        <div class="text-sm text-amber-900">
+          <strong>La declaración y la nómina no retienen lo mismo: <?= money(abs($ob['tss']['diferencia'])) ?>
+          de diferencia.</strong>
+          <p class="mt-1 text-amber-800">
+            La nómina retuvo <?= money($ob['tss']['retenido_en_nomina']) ?> y la declaración del mes da
+            <?= money($ob['tss']['retencion_empleado']) ?>. Pasa cuando el tope de la TSS —que es
+            <strong>mensual</strong>— corta distinto al aplicarse sobre el mes completo que quincena a
+            quincena. A la Tesorería se le paga lo declarado; la diferencia es un ajuste que hay que
+            cuadrar con el contador.
+          </p>
+        </div>
+      </div>
+    <?php endif; ?>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+
+      <!-- ============ TSS ============ -->
+      <div class="card overflow-hidden flex flex-col">
+        <?= toolbar('<h3 class="font-bold text-slate-800">Tesorería de la Seguridad Social</h3>'
+            . '<p class="text-xs text-slate-400 mt-0.5">AFP, SFS, riesgos laborales e INFOTEP</p>',
+            $pagoTss ? badge('Pagado', 'emerald') : badge('Pendiente', 'amber')) ?>
+        <table class="data-table">
+          <tbody>
+            <tr><td class="text-slate-600">Retenido al empleado (AFP + SFS)</td>
+                <td class="text-right tabular-nums text-slate-700"><?= money($ob['tss']['retencion_empleado'], false) ?></td></tr>
+            <?php if ($ob['tss']['per_capita'] > 0): ?>
+              <tr><td class="text-slate-600">Per cápita adicional retenida</td>
+                  <td class="text-right tabular-nums text-slate-700"><?= money($ob['tss']['per_capita'], false) ?></td></tr>
+            <?php endif; ?>
+            <?php foreach (['sfs' => 'SFS de la empresa (7.09%)', 'afp' => 'AFP de la empresa (7.10%)',
+                            'srl' => 'Riesgos laborales (1.10%)', 'infotep' => 'INFOTEP (1%)'] as $k => $lbl): ?>
+              <tr><td class="text-slate-500 pl-6"><?= e($lbl) ?></td>
+                  <td class="text-right tabular-nums text-slate-600"><?= money($ob['tss']['desglose_patronal'][$k], false) ?></td></tr>
+            <?php endforeach; ?>
+          </tbody>
+          <tfoot>
+            <tr class="bg-slate-50 font-bold text-slate-800">
+              <td>Total a pagar</td>
+              <td class="text-right tabular-nums"><?= money($ob['tss']['total'], false) ?></td>
+            </tr>
+          </tfoot>
+        </table>
+        <?php if ($pagoTss): ?>
+          <div class="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
+            Pagado el <strong><?= e(fechaCorta($pagoTss['fecha_pago'])) ?></strong> por
+            <strong><?= money($pagoTss['monto']) ?></strong>
+            <?= $pagoTss['referencia'] ? ' · ref. ' . e($pagoTss['referencia']) : '' ?>.
+            <span class="block text-xs text-slate-400 mt-0.5">El gasto ya está registrado en finanzas.</span>
+          </div>
+        <?php elseif ($puedePagar): ?>
+          <form method="post" class="px-5 py-4 border-t border-slate-100 space-y-3 mt-auto">
+            <?= csrf_field() ?>
+            <input type="hidden" name="accion" value="pagar_mes">
+            <input type="hidden" name="periodo" value="<?= e($mes) ?>">
+            <input type="hidden" name="cual" value="tss">
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="label" for="tss_fecha">Fecha del pago</label>
+                <input type="date" id="tss_fecha" name="fecha_pago" value="<?= date('Y-m-d') ?>" class="input"></div>
+              <div><label class="label" for="tss_monto">Monto</label>
+                <input type="number" step="0.01" min="0" id="tss_monto" name="monto"
+                       value="<?= e(number_format($ob['tss']['total'], 2, '.', '')) ?>" class="input"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="label" for="tss_cuenta">De qué cuenta sale</label>
+                <select id="tss_cuenta" name="cuenta_id" class="select">
+                  <?php foreach ($cuentas as $c): ?>
+                    <option value="<?= (int) $c['id'] ?>"><?= e($c['nombre']) ?> · <?= money($c['balance']) ?></option>
+                  <?php endforeach; ?>
+                </select></div>
+              <div><label class="label" for="tss_ref">Referencia</label>
+                <input type="text" id="tss_ref" name="referencia" maxlength="60" class="input"
+                       placeholder="Núm. de recibo del SUIR+"></div>
+            </div>
+            <?php $av = 'Se registrará el pago a la TSS de ' . $mes . ' y el gasto entrará al resultado.'; ?>
+            <button class="btn btn-primary w-full" onclick="return confirm('<?= e(addslashes($av)) ?>')">
+              <?= icon('check', 'w-4 h-4') ?> Registrar el pago a la TSS
+            </button>
+          </form>
+        <?php endif; ?>
+      </div>
+
+      <!-- ============ ISR ============ -->
+      <div class="card overflow-hidden flex flex-col">
+        <?= toolbar('<h3 class="font-bold text-slate-800">ISR retenido · IR-3</h3>'
+            . '<p class="text-xs text-slate-400 mt-0.5">Impuesto sobre la renta de los asalariados, a la DGII</p>',
+            $pagoIsr ? badge('Pagado', 'emerald') : badge('Pendiente', 'amber')) ?>
+        <table class="data-table">
+          <tbody>
+            <tr><td class="text-slate-600">ISR retenido en las nóminas del mes</td>
+                <td class="text-right tabular-nums text-slate-700"><?= money($ob['isr']['total'], false) ?></td></tr>
+          </tbody>
+          <tfoot>
+            <tr class="bg-slate-50 font-bold text-slate-800">
+              <td>Total a pagar</td>
+              <td class="text-right tabular-nums"><?= money($ob['isr']['total'], false) ?></td>
+            </tr>
+          </tfoot>
+        </table>
+        <?php if ($pagoIsr): ?>
+          <div class="px-5 py-4 border-t border-slate-100 text-sm text-slate-600">
+            Pagado el <strong><?= e(fechaCorta($pagoIsr['fecha_pago'])) ?></strong> por
+            <strong><?= money($pagoIsr['monto']) ?></strong>
+            <?= $pagoIsr['referencia'] ? ' · ref. ' . e($pagoIsr['referencia']) : '' ?>.
+          </div>
+        <?php elseif ($puedePagar && $ob['isr']['total'] > 0): ?>
+          <form method="post" class="px-5 py-4 border-t border-slate-100 space-y-3 mt-auto">
+            <?= csrf_field() ?>
+            <input type="hidden" name="accion" value="pagar_mes">
+            <input type="hidden" name="periodo" value="<?= e($mes) ?>">
+            <input type="hidden" name="cual" value="isr">
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="label" for="isr_fecha">Fecha del pago</label>
+                <input type="date" id="isr_fecha" name="fecha_pago" value="<?= date('Y-m-d') ?>" class="input"></div>
+              <div><label class="label" for="isr_monto">Monto</label>
+                <input type="number" step="0.01" min="0" id="isr_monto" name="monto"
+                       value="<?= e(number_format($ob['isr']['total'], 2, '.', '')) ?>" class="input"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="label" for="isr_cuenta">De qué cuenta sale</label>
+                <select id="isr_cuenta" name="cuenta_id" class="select">
+                  <?php foreach ($cuentas as $c): ?>
+                    <option value="<?= (int) $c['id'] ?>"><?= e($c['nombre']) ?> · <?= money($c['balance']) ?></option>
+                  <?php endforeach; ?>
+                </select></div>
+              <div><label class="label" for="isr_ref">Referencia</label>
+                <input type="text" id="isr_ref" name="referencia" maxlength="60" class="input"
+                       placeholder="Núm. del IR-3"></div>
+            </div>
+            <?php $av2 = 'Se registrará el pago del ISR retenido de ' . $mes . '.'; ?>
+            <button class="btn btn-primary w-full" onclick="return confirm('<?= e(addslashes($av2)) ?>')">
+              <?= icon('check', 'w-4 h-4') ?> Registrar el pago del IR-3
+            </button>
+          </form>
+        <?php elseif ($ob['isr']['total'] <= 0): ?>
+          <div class="px-5 py-4 border-t border-slate-100 text-sm text-slate-500">
+            No se le retuvo ISR a nadie en <?= e($mes) ?>: no hay nada que declarar.
+          </div>
+        <?php endif; ?>
+      </div>
+    </div>
+
+    <div class="card p-5">
+      <h3 class="font-bold text-slate-800 mb-2">Por qué esto no salía en el resultado</h3>
+      <p class="text-sm text-slate-600 leading-relaxed">
+        Una nómina mueve tres cosas: el <strong>neto</strong>, que sale a la gente; las
+        <strong>retenciones</strong>, que la empresa guarda y remite; y el <strong>aporte patronal</strong>,
+        que sale íntegro de la empresa. Al pagar la nómina solo entraba al resultado el neto, porque
+        <code>transacciones</code> es un libro de caja y ese otro dinero todavía no había salido.
+        Sale al pagar la TSS y el IR-3, y es aquí donde se registra.
+      </p>
+      <p class="text-sm text-slate-500 mt-3 pt-3 border-t border-slate-100">
+        Sobre las nóminas de <?= e($mes) ?>: el costo real fue
+        <strong><?= money((float) qVal("SELECT COALESCE(SUM(total_bruto),0) FROM nominas
+                                         WHERE estado IN ('procesada','pagada') AND tipo <> 'regalia'
+                                           AND fecha_hasta BETWEEN ? AND ?", [$ob['desde'], $ob['hasta']])
+                          + $ob['tss']['aporte_patronal']) ?></strong>
+        y por la nómina entró solo el neto. La diferencia son estos <?= money($ob['total_general']) ?>.
+      </p>
+    </div>
+
+  <?php endif; ?>
 
 <?php else: ?>
 

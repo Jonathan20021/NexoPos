@@ -56,6 +56,7 @@ function nav_groups(): array
             ['Amonestaciones', 'alert', url('modules/rrhh/amonestaciones.php'), 'amonestaciones.ver'],
             ['Prestaciones laborales', 'scale', url('modules/rrhh/prestaciones.php'), 'prestaciones.ver'],
             ['TSS', 'shield', url('modules/rrhh/tss.php'), 'tss.ver'],
+            ['Pago de TSS e IR-3', 'dollar', url('modules/rrhh/tss.php?tab=pagos'), 'tss.ver'],
             ['Departamentos', 'building', url('modules/rrhh/departamentos.php'), 'rrhh_departamentos.ver'],
         ]],
         ['CRM', [
