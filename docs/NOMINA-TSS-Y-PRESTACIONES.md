@@ -119,6 +119,24 @@ Dos comprobaciones que hace la pantalla:
 Un pago por período y tipo, con índice único: pagar dos veces la TSS de agosto es
 un error de dedo, no un caso de uso.
 
+### Los tres sitios donde sale la misma cifra
+El costo de la nómina se ve en tres pantallas y las tres tienen que decir lo
+mismo: **TSS → Pago del mes**, el informe **Resumen de nómina** y el libro de
+caja. Sobre julio de 2026: 1,105,895.70 en las tres, al centavo.
+
+Lo que rompía ese cuadre en el informe:
+
+- Sumaba las nóminas en **cualquier estado**, así que un borrador —editable
+  entero— contaba como real. Ahora entran solo las confirmadas, con un selector
+  para incluir borradores que avisa de que entonces no cuadra con nada.
+- Sumaba la **regalía**, cuyo período es el año completo, en todos los meses del
+  año: en julio decía 1,200,958.85 donde la nómina real fue 950,980.83, un 26%
+  de más. La regalía se enseña aparte porque no cotiza ni paga ISR.
+- Calculaba el aporte patronal sobre `salario_base` —el sueldo prorrateado— en
+  vez de sobre la base cotizable, y sin pasar por `tssAportes()`, o sea sin
+  topes. Ahora usa el mismo motor que la pantalla de TSS, agrupando por empleado
+  **y por mes** porque el tope de la Ley 87-01 es mensual.
+
 ---
 
 ## 4. Volante de pago

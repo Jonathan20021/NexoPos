@@ -12,6 +12,25 @@ require_any_perm(['reportes.contabilidad', 'reportes.nomina']);
 $p = rep_periodo('mes');
 [$scopeN, $scopeNP] = rep_scope('n.sucursal_id');
 
+/*
+ * QUÉ NÓMINA CUENTA
+ *
+ * Este informe sumaba TODAS las nóminas que tocaran el periodo, en cualquier
+ * estado y de cualquier tipo. Dos consecuencias que se veían en la cifra:
+ *
+ *   · un BORRADOR —que todavía se puede editar entero— contaba como real;
+ *   · la REGALÍA pascual, cuyo periodo es el año completo, se colaba en todos
+ *     los meses del año. En julio de 2026 el informe decía RD$ 1,200,958.85
+ *     donde la nómina real fue 950,980.83: un 26% de más.
+ *
+ * Por defecto entran solo las confirmadas. La regalía se mira aparte porque no
+ * cotiza ni paga ISR (arts. 219-222) y meterla en la base de cotización inventa
+ * un aporte patronal que nadie debe.
+ */
+$verBorradores = get('borradores') === '1';
+$condEstado = $verBorradores ? "1=1" : "n.estado IN ('procesada','pagada')";
+$condTipo   = "n.tipo <> 'regalia'";
+
 // Las tasas patronales viven en `includes/nomina.php` (COSTO_EMPLEADOR) y se
 // leen de ahí. Estaban duplicadas en este archivo y ya habían divergido: aquí
 // riesgos laborales figuraba al 1.15% y en la ficha del empleado al 1.10%, así
@@ -29,6 +48,7 @@ $nominas = qAll(
        LEFT JOIN sucursales su ON su.id = n.sucursal_id
        LEFT JOIN usuarios u ON u.id = n.usuario_id
       WHERE n.fecha_desde <= ? AND n.fecha_hasta >= ? AND $scopeN
+        AND $condEstado AND $condTipo
       ORDER BY n.fecha_desde DESC",
     array_merge([$p['hasta'], $p['desde']], $scopeNP)
 );
@@ -56,14 +76,57 @@ $tot = $ids ? (qOne(
 $bruto = (float) ($tot['bruto'] ?? 0);
 $neto  = (float) ($tot['neto'] ?? 0);
 
-// Aporte patronal estimado sobre el salario base cotizable.
-$cotizable   = (float) ($tot['base'] ?? 0);
-$afpPatronal = $cotizable * TSS_AFP_PATRONAL / 100;
-$sfsPatronal = $cotizable * TSS_SFS_PATRONAL / 100;
-$riesgos     = $cotizable * TSS_RIESGOS / 100;
-$infotep     = $cotizable * TSS_INFOTEP / 100;
-$patronal    = $afpPatronal + $sfsPatronal + $riesgos + $infotep;
-$costoTotal  = $bruto + $patronal;
+/*
+ * APORTE PATRONAL
+ *
+ * Se calcula con tssAportes(), el mismo motor que usa la pantalla de TSS, y
+ * sobre la BASE COTIZABLE —no sobre `salario_base`—. La diferencia no es
+ * cosmética: `salario_base` es solo el sueldo prorrateado, así que en cuanto
+ * alguien tiene horas extra o comisiones el aporte salía corto. Y sin pasar por
+ * tssAportes() no se aplicaban los topes de la Ley 87-01, que son mensuales.
+ *
+ * Por eso se agrupa por empleado Y POR MES: el tope corta sobre el total del
+ * mes, no sobre el del periodo que se esté mirando. Así la cifra coincide con
+ * la de TSS → Pago del mes para cualquier rango.
+ */
+$patDesglose = ['sfs' => 0.0, 'afp' => 0.0, 'srl' => 0.0, 'infotep' => 0.0];
+if ($ids) {
+    foreach (qAll(
+        "SELECT nd.empleado_id, DATE_FORMAT(n.fecha_hasta,'%Y-%m') ym,
+                COALESCE(SUM(nd.total_ingresos),0) base
+           FROM nomina_detalles nd JOIN nominas n ON n.id = nd.nomina_id
+          WHERE nd.nomina_id IN ($phN)
+          GROUP BY nd.empleado_id, DATE_FORMAT(n.fecha_hasta,'%Y-%m')", $ids
+    ) as $r) {
+        $a = tssAportes((float) $r['base'], 1.0, tssParametros($r['ym'] . '-28'));
+        foreach ($patDesglose as $k => $_) $patDesglose[$k] += $a['empleador'][$k];
+    }
+}
+$patDesglose = array_map(fn($v) => round($v, 2), $patDesglose);
+
+// Las tasas vigentes al cierre del periodo, para rotular el desglose.
+$pTss  = tssParametros(substr($p['fin'], 0, 10));
+$tasas = [
+    'sfs'     => (float) ($pTss['sfs_empleador']     ?? COSTO_EMPLEADOR['sfs']),
+    'afp'     => (float) ($pTss['afp_empleador']     ?? COSTO_EMPLEADOR['afp']),
+    'srl'     => (float) ($pTss['srl_empleador']     ?? COSTO_EMPLEADOR['riesgos']),
+    'infotep' => (float) ($pTss['infotep_empleador'] ?? COSTO_EMPLEADOR['infotep']),
+];
+$afpPatronal = $patDesglose['afp'];
+$sfsPatronal = $patDesglose['sfs'];
+$riesgos     = $patDesglose['srl'];
+$infotep     = $patDesglose['infotep'];
+$patronal    = round(array_sum($patDesglose), 2);
+$costoTotal  = round($bruto + $patronal, 2);
+
+/* ---------- La regalía del periodo, aparte ---------- */
+$regalia = (float) qVal(
+    "SELECT COALESCE(SUM(nd.salario_neto),0)
+       FROM nomina_detalles nd JOIN nominas n ON n.id = nd.nomina_id
+      WHERE n.tipo = 'regalia' AND n.estado IN ('procesada','pagada')
+        AND n.fecha_hasta BETWEEN ? AND ? AND $scopeN",
+    array_merge([$p['ini'], $p['fin']], $scopeNP)
+);
 
 /* ---------- Por empleado ---------- */
 $porEmpleado = $ids ? qAll(
@@ -103,7 +166,10 @@ $hist = [];
 foreach (qAll(
     "SELECT DATE_FORMAT(n.fecha_hasta,'%Y-%m') ym, COALESCE(SUM(n.total_bruto),0) bruto,
             COALESCE(SUM(n.total_neto),0) neto
-       FROM nominas n WHERE n.fecha_hasta >= ? AND $scopeN GROUP BY ym",
+       FROM nominas n
+      WHERE n.fecha_hasta >= ? AND $scopeN
+        AND n.estado IN ('procesada','pagada') AND n.tipo <> 'regalia'
+      GROUP BY ym",
     array_merge([$meses[0] . '-01'], $scopeNP)
 ) as $r) $hist[$r['ym']] = $r;
 
@@ -116,11 +182,14 @@ foreach ($meses as $ym) {
 
 /* ---------- Contexto: peso sobre la venta ---------- */
 [$scopeV, $scopeVP] = rep_scope('v.sucursal_id');
+// Criterio compartido: entra la venta devuelta y luego se resta lo devuelto.
+// Con el filtro viejo, un mes con devoluciones daba un ingreso distinto al del
+// estado de resultados y el «% de los ingresos» salía inflado.
 $ingresos = (float) qVal(
     "SELECT COALESCE(SUM(v.subtotal - v.descuento),0) FROM ventas v
-      WHERE v.estado='completada' AND v.fecha BETWEEN ? AND ? AND $scopeV",
+      WHERE " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scopeV",
     array_merge([$p['ini'], $p['fin']], $scopeVP)
-);
+) - rep_devoluciones($p['ini'], $p['fin'], $scopeV, $scopeVP)['base'];
 
 if (export_solicitado()) {
     $filas = [];
@@ -138,6 +207,36 @@ layout_start('Resumen de nómina', rep_subtitulo($p), rep_barra_titulo());
 echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
 ?>
 
+<form method="get" class="card p-4 mb-5 flex items-end gap-3 flex-wrap no-print">
+  <?php foreach (['periodo', 'desde', 'hasta', 'sucursal_id'] as $k): ?>
+    <?php if (get($k) !== null && get($k) !== ''): ?>
+      <input type="hidden" name="<?= $k ?>" value="<?= e((string) get($k)) ?>">
+    <?php endif; ?>
+  <?php endforeach; ?>
+  <div>
+    <label class="label" for="borradores">Qué nóminas entran</label>
+    <select id="borradores" name="borradores" class="select min-w-[20rem]">
+      <option value="0" <?= $verBorradores ? '' : 'selected' ?>>Solo las confirmadas y pagadas</option>
+      <option value="1" <?= $verBorradores ? 'selected' : '' ?>>También los borradores (todavía editables)</option>
+    </select>
+  </div>
+  <button class="btn btn-primary"><?= icon('filter', 'w-4 h-4') ?> Aplicar</button>
+  <p class="text-xs text-slate-400 ml-auto max-w-[26rem]">
+    La regalía pascual nunca entra en estos totales: su periodo es el año completo y no cotiza
+    ni paga ISR. Se enseña aparte.
+  </p>
+</form>
+
+<?php if ($verBorradores): ?>
+  <div class="card p-4 mb-5 flex items-start gap-3 bg-amber-50 border-amber-200">
+    <?= icon('alert', 'w-5 h-5 text-amber-600 mt-0.5 shrink-0') ?>
+    <p class="text-sm text-amber-900">
+      Estás viendo también <strong>borradores</strong>. Son nóminas que todavía se pueden editar
+      entera, así que estas cifras no cuadran con el estado de resultados ni con la TSS.
+    </p>
+  </div>
+<?php endif; ?>
+
 <?= rep_kpis([
     ['label' => 'Nómina bruta', 'valor' => money($bruto), 'icono' => 'wallet', 'color' => 'blue',
      'nota' => number_format((int) ($tot['empleados'] ?? 0)) . ' empleado(s) en ' . count($nominas) . ' nómina(s)'],
@@ -148,6 +247,17 @@ echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
     ['label' => 'Costo total con TSS', 'valor' => money($costoTotal), 'icono' => 'id', 'color' => 'violet',
      'nota' => $ingresos > 0 ? number_format($costoTotal / $ingresos * 100, 1) . '% de los ingresos' : 'Incluye aporte patronal'],
 ]) ?>
+
+<?php if ($regalia > 0): ?>
+  <div class="card p-4 mb-5 flex items-start gap-3 bg-slate-50 border-slate-200">
+    <?= icon('sun', 'w-5 h-5 text-slate-400 mt-0.5 shrink-0') ?>
+    <p class="text-sm text-slate-600">
+      Además se pagó <strong><?= money($regalia) ?></strong> de regalía pascual en este periodo.
+      No entra en las cifras de arriba porque no cotiza a la TSS ni paga ISR (arts. 219-222),
+      pero sí es costo de la empresa.
+    </p>
+  </div>
+<?php endif; ?>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
   <!-- Estructura -->
@@ -186,14 +296,18 @@ echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
 
   <!-- Aporte patronal -->
   <div>
-    <?= rep_seccion('Aporte patronal estimado (TSS)', 'Lo que la empresa paga además del salario', 'building', 'violet') ?>
+    <?= rep_seccion('Aporte patronal (TSS)',
+        'Calculado con el mismo motor que la pantalla de TSS, sobre la base cotizable', 'building', 'violet') ?>
       <div class="divide-y divide-slate-100">
         <?php
         $ap = [
-            ['AFP patronal (' . number_format(TSS_AFP_PATRONAL, 2) . '%)', $afpPatronal],
-            ['SFS patronal (' . number_format(TSS_SFS_PATRONAL, 2) . '%)', $sfsPatronal],
-            ['Riesgos laborales (' . number_format(TSS_RIESGOS, 2) . '%)', $riesgos],
-            ['INFOTEP (' . number_format(TSS_INFOTEP, 2) . '%)', $infotep],
+            // El porcentaje del rótulo sale de los MISMOS parámetros con los que
+            // se calculó el importe. Con dos fuentes distintas, el día que una
+            // tasa cambie por ley el rótulo diría una cosa y el número otra.
+            ['AFP patronal (' . number_format($tasas['afp'] * 100, 2) . '%)', $afpPatronal],
+            ['SFS patronal (' . number_format($tasas['sfs'] * 100, 2) . '%)', $sfsPatronal],
+            ['Riesgos laborales (' . number_format($tasas['srl'] * 100, 2) . '%)', $riesgos],
+            ['INFOTEP (' . number_format($tasas['infotep'] * 100, 2) . '%)', $infotep],
         ];
         foreach ($ap as [$lbl, $val]): ?>
           <div class="flex items-center justify-between gap-4 px-5 py-3">
@@ -211,8 +325,15 @@ echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
         </div>
       </div>
       <div class="px-5 py-4 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500 leading-relaxed">
-        Estimación sobre el salario base cotizable (<?= money($cotizable) ?>) con las tasas patronales vigentes.
-        El tope salarial de cotización y las tasas de riesgos laborales varían por empresa: confirma con tu asesor de TSS.
+        Calculado sobre la <strong>base cotizable</strong> (<?= money($bruto) ?>) con
+        <code>tssAportes()</code>, el mismo motor que la pantalla de TSS, agrupando por empleado y por mes
+        porque el tope de la Ley 87-01 es mensual. Así esta cifra coincide con la de
+        <em>TSS → Pago del mes</em> para cualquier rango.
+        <?php if (function_exists('tssTopesActivos') && !tssTopesActivos()): ?>
+          <span class="block mt-1 text-amber-700">
+            Los topes están apagados: falta el salario mínimo cotizable, así que se cotiza sobre el sueldo entero.
+          </span>
+        <?php endif; ?>
       </div>
     <?= rep_fin() ?>
   </div>
