@@ -46,6 +46,40 @@ $where = implode(' AND ', $cond);
 // lo que valía la mercancía que se fue.
 $valor = "m.cantidad * COALESCE(NULLIF(m.costo_unitario, 0), pr.precio_compra, 0)";
 
+/* ---------- Lo que salió de una tienda y nunca llegó a la otra ----------
+ *
+ *  Estas unidades no son un ajuste: nadie las tocó a mano. Salieron del origen
+ *  al aprobar el traslado y no entraron en el destino porque no llegaron. Por
+ *  eso no aparecen en la tabla de movimientos y aun así son mercancía perdida,
+ *  igual de real que la que falta en un conteo. Aquí es donde toca verla.
+ *
+ *  Un traslado toca dos sucursales, así que el alcance mira las dos: el
+ *  faltante le importa tanto a quien lo mandó como a quien lo esperaba.
+ */
+[$scopeTo, $scopeToP] = rep_scope('t.sucursal_origen_id');
+[$scopeTd, $scopeTdP] = rep_scope('t.sucursal_destino_id');
+$transito = qAll(
+    "SELECT t.id, t.numero, t.recibida_at, t.notas_recepcion,
+            so.nombre AS origen, sd.nombre AS destino,
+            pr.nombre AS producto, pr.codigo,
+            (td.cantidad - td.cantidad_recibida) AS faltaron,
+            (td.cantidad - td.cantidad_recibida) * COALESCE(NULLIF(pr.precio_compra,0), 0) AS valor
+       FROM transferencia_detalles td
+       JOIN transferencias t  ON t.id = td.transferencia_id
+       JOIN sucursales so     ON so.id = t.sucursal_origen_id
+       JOIN sucursales sd     ON sd.id = t.sucursal_destino_id
+       JOIN productos pr      ON pr.id = td.producto_id
+      WHERE t.estado = 'recibida'
+        AND td.cantidad_recibida IS NOT NULL
+        AND td.cantidad_recibida < td.cantidad
+        AND t.recibida_at BETWEEN ? AND ?
+        AND ($scopeTo OR $scopeTd)
+      ORDER BY t.recibida_at DESC, pr.nombre",
+    array_merge([$p['ini'], $p['fin']], $scopeToP, $scopeTdP)
+);
+$transitoU = array_sum(array_map(fn($x) => (float) $x['faltaron'], $transito));
+$transitoV = array_sum(array_map(fn($x) => (float) $x['valor'], $transito));
+
 /* ---------- Resumen del periodo ---------- */
 $r = qOne(
     "SELECT COUNT(*) n,
@@ -296,6 +330,39 @@ echo rep_abrir('Ajustes y mermas de inventario', $p, ['sucursal' => true]);
     <?= rep_fin() ?>
   </div>
 </div>
+
+<?php if ($transito): ?>
+  <?= rep_seccion('Lo que salió de una tienda y nunca llegó a la otra',
+      'Traslados recibidos incompletos: la mercancía salió del origen y no entró en ningún sitio',
+      'truck', 'amber') ?>
+    <div class="rounded-xl bg-amber-50 border border-amber-100 p-3 mb-4 text-sm text-amber-800">
+      <?= number_format(count($transito)) ?> línea(s) llegaron cortas:
+      <strong><?= qty($transitoU) ?></strong> unidades que valían
+      <strong><?= money($transitoV) ?></strong>.
+      Esto no es un ajuste de conteo: es mercancía que se perdió entre las dos tiendas.
+    </div>
+    <?php
+    $ft = [];
+    foreach ($transito as $x) {
+        $ft[] = [
+            '<a class="link" href="' . e(url('modules/inventario/transferencias.php?ver=' . (int) $x['id'])) . '">'
+                . e($x['numero']) . '</a>'
+                . '<span class="block text-xs text-slate-400">' . fechaCorta($x['recibida_at']) . '</span>',
+            '<span class="text-sm text-slate-700">' . e($x['origen']) . '</span>'
+                . '<span class="block text-xs text-slate-400">a ' . e($x['destino']) . '</span>',
+            '<span class="text-sm text-slate-700">' . e($x['producto']) . '</span>'
+                . '<span class="block text-xs text-slate-400">' . e($x['codigo']) . '</span>',
+            '<span class="text-amber-600 font-semibold">' . qty($x['faltaron']) . '</span>',
+            money($x['valor'], false),
+            '<span class="text-xs text-slate-500">' . e($x['notas_recepcion'] ?: '—') . '</span>',
+        ];
+    }
+    echo rep_tabla([
+        'Traslado', 'Ruta', 'Producto', ['Faltaron', 'center'], ['Valor', 'right'], 'Qué pasó'
+    ], $ft, ['vacio' => 'Todo lo que salió llegó completo.', 'vacio_icono' => 'truck']);
+    ?>
+  <?= rep_fin() ?>
+<?php endif; ?>
 
 <?= rep_seccion('Cada cambio de existencia, con su explicación',
     'De cuánto a cuánto, quién lo hizo y qué dijo', 'history', 'blue') ?>

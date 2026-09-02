@@ -214,6 +214,18 @@ function plab_calcular(array $empleado, string $causa, string $fechaSalida): arr
     $ces = plab_dias_cesantia($dias);
     $vac = plab_dias_vacaciones($ingreso, $fechaSalida);
 
+    // Lo que la persona YA se tomó en este mismo año de servicio no se le paga
+    // otra vez: las vacaciones se disfrutan con salario, así que ya se le
+    // pagaron cuando las tomó. Sin este descuento la liquidación las abonaba
+    // por segunda vez, y nadie lo notaba porque el renglón parece correcto.
+    $vacUsadas = 0.0;
+    $vacVentana = null;
+    if ($ingreso !== '' && function_exists('vac_anio_servicio')) {
+        $vacVentana = vac_anio_servicio($ingreso, $fechaSalida);
+        $vacUsadas  = vac_disfrutadas((int) $empleado['id'], $vacVentana['desde'], $vacVentana['hasta']);
+    }
+    $vacPagar = max(0.0, round($vac['dias'] - $vacUsadas, 2));
+
     // Regalía proporcional: el mismo cálculo que la de diciembre, cortado en la
     // fecha de salida. Se pide con esa fecha como corte para no arrastrar días
     // que la persona ya no trabajó.
@@ -248,9 +260,16 @@ function plab_calcular(array $empleado, string $causa, string $fechaSalida): arr
         'vacaciones' => [
             'label'  => 'Vacaciones no disfrutadas (art. 177)',
             'aplica' => true,
-            'dias'   => $vac['dias'],
-            'monto'  => round($vac['dias'] * $diario, 2),
-            'regla'  => $vac['regla'],
+            'dias'   => $vacPagar,
+            'monto'  => round($vacPagar * $diario, 2),
+            // Se enseña la resta entera, no solo el resultado: quien firma la
+            // liquidación tiene que poder ver de dónde sale cada día.
+            'regla'  => $vacUsadas > 0.0001
+                ? $vac['regla'] . '. Menos ' . number_format($vacUsadas, 2)
+                  . ' día(s) ya disfrutados desde el ' . fechaCorta($vacVentana['desde'])
+                : $vac['regla'],
+            'disfrutadas' => round($vacUsadas, 2),
+            'generadas'   => $vac['dias'],
         ],
         'regalia' => [
             'label'  => 'Regalía pascual proporcional (art. 219)',

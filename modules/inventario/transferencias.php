@@ -147,29 +147,87 @@ if (isPost()) {
         redirect('modules/inventario/transferencias.php');
     }
 
+    // Recibir: entra al destino lo que LLEGO, que no siempre es lo que salió.
+    // Si salieron 10 y llegaron 8, dar por recibidas las 10 crea un fantasma
+    // que no aparece hasta el conteo físico siguiente y ya sin rastro de dónde
+    // se perdió. La diferencia se guarda con su motivo y sale en el informe de
+    // ajustes y mermas.
     if ($accion === 'recibir') {
         require_perm('transferencias.recibir');
-        $id = postInt('id');
+        $id      = postInt('id');
+        $llegado = (array) ($_POST['recibida'] ?? []);
+        $motivo  = trim((string) post('notas_recepcion'));
         try {
-            txReintentable(function () use ($id) {
+            $faltantes = [];
+            txReintentable(function () use ($id, $llegado, $motivo, &$faltantes) {
                 $t = qOne("SELECT * FROM transferencias WHERE id=? FOR UPDATE", [$id]);
                 if (!$t || $t['estado'] !== 'enviada') throw new RuntimeException('La transferencia no se puede recibir.');
                 if (!can_access_sucursal($t['sucursal_destino_id'])) throw new RuntimeException('Solo la sucursal de destino puede recibir esta transferencia.');
-                foreach (qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]) as $d) {
-                    // La mercancia conserva su lote al cambiar de almacen: se
-                    // recrean en destino los mismos lotes que FEFO saco del origen.
+
+                $det = qAll("SELECT * FROM transferencia_detalles WHERE transferencia_id=? ORDER BY producto_id", [$id]);
+
+                // Primero se decide, y solo después se mueve nada: así un
+                // formulario mal llenado no deja media transferencia recibida.
+                $plan = [];
+                foreach ($det as $d) {
+                    $env = (float) $d['cantidad'];
+                    // Sin el campo (recepción de toda la vida, o botón simple)
+                    // se recibe entero: no se puede cambiar lo que ya hacía.
+                    $rec = array_key_exists((string) $d['id'], $llegado)
+                        ? round((float) $llegado[(string) $d['id']], 3) : $env;
+                    if ($rec < 0)   throw new RuntimeException('Las cantidades recibidas no pueden ser negativas.');
+                    if ($rec > $env + 0.0001) {
+                        throw new RuntimeException('No se puede recibir más de lo que se envió: '
+                            . qty($rec) . ' de ' . qty($env) . ' enviadas.');
+                    }
+                    $plan[] = ['d' => $d, 'rec' => $rec, 'falta' => round($env - $rec, 3)];
+                }
+                $faltaTotal = array_sum(array_column($plan, 'falta'));
+                $recTotal   = array_sum(array_column($plan, 'rec'));
+
+                // Recibir cero de todo no es recibir: es rechazar. Y rechazar
+                // devuelve el stock al origen, que es MUY distinto de perderlo.
+                if ($recTotal <= 0.0001) {
+                    throw new RuntimeException('No llegó nada de esta transferencia. Usa «Rechazar» en vez de «Recibir»: '
+                        . 'así el stock vuelve al origen en lugar de darse por perdido.');
+                }
+                if ($faltaTotal > 0.0001 && $motivo === '') {
+                    throw new RuntimeException('Faltó mercancía por el camino. Escribe qué pasó antes de recibir: '
+                        . 'esas unidades salieron del origen y no van a entrar en ningún sitio.');
+                }
+
+                foreach ($plan as $pz) {
+                    $d = $pz['d'];
+                    dbUpdate('transferencia_detalles', ['cantidad_recibida' => $pz['rec']], 'id=?', [(int) $d['id']]);
+                    if ($pz['rec'] <= 0.0001) continue;
+                    // La mercancía conserva su lote al cambiar de almacén: se
+                    // recrean en destino los mismos lotes que FEFO sacó del origen.
                     // Sin esto, un producto trazable dejaba de serlo justo al
                     // cruzar de sucursal.
                     san_mover_conservando_lotes(
-                        (int) $d['producto_id'], (int) $t['sucursal_destino_id'], (float) $d['cantidad'],
+                        (int) $d['producto_id'], (int) $t['sucursal_destino_id'], $pz['rec'],
                         'transferencia_entrada', 'transferencia', $id, (int) $t['sucursal_origen_id'],
                         0, 'Transferencia ' . $t['numero'] . ' (entrada)'
                     );
+                    if ($pz['falta'] > 0.0001) $faltantes[] = $pz['falta'];
                 }
-                dbUpdate('transferencias', ['estado' => 'recibida', 'recibida_por' => current_user()['id'], 'recibida_at' => date('Y-m-d H:i:s')], 'id=?', [$id]);
+                foreach ($plan as $pz) if ($pz['rec'] <= 0.0001) $faltantes[] = $pz['falta'];
+
+                dbUpdate('transferencias', [
+                    'estado' => 'recibida', 'recibida_por' => current_user()['id'],
+                    'recibida_at' => date('Y-m-d H:i:s'),
+                    'notas_recepcion' => $motivo !== '' ? mb_substr($motivo, 0, 500) : null,
+                ], 'id=?', [$id]);
             });
-            audit('transferencias', 'recibir', "Transferencia recibida #$id", ['tabla' => 'transferencias', 'registro_id' => $id]);
-            flash('success', 'Transferencia recibida. Stock agregado al destino.');
+            audit('transferencias', 'recibir', "Transferencia recibida #$id"
+                . ($faltantes ? ' con ' . count($faltantes) . ' faltante(s)' : ''),
+                ['tabla' => 'transferencias', 'registro_id' => $id]);
+            if ($faltantes) {
+                flash('warning', 'Transferencia recibida con ' . count($faltantes) . ' faltante(s). '
+                    . 'Solo entró al destino lo que llegó; la diferencia queda registrada y sale en «Ajustes y mermas».');
+            } else {
+                flash('success', 'Transferencia recibida completa. Stock agregado al destino.');
+            }
         } catch (Throwable $e) { flash('error', $e->getMessage()); }
         redirect('modules/inventario/transferencias.php');
     }
@@ -224,12 +282,49 @@ if ($verId) {
     layout_start('Transferencia ' . e($t['numero']), 'Detalle', '<a href="' . url('modules/inventario/transferencias.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>');
     ?>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-      <div class="card lg:col-span-2 overflow-hidden"><table class="data-table"><thead><tr><th>Producto</th><th class="text-right">Cantidad</th></tr></thead><tbody><?php foreach ($det as $d): ?><tr><td><p class="font-semibold text-slate-700"><?= e($d['producto']) ?></p><p class="text-xs text-slate-400"><?= e($d['codigo']) ?></p></td><td class="text-right font-bold text-slate-800"><?= qty($d['cantidad']) ?></td></tr><?php endforeach; ?></tbody></table></div>
+      <?php
+      // Si llegó todo, sobra la columna de faltantes: una tabla con una columna
+      // de ceros solo hace ruido. Se enseña únicamente cuando hubo diferencia.
+      $huboFaltante = false;
+      foreach ($det as $d) {
+          if ($d['cantidad_recibida'] !== null
+              && (float) $d['cantidad_recibida'] < (float) $d['cantidad'] - 0.0001) $huboFaltante = true;
+      }
+      ?>
+      <div class="card lg:col-span-2 overflow-hidden">
+        <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead><tr>
+            <th>Producto</th>
+            <th class="text-right"><?= $huboFaltante ? 'Enviado' : 'Cantidad' ?></th>
+            <?php if ($huboFaltante): ?><th class="text-right">Llegó</th><th class="text-right">Faltó</th><?php endif; ?>
+          </tr></thead>
+          <tbody><?php foreach ($det as $d):
+            $rec   = $d['cantidad_recibida'] === null ? null : (float) $d['cantidad_recibida'];
+            $falta = $rec === null ? 0.0 : round((float) $d['cantidad'] - $rec, 3); ?>
+            <tr>
+              <td><p class="font-semibold text-slate-700"><?= e($d['producto']) ?></p><p class="text-xs text-slate-400"><?= e($d['codigo']) ?></p></td>
+              <td class="text-right font-bold text-slate-800"><?= qty($d['cantidad']) ?></td>
+              <?php if ($huboFaltante): ?>
+                <td class="text-right font-semibold text-slate-700"><?= $rec === null ? '—' : qty($rec) ?></td>
+                <td class="text-right font-bold <?= $falta > 0.0001 ? 'text-amber-600' : 'text-slate-300' ?>"><?= $falta > 0.0001 ? qty($falta) : '—' ?></td>
+              <?php endif; ?>
+            </tr>
+          <?php endforeach; ?></tbody>
+        </table>
+        </div>
+      </div>
       <div class="card p-5 h-fit space-y-3">
         <div class="flex items-center justify-between"><span class="text-xs text-slate-400">Estado</span><?= badgeFor($t['estado']) ?></div>
         <div class="flex items-center gap-2 text-sm"><span class="badge badge-slate"><?= e($t['origen']) ?></span><?= icon('arrow-right', 'w-4 h-4 text-slate-300') ?><span class="badge badge-blue"><?= e($t['destino']) ?></span></div>
         <div><p class="text-xs text-slate-400">Fecha</p><p class="font-semibold text-slate-700"><?= fechaCorta($t['fecha']) ?></p></div>
         <div><p class="text-xs text-slate-400">Creada por</p><p class="font-semibold text-slate-700"><?= e($t['usuario'] ?: '—') ?></p></div>
+        <?php if (!empty($t['notas_recepcion'])): ?>
+          <div class="rounded-xl bg-amber-50 border border-amber-100 p-3">
+            <p class="text-xs text-amber-600 font-semibold">Qué pasó al recibir</p>
+            <p class="text-sm text-slate-700 mt-0.5"><?= e($t['notas_recepcion']) ?></p>
+          </div>
+        <?php endif; ?>
         <?php if ($t['estado'] === 'rechazada' && !empty($t['motivo_rechazo'])): ?>
           <div class="rounded-xl bg-rose-50 border border-rose-100 p-3">
             <p class="text-xs text-rose-500 font-semibold">Motivo del rechazo</p>
@@ -268,6 +363,28 @@ if ($idsBorrador) {
     $ph = implode(',', array_fill(0, count($idsBorrador), '?'));
     foreach (qAll("SELECT td.transferencia_id, td.producto_id, td.cantidad, p.nombre FROM transferencia_detalles td JOIN productos p ON p.id=td.producto_id WHERE td.transferencia_id IN ($ph)", $idsBorrador) as $r) {
         $lineasPorTrf[(int) $r['transferencia_id']][] = ['producto_id' => (int) $r['producto_id'], 'nombre' => $r['nombre'], 'cantidad' => (float) $r['cantidad']];
+    }
+}
+
+// Líneas de lo que está EN CAMINO hacia una sucursal que quien mira puede
+// recibir: hacen falta en la pantalla para poder contar bulto por bulto lo que
+// llegó de verdad, en vez de dar por bueno lo que dice el papel.
+$lineasRecepcion = [];
+$idsEnviada = array_values(array_map(fn($t) => (int) $t['id'], array_filter(
+    $transferencias,
+    fn($t) => $t['estado'] === 'enviada' && can_access_sucursal((int) $t['sucursal_destino_id'])
+)));
+if ($idsEnviada && can('transferencias.recibir')) {
+    $phR = implode(',', array_fill(0, count($idsEnviada), '?'));
+    foreach (qAll("SELECT td.id, td.transferencia_id, td.cantidad, p.nombre, p.codigo
+                     FROM transferencia_detalles td
+                     JOIN productos p ON p.id = td.producto_id
+                    WHERE td.transferencia_id IN ($phR)
+                    ORDER BY p.nombre", $idsEnviada) as $r) {
+        $lineasRecepcion[(int) $r['transferencia_id']][] = [
+            'detalle_id' => (int) $r['id'], 'nombre' => $r['nombre'],
+            'codigo' => (string) $r['codigo'], 'enviada' => (float) $r['cantidad'],
+        ];
     }
 }
 
@@ -419,7 +536,8 @@ echo kpis([
                   <?php // ---- Enviada: recibir/rechazar (destino), anular (origen) ----
                   if ($t['estado'] === 'enviada'): ?>
                     <?php if (can('transferencias.recibir') && $esDestino): ?>
-                      <form method="post" class="inline" onsubmit="return confirm('¿Confirmar recepción? Se agregará el stock al destino.')"><?= csrf_field() ?><input type="hidden" name="accion" value="recibir"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>"><button class="p-2 rounded-lg text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50" title="Recibir"><?= icon('check', 'w-4 h-4') ?></button></form>
+                      <?php // Se abre el conteo: entra lo que llegó, no lo que dice el papel. ?>
+                      <button type="button" onclick="<?= jsEvent('trf:recibir', ['id' => (int) $t['id'], 'numero' => $t['numero'], 'lineas' => $lineasRecepcion[(int) $t['id']] ?? []]) ?>" class="p-2 rounded-lg text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50" title="Recibir"><?= icon('check', 'w-4 h-4') ?></button>
                     <?php endif; ?>
                     <?php if (can('transferencias.rechazar') && $esDestino): ?>
                       <button type="button" onclick="<?= jsEvent('trf:rechazar', ['id' => (int) $t['id'], 'numero' => $t['numero']]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50" title="Rechazar"><?= icon('undo', 'w-4 h-4') ?></button>
@@ -524,7 +642,91 @@ echo kpis([
   </div>
 </div>
 
+<?php // ---- Recibir: se cuenta bulto por bulto lo que llegó ---- ?>
+<div x-data="trfRecibir()" @trf:recibir.window="abrir($event.detail)" @keydown.escape.window="open=false" x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+  <div class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
+    <form method="post" @submit="if (!valida($event)) $event.preventDefault()">
+      <?= csrf_field() ?><input type="hidden" name="accion" value="recibir"><input type="hidden" name="id" :value="id">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 class="font-bold text-slate-800">Recibir <span x-text="numero"></span></h3>
+        <button type="button" @click="open=false" aria-label="Cerrar" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+      <div class="p-6 space-y-4">
+        <p class="text-sm text-slate-600">Cuenta lo que llegó de verdad. Lo que falte no entra al inventario del destino:
+          esas unidades ya salieron del origen y hay que decir qué pasó con ellas.</p>
+
+        <div class="overflow-x-auto -mx-2 px-2">
+          <table class="data-table">
+            <thead><tr><th>Producto</th><th class="text-right w-24">Enviado</th><th class="text-right w-32">Llegó</th><th class="text-right w-24">Faltó</th></tr></thead>
+            <tbody>
+              <template x-for="(l, i) in lineas" :key="l.detalle_id">
+                <tr>
+                  <td><p class="font-semibold text-slate-700" x-text="l.nombre"></p><p class="text-xs text-slate-400" x-text="l.codigo"></p></td>
+                  <td class="text-right text-slate-500" x-text="fmt(l.enviada)"></td>
+                  <td class="text-right">
+                    <input type="number" step="0.001" min="0" :max="l.enviada" :name="'recibida[' + l.detalle_id + ']'"
+                           x-model.number="l.recibida" required
+                           class="input text-right py-1.5 w-28 ml-auto"
+                           :class="falta(l) > 0.0001 ? 'border-amber-300 bg-amber-50' : ''">
+                  </td>
+                  <td class="text-right font-semibold" :class="falta(l) > 0.0001 ? 'text-amber-600' : 'text-slate-300'"
+                      x-text="falta(l) > 0.0001 ? fmt(falta(l)) : '—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div x-show="hayFaltante()" x-transition class="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
+          <p class="text-sm text-amber-800 font-semibold"><?= icon('alert', 'w-4 h-4 inline -mt-0.5') ?>
+            Faltan <span x-text="fmt(totalFalta())"></span> unidades por el camino.</p>
+          <p class="text-xs text-amber-700">Si no llegó absolutamente nada, cierra esto y usa <strong>Rechazar</strong>:
+            así el stock vuelve al origen en vez de darse por perdido.</p>
+          <div>
+            <label class="label">¿Qué pasó? *</label>
+            <input type="text" name="notas_recepcion" maxlength="500" class="input"
+                   x-model="motivo" placeholder="Ej. La caja llegó abierta / el suplidor cargó de menos / se rompió en el camino">
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+        <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
+        <button type="submit" class="btn btn-primary"><?= icon('check', 'w-4 h-4') ?> Recibir</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>
+function trfRecibir() {
+  return {
+    open: false, id: 0, numero: '', lineas: [], motivo: '',
+    abrir(d) {
+      this.id = d.id; this.numero = d.numero; this.motivo = '';
+      // Se abre con TODO recibido: lo normal es que llegue completo, y así
+      // quien recibe solo toca los renglones donde de verdad faltó algo.
+      this.lineas = (d.lineas || []).map(l => ({ ...l, recibida: l.enviada }));
+      this.open = true;
+    },
+    fmt(n) { return (Math.round(n * 1000) / 1000).toLocaleString('es-DO', { maximumFractionDigits: 3 }); },
+    falta(l) { const r = Number(l.recibida); return isNaN(r) ? 0 : l.enviada - r; },
+    hayFaltante() { return this.lineas.some(l => this.falta(l) > 0.0001); },
+    totalFalta() { return this.lineas.reduce((s, l) => s + Math.max(0, this.falta(l)), 0); },
+    totalRecibido() { return this.lineas.reduce((s, l) => s + Math.max(0, Number(l.recibida) || 0), 0); },
+    valida(e) {
+      if (this.totalRecibido() <= 0.0001) {
+        alert('No llegó nada de esta transferencia. Usa «Rechazar» en vez de «Recibir»: así el stock vuelve al origen en lugar de darse por perdido.');
+        return false;
+      }
+      if (this.hayFaltante() && !this.motivo.trim()) {
+        alert('Faltó mercancía por el camino. Escribe qué pasó antes de recibir.');
+        return false;
+      }
+      return true;
+    },
+  };
+}
+
 function trfForm() {
   const DEF_ORIGEN = <?= (int) ($sucursales[0]['id'] ?? 0) ?>, DEF_DESTINO = <?= (int) ($sucursales[1]['id'] ?? 0) ?>;
   return {

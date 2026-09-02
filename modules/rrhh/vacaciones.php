@@ -34,7 +34,7 @@ if (isPost()) {
         // El empleado debe existir y estar dentro del alcance de sucursal.
         [$wScope, $pScope] = sucursalScope('sucursal_id');
         $emp = qOne(
-            "SELECT id FROM empleados WHERE id = ? AND $wScope",
+            "SELECT id, nombre, apellido, fecha_ingreso FROM empleados WHERE id = ? AND $wScope",
             array_merge([$empleadoId], $pScope)
         );
 
@@ -45,8 +45,15 @@ if (isPost()) {
         } elseif ($tsHasta < $tsDesde) {
             flash('error', 'La fecha hasta no puede ser anterior a la fecha desde.');
         } else {
-            // Días inclusivos: datediff + 1.
+            // Días inclusivos: datediff + 1. Este es el calendario, el que
+            // dura la ausencia; sirve para saber cuándo vuelve la persona.
             $dias = (int) floor(($tsHasta - $tsDesde) / 86400) + 1;
+
+            // Y este es el que consume derecho: el art. 177 concede días
+            // LABORABLES. Contar de calendario le comía a la persona los
+            // domingos de su propio descanso, dos por cada quincena de asueto.
+            $laborables = $tipo === 'vacaciones' ? vac_dias_laborables($desde, $hasta) : $dias;
+
             $nid = dbInsert('vacaciones', [
                 'empleado_id'     => $empleadoId,
                 'tipo'            => $tipo,
@@ -55,11 +62,28 @@ if (isPost()) {
                 'fecha_desde'     => $desde,
                 'fecha_hasta'     => $hasta,
                 'dias'            => $dias,
+                'dias_laborables' => $laborables,
                 'con_goce'        => $conGoce,
                 'estado'          => 'solicitada',
                 'motivo'          => $motivo,
             ]);
             audit('rrhh_vacaciones', 'crear', "Solicitud de $tipo creada (empleado #$empleadoId, $dias día(s))", ['tabla' => 'vacaciones', 'registro_id' => $nid]);
+
+            // Se avisa, no se bloquea: adelantar vacaciones del año siguiente
+            // es una decisión de la empresa, y hay ausencias sin goce que son
+            // legítimas. Lo que no puede pasar es que nadie se entere.
+            if ($tipo === 'vacaciones') {
+                $bal = vac_balance($emp);
+                if ($bal['derecho'] > 0 && $laborables > $bal['saldo'] + 0.01) {
+                    flash('warning', trim($emp['nombre'] . ' ' . $emp['apellido']) . ' tenía '
+                        . number_format($bal['saldo'], 2) . ' día(s) de saldo y se le apuntaron '
+                        . number_format($laborables, 2) . ' laborables. ' . $bal['regla']
+                        . '; ya llevaba ' . number_format($bal['disfrutadas'], 2)
+                        . ' disfrutado(s) en este año de servicio.');
+                } elseif ($bal['derecho'] === 0) {
+                    flash('warning', trim($emp['nombre'] . ' ' . $emp['apellido']) . ': ' . $bal['regla'] . '.');
+                }
+            }
             flash('success', 'Solicitud registrada correctamente.');
         }
         redirect('modules/rrhh/vacaciones.php');
@@ -179,6 +203,38 @@ $kpiEnVacaciones = (int) qVal(
     $pK
 );
 
+/* ---------------------------------------------------------------------------
+ *  Saldo de vacaciones de cada quien (art. 177)
+ *
+ *  Esta pantalla apuntaba solicitudes y nada más: nadie sabía cuántos días le
+ *  tocaban a cada persona ni cuántos llevaba tomados. Así no hay forma de
+ *  aprobar unas vacaciones con criterio, ni de saber lo que la empresa debe en
+ *  días acumulados, que es una deuda real aunque no esté en el banco.
+ *
+ *  Se calcula sobre el AÑO DE SERVICIO de cada quien —desde su aniversario de
+ *  ingreso—, no sobre el año natural: si no, quien entró en septiembre parece
+ *  no tener vacaciones cada enero.
+ * ------------------------------------------------------------------------ */
+$saldos = [];
+foreach (qAll("SELECT e.id, e.nombre, e.apellido, e.fecha_ingreso, e.salario
+                 FROM empleados e
+                WHERE e.estado IN ('activo','vacaciones') AND $wEmp
+                ORDER BY e.nombre, e.apellido", $pEmp) as $emp) {
+    $b = vac_balance($emp);
+    if ($b['derecho'] <= 0) continue;   // todavía no genera derecho: no es saldo, es nada
+    $saldos[] = $b + [
+        'id'      => (int) $emp['id'],
+        'nombre'  => trim($emp['nombre'] . ' ' . $emp['apellido']),
+        // Lo que costaría pagarlos, que es la medida de lo que se debe.
+        'importe' => round($b['saldo'] * ((float) $emp['salario'] / 23.83), 2),
+    ];
+}
+// Primero quien más días acumula: es quien más riesgo tiene de perderlos y
+// más deuda representa.
+usort($saldos, fn($a, $b) => $b['saldo'] <=> $a['saldo']);
+$saldoDias    = array_sum(array_column($saldos, 'saldo'));
+$saldoImporte = array_sum(array_column($saldos, 'importe'));
+
 $colorEstado = ['solicitada' => 'amber', 'aprobada' => 'emerald', 'rechazada' => 'rose', 'disfrutada' => 'sky'];
 
 $acciones = can('rrhh_vacaciones.crear') ? btn_nuevo('vac:new', 'Nueva solicitud') : '';
@@ -287,7 +343,18 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
               <td><?= $s['tipo'] === 'vacaciones' ? badge('Vacaciones', 'indigo') : badge('Licencia', 'violet') ?></td>
               <td class="text-slate-500"><?= e($s['subtipo'] ? ucfirst($s['subtipo']) : '—') ?></td>
               <td class="text-slate-600 whitespace-nowrap"><?= e(fechaCorta($s['fecha_desde'])) ?> <span class="text-slate-300">→</span> <?= e(fechaCorta($s['fecha_hasta'])) ?></td>
-              <td class="text-center"><span class="badge badge-slate"><?= (int) $s['dias'] ?></span></td>
+              <?php // El calendario dice cuánto dura la ausencia; los laborables
+                       // son los que consumen el derecho del art. 177. No son el
+                       // mismo número y confundirlos le come días a la persona. ?>
+              <td class="text-center">
+                <span class="badge badge-slate"><?= (int) $s['dias'] ?></span>
+                <?php if ($s['tipo'] === 'vacaciones' && $s['dias_laborables'] !== null
+                          && (float) $s['dias_laborables'] !== (float) $s['dias']): ?>
+                  <span class="block text-xs text-slate-400 mt-0.5" title="Días laborables, sin domingos: son los que consumen el derecho">
+                    <?= rtrim(rtrim(number_format((float) $s['dias_laborables'], 2), '0'), '.') ?> laborables
+                  </span>
+                <?php endif; ?>
+              </td>
               <td class="text-center"><?= $s['con_goce'] ? '<span class="text-emerald-600 font-medium">Sí</span>' : '<span class="text-slate-400">No</span>' ?></td>
               <td>
                 <?= badge(ucfirst($s['estado']), $colorEstado[$s['estado']] ?? 'slate') ?>
@@ -325,6 +392,74 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
     <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
+
+<?php if ($saldos): ?>
+<?php /* Los días acumulados son una deuda de la empresa aunque no estén en el
+         banco: si mañana se va la persona, hay que pagárselos. Enseñarlos
+         cuesta poco y evita la sorpresa en la liquidación. */ ?>
+<div class="card mt-6" x-data="{ abierto: false }">
+  <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-3">
+      <span class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><?= icon('calendar', 'w-5 h-5') ?></span>
+      <div>
+        <h3 class="font-bold text-slate-800">Días que se deben</h3>
+        <p class="text-xs text-slate-500">Derecho del art. 177 menos lo ya disfrutado, por año de servicio de cada quien</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="text-right">
+        <p class="text-xs text-slate-400">Acumulado</p>
+        <p class="font-bold text-slate-800"><?= rtrim(rtrim(number_format($saldoDias, 2), '0'), '.') ?> día(s) · <?= money($saldoImporte) ?></p>
+      </div>
+      <button type="button" @click="abierto = !abierto" class="btn btn-soft btn-sm no-print">
+        <span x-text="abierto ? 'Ocultar' : 'Ver quiénes'"></span>
+      </button>
+    </div>
+  </div>
+
+  <div x-show="abierto" x-transition x-cloak class="overflow-x-auto">
+    <table class="data-table">
+      <thead><tr>
+        <th>Empleado</th>
+        <th>Año de servicio en curso</th>
+        <th class="text-center">Le tocan</th>
+        <th class="text-center">Tomados</th>
+        <th class="text-center">Le quedan</th>
+        <th class="text-right">Si hubiera que pagarlos</th>
+      </tr></thead>
+      <tbody>
+        <?php foreach ($saldos as $s): ?>
+          <tr>
+            <td>
+              <div class="flex items-center gap-3">
+                <?= avatar($s['nombre']) ?>
+                <div>
+                  <p class="font-semibold text-slate-700"><?= e($s['nombre']) ?></p>
+                  <p class="text-xs text-slate-400"><?= e($s['regla']) ?></p>
+                </div>
+              </div>
+            </td>
+            <td class="text-slate-600 whitespace-nowrap text-sm"><?= e(fechaCorta($s['desde'])) ?> <span class="text-slate-300">→</span> <?= e(fechaCorta($s['hasta'])) ?></td>
+            <td class="text-center text-slate-600"><?= (int) $s['derecho'] ?></td>
+            <td class="text-center text-slate-500"><?= $s['disfrutadas'] > 0 ? rtrim(rtrim(number_format($s['disfrutadas'], 2), '0'), '.') : '—' ?></td>
+            <td class="text-center">
+              <span class="badge <?= $s['saldo'] <= 0 ? 'badge-slate' : ($s['saldo'] >= 14 ? 'badge-amber' : 'badge-emerald') ?>">
+                <?= rtrim(rtrim(number_format($s['saldo'], 2), '0'), '.') ?>
+              </span>
+            </td>
+            <td class="text-right text-slate-600"><?= money($s['importe']) ?></td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+    <p class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100">
+      Los días son laborables, sin domingos. Los feriados nacionales no se descuentan
+      porque el sistema no lleva calendario de feriados: si unas vacaciones caen sobre uno,
+      hay que bajar el número a mano.
+    </p>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php if (can('rrhh_vacaciones.crear')): ?>
 <!-- Modal nueva solicitud -->

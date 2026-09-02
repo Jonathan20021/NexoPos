@@ -101,7 +101,7 @@ nómina. Lo resuelve `rep_catalogo_visible()`.
 | **ITBIS y retenciones** | ITBIS cobrado vs. adelantado, retenciones y saldo a pagar del periodo. | — |
 | **Inventario valorizado** | Existencias a costo y a precio de venta, por sucursal y categoría. | `reportes.inventario` |
 | **Existencias por tienda** | El mismo artículo en todos los locales, lado a lado, con lo que está bajo mínimo o en cero. | `reportes.inventario` |
-| **Ajustes y mermas** | Todo lo que bajó o subió la existencia sin una venta detrás, con su nota, su responsable y su costo. | `reportes.inventario` |
+| **Ajustes y mermas** | Todo lo que bajó o subió la existencia sin una venta detrás, con su nota, su responsable y su costo. Más los **faltantes en tránsito**: lo que salió de una tienda y nunca llegó a la otra, en su propia sección porque no es un ajuste de nadie. | `reportes.inventario` |
 | **Resumen de nómina** | Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento. | — |
 | **Costo de la plantilla** | Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales. | — |
 | **Auxiliar de cuentas** | Mayor por cuenta financiera con saldo inicial, movimientos y saldo final. | — |

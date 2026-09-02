@@ -40,7 +40,7 @@ borrador  ──solicitar──▶  pendiente  ──aprobar──▶  enviada  
 - `transferenciaEnviar()` — de pendiente a enviada. **Aquí sale el stock del origen.**
   Necesita `transferencias.aprobar`.
 - `transferenciaDevolverABorrador()` — rechaza con un motivo que queda guardado.
-- Recibir en destino no cambió.
+- Recibir en destino **cuenta lo que llegó**, ver más abajo.
 
 **Nadie aprueba lo suyo.** `transferenciaEnviar()` rechaza la operación si quien aprueba es
 el mismo usuario que la solicitó, aunque tenga el permiso. Un control que se puede saltar
@@ -56,6 +56,34 @@ uno mismo no es un control.
    pidió. Aprobar o devolver se hace desde ahí.
 3. **Campana** — `notif_gen_transferencias_por_aprobar()` levanta un aviso de prioridad
    alta, dirigido a `transferencias.aprobar` y a la sucursal de origen.
+
+### Recibir es contar, no dar por bueno
+
+Recibir agregaba **siempre la cantidad enviada**. Si salieron 10 y llegaron 8, el sistema
+decía 10 y el estante tenía 8: un fantasma que no aparecía hasta el conteo físico
+siguiente, meses después, y ya sin rastro de dónde se perdió.
+
+Ahora el botón abre un conteo línea por línea. Se abre con todo recibido —lo normal es que
+llegue completo— y solo hay que tocar los renglones donde de verdad faltó algo.
+
+| Situación | Qué pasa |
+|---|---|
+| Llega todo | Entra completo, mensaje de recepción completa. Igual que siempre. |
+| Llega corto | Entra lo que llegó. **Exige escribir qué pasó** antes de dejar recibir. |
+| Una línea no llega | Se recibe el resto; esa línea queda en cero, no en blanco. |
+| No llega nada | **No se puede recibir.** El mensaje manda a «Rechazar», que devuelve el stock al origen en vez de darlo por perdido. |
+| Llega más de lo enviado | Se rechaza: no se puede recibir lo que no salió. |
+| Sin el formulario (enlace viejo, integración) | Se recibe entero, como antes. |
+
+Lo que falta **no vuelve al origen**: esas unidades ya salieron de allí al aprobarse el
+traslado y no entran en ningún sitio. Eso es exactamente lo que significa perderlas, y por
+eso el número tiene que quedar escrito. `transferencia_detalles.cantidad_recibida` guarda
+cuánto llegó de cada línea y `transferencias.notas_recepcion` guarda el motivo.
+
+El faltante sale en **Ajustes y mermas**, en su propia sección «Lo que salió de una tienda
+y nunca llegó a la otra», con la ruta, el producto, las unidades, lo que valían y el motivo
+que escribió quien recibió. No se mezcla con los ajustes de conteo porque no es lo mismo:
+un ajuste lo hizo alguien a mano, esto se perdió entre dos tiendas.
 
 ---
 
@@ -132,3 +160,6 @@ rutas más transitadas y aviso de traslados varados más de siete días.
 - `database/migracion_control_salidas_p17.sql` — estados de la transferencia, motivo de
   rechazo, fechas y el permiso `transferencias.aprobar`.
 - `database/migracion_justificacion_conteo_p27.sql` — `conteos.justificacion`.
+- `database/migracion_recepcion_parcial_p33.sql` — `transferencia_detalles.cantidad_recibida`
+  y `transferencias.notas_recepcion`. Rellena las ya recibidas con su cantidad enviada,
+  que es lo que fueron.

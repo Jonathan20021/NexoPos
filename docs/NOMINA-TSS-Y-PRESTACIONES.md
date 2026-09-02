@@ -361,6 +361,78 @@ redacta un abogado, no una plantilla del sistema.
 
 ---
 
+## 6c. Vacaciones: el derecho del art. 177 y su saldo
+
+`includes/vacaciones.php`. La pantalla de vacaciones apuntaba solicitudes y nada más: nadie
+sabía cuántos días le tocaban a cada quien ni cuántos llevaba tomados. Eso costaba dinero
+por dos sitios distintos.
+
+### Los días son laborables, no de calendario
+
+El art. 177 concede días **laborables**. Contarlos de calendario (`datediff + 1`) le comía a
+la persona los domingos de su propio descanso: una quincena de asueto se apuntaba como 14
+días cuando legalmente eran 12.
+
+Ahora se guardan los dos números y cada uno sirve para lo suyo:
+
+- `vacaciones.dias` — de calendario. Cuánto dura la ausencia, para saber cuándo vuelve.
+- `vacaciones.dias_laborables` — los que **consumen derecho**. `vac_dias_laborables()`.
+
+> **Criterio que hay que confirmar con el abogado laboral.** «Laborable» aquí excluye los
+> **domingos**, que son el descanso semanal del art. 163. Los **feriados nacionales no se
+> descuentan** porque el sistema no lleva calendario de feriados: si unas vacaciones caen
+> sobre uno, hay que bajar el número a mano. La pantalla lo dice donde se teclea.
+
+### El derecho, por año de servicio
+
+`vac_derecho_anual()` aplica el art. 177 completo, incluida la escala del primer año que
+está en el párrafo del artículo y **no es una regla de tres**:
+
+| Servicio | Días |
+|---|---|
+| Menos de 5 meses | 0 |
+| 5, 6, 7, 8, 9, 10, 11 meses | 6, 7, 8, 9, 10, 11, 12 |
+| De 1 a 5 años | 14 |
+| 5 años o más | 18 |
+
+Los meses se cuentan **de calendario**, no dividiendo por una media de 30,44 días: entre
+enero y septiembre hay cinco meses de 31 días, así que la media se queda corta y decía
+«7 meses» a quien llevaba 8 — un día de vacaciones de menos.
+
+El año se cuenta **de servicio**, desde el aniversario de ingreso de cada quien
+(`vac_anio_servicio()`), no de enero a diciembre: si no, quien entró en septiembre parece
+no tener vacaciones cada enero.
+
+### El saldo, y lo que se debe
+
+`vac_balance()` da derecho − disfrutado = saldo. La pantalla lo enseña en «Días que se
+deben», ordenado por quien más acumula, con lo que costaría pagarlos. Es una deuda real de
+la empresa aunque no esté en el banco: si mañana se va la persona, hay que pagárselos.
+
+Al apuntar unas vacaciones que se pasan del saldo **se avisa, no se bloquea**: adelantar
+días del año siguiente es una decisión de la empresa. Lo que no puede pasar es que nadie se
+entere. Una licencia por enfermedad no sale del derecho del art. 177: `vac_disfrutadas()`
+solo cuenta `tipo = 'vacaciones'`.
+
+### La liquidación ya no las paga dos veces
+
+`plab_calcular()` pagaba las vacaciones proporcionales del año de servicio en curso **sin
+restar las que la persona ya se había tomado en ese mismo año**. Como las vacaciones se
+disfrutan con salario, ya se le habían pagado al tomarlas: la liquidación las abonaba por
+segunda vez y nadie lo notaba porque el renglón parece correcto.
+
+Medido con el padrón real: **RD$ 23.898,50 de más en una sola liquidación**.
+
+Ahora el renglón resta lo disfrutado y **lo enseña**, no solo el resultado:
+
+> 14 días al año (de 1 a 5 años de servicio) × 9,76 mes(es) corridos ÷ 12.
+> Menos 12,00 día(s) ya disfrutados desde el 10/03/2026
+
+Si la resta da negativo se queda en cero: la persona se adelantó vacaciones, pero eso no se
+le cobra en la liquidación.
+
+---
+
 ## 6b. Los informes de William
 
 | Informe | Qué contesta |
@@ -453,3 +525,6 @@ No es una aproximación: sumadas dan exactamente la diferencia del sueldo.
 - `migracion_tss_p22.sql` — parámetros y novedades de la TSS.
 - `migracion_tss_pagos_p31.sql` — tabla `tss_pagos`, categorías de gasto y `tss.pagar`.
 - `migracion_salario_nomina_p32.sql` — `nomina_detalles.salario_mensual` congelado.
+- `migracion_vacaciones_saldo_p34.sql` — `vacaciones.dias_laborables`. Rellena lo ya
+  apuntado con su número de calendario: recontarlo hacia atrás cambiaría saldos que
+  alguien ya dio por buenos.
