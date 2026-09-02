@@ -67,3 +67,14 @@ SELECT rp.rol_id, p.id
   JOIN permisos pv ON pv.id = rp.permiso_id AND pv.clave = 'rrhh_nomina.pagar'
   CROSS JOIN permisos p
  WHERE p.clave = 'tss.pagar';
+
+-- Y a quien administra los parámetros de la TSS: si es quien decide el salario
+-- mínimo cotizable y las tasas con las que se calcula el aporte, es quien tiene
+-- que poder registrar que ese aporte se pagó. Separarlo dejaba al administrador
+-- de nómina viendo la cifra sin poder cerrarla.
+INSERT IGNORE INTO rol_permisos (rol_id, permiso_id)
+SELECT rp.rol_id, p.id
+  FROM rol_permisos rp
+  JOIN permisos pv ON pv.id = rp.permiso_id AND pv.clave = 'tss.configurar'
+  CROSS JOIN permisos p
+ WHERE p.clave = 'tss.pagar';
