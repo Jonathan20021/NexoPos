@@ -211,6 +211,30 @@ los conceptos de verdad y cuadra por construcción:
 
 ---
 
+## 4b. Certificación de ingresos y retenciones
+
+`modules/rrhh/constancia_isr.php` — `?empleado=<id>&anio=<yyyy>` para una,
+`?anio=<yyyy>` para todo el que cobró ese año, una por hoja.
+
+El papel que un empleado pide para un préstamo, una visa o para declarar por su
+cuenta si tiene otros ingresos. Lleva el detalle mes a mes —ingresos gravados,
+AFP, SFS, ISR retenido y neto—, el resumen del año y una línea de firma.
+
+Dos criterios que lo hacen válido:
+
+- **Solo lo pagado.** Una nómina confirmada pero sin pagar es una retención que
+  todavía no ocurrió, y certificar dinero que no se movió es firmar algo falso.
+  Si quedan nóminas del año sin pagar, el documento lo dice en el pie en vez de
+  dar un número corto sin explicación.
+- **La regalía va aparte y fuera de la base.** Está exenta de ISR (art. 222):
+  sumarla a los ingresos gravados haría que las cuentas del empleado no cuadren
+  con lo que se le retuvo.
+
+Se llega desde la ficha del empleado —solo si ya cobró algo este año— y, en
+bloque, desde el informe *Resumen de nómina*.
+
+---
+
 ## 5. Regalía pascual
 
 `includes/regalia.php` · `modules/rrhh/regalia.php`

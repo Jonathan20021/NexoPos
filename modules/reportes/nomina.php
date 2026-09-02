@@ -203,7 +203,13 @@ if (export_solicitado()) {
         $filas, 'Resumen de nómina');
 }
 
-layout_start('Resumen de nómina', rep_subtitulo($p), rep_barra_titulo());
+// La certificación anual sale de aquí porque es donde se mira el acumulado.
+$aVal = (int) substr($p['hasta'], 0, 4);
+layout_start('Resumen de nómina', rep_subtitulo($p), rep_barra_titulo(
+    can('rrhh_nomina.ver')
+        ? '<a href="' . e(url('modules/rrhh/constancia_isr.php?anio=' . $aVal)) . '" target="_blank"'
+          . ' class="btn btn-ghost">' . icon('file', 'w-4 h-4') . ' Certificaciones ' . $aVal . '</a>'
+        : ''));
 echo rep_abrir('Resumen de nómina', $p, ['sucursal' => true]);
 ?>
 

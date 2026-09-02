@@ -94,6 +94,16 @@ if (!empty($e['fecha_ingreso'])) {
 }
 
 $acc = '<a href="' . url('modules/rrhh/empleados.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>';
+// El papel que la persona pide para un préstamo o una visa. Solo tiene sentido
+// si ya cobró algo: sin nómina pagada el documento sale vacío.
+if (can('rrhh_nomina.ver')
+    && qVal("SELECT 1 FROM nomina_detalles nd JOIN nominas n ON n.id = nd.nomina_id
+              WHERE nd.empleado_id = ? AND n.estado = 'pagada' AND YEAR(n.fecha_hasta) = ? LIMIT 1",
+            [$id, (int) date('Y')])) {
+    $acc .= '<a href="' . url('modules/rrhh/constancia_isr.php?empleado=' . $id . '&anio=' . date('Y'))
+          . '" target="_blank" class="btn btn-ghost">' . icon('file', 'w-4 h-4')
+          . ' Certificación ' . date('Y') . '</a>';
+}
 layout_start('Ficha de ' . e($nombre), e($e['puesto'] ?: 'Sin puesto asignado') . ' · ' . e($e['sucursal'] ?: 'sin sucursal'), $acc);
 ?>
 
