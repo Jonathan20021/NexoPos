@@ -72,6 +72,24 @@ cuenta, así que a quien le cierran la cuenta y se le pasa a efectivo sin borrar
 el número viejo entraba en el archivo **y** cobraba en caja. Se le pagaba dos
 veces y no se veía hasta cuadrar el mes.
 
+### Quien entra o sale a mitad de período
+Al generar la nómina se ponía la jornada completa a todo el mundo, incluido quien
+se incorporó a mitad de quincena. Medido con el padrón real: alguien de 50.000
+que entra el día 11 de una quincena del 1 al 15 cobraba los **25.000 completos**
+en vez de los **8.333** que trabajó. Dieciséis mil seiscientos de más por persona,
+salvo que quien lleva la nómina se acordara de corregir los días fila por fila.
+
+`nominaDiasDelPeriodo()` prorratea por días **naturales** —que es lo que mide la
+permanencia— y devuelve el resultado en los días base del convenio del cliente,
+que es la unidad con la que calcula `calcNominaRD()`:
+
+    días = díasBase × (días naturales trabajados / días naturales del período)
+
+Quien estuvo el período entero recibe `díasBase` exacto, así que la quincena
+corriente no cambia ni un centavo. Y la pantalla **lo dice** al terminar,
+nombrando a quién se le prorrateó: pagar medio período es una decisión que hay
+que ver y poder corregir en la rejilla, no algo que ocurra por lo bajo.
+
 ### Dos correcciones sobre la hoja del cliente
 Su Excel tiene dos fórmulas que no hacen lo que sus propias columnas dicen. Hoy
 no se nota porque esas columnas están en cero; el día que se usen, sí:

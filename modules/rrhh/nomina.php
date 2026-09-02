@@ -108,7 +108,8 @@ if (isPost()) {
 
         $factor = $tipo === 'quincenal' ? 0.5 : ($tipo === 'semanal' ? (1 / 4.33) : 1);
         try {
-            $nid = tx(function () use ($descripcion, $tipo, $desde, $hasta, $sucFiltro, $emps, $factor) {
+            $prorrateados = [];
+            $nid = tx(function () use ($descripcion, $tipo, $desde, $hasta, $sucFiltro, $emps, $factor, &$prorrateados) {
                 $nid = dbInsert('nominas', ['sucursal_id' => $sucFiltro ?: null, 'descripcion' => $descripcion, 'tipo' => $tipo, 'fecha_desde' => $desde, 'fecha_hasta' => $hasta, 'estado' => 'borrador', 'usuario_id' => current_user()['id']]);
                 $tb = 0; $td = 0; $tn = 0;
                 $diasBase = nominaDiasBase($tipo);
@@ -124,14 +125,20 @@ if (isPost()) {
                     // de teclearlas cada quincena, y la que se olvidaba no se
                     // cobraba nunca.
                     $cuota = presCuotaDelPeriodo((int) $e['id'], $desde, $hasta);
+                    // Quien entra o sale DENTRO del período cobra lo que estuvo, no
+                    // la quincena entera. Ver nominaDiasDelPeriodo() en includes.
+                    $diasPago = nominaDiasDelPeriodo($e, $desde, $hasta, $diasBase);
+                    if ($diasPago < $diasBase - 0.005) {
+                        $prorrateados[] = trim($e['nombre'] . ' ' . $e['apellido']);
+                    }
                     $c = calcNominaRD((float) $e['salario'],
-                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                          'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => $e['id'], 'salario_base' => $c['salarioPeriodo'],
                         // Congelado: la ficha cambia, el documento no.
                         'salario_mensual' => (float) $e['salario'],
-                        'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                        'dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
@@ -145,6 +152,16 @@ if (isPost()) {
                 return $nid;
             });
             audit('rrhh_nomina', 'procesar', "Nómina procesada: $descripcion (" . count($emps) . " empleados)", ['tabla' => 'nominas', 'registro_id' => $nid]);
+            if ($prorrateados) {
+                // Se dice, no se hace por lo bajo: pagar medio período a alguien es
+                // una decisión que quien lleva la nómina tiene que ver y poder
+                // corregir a mano si el caso era otro.
+                flash('info', 'A ' . count($prorrateados) . ' persona(s) se les pagó solo la parte del '
+                    . 'período que trabajaron, por entrar o salir dentro de él: '
+                    . implode(', ', array_slice($prorrateados, 0, 5))
+                    . (count($prorrateados) > 5 ? ' y ' . (count($prorrateados) - 5) . ' más' : '')
+                    . '. Los días se pueden corregir en la rejilla.');
+            }
             if ($solapan) {
                 $otras = array_map(fn($x) => $x['descripcion'] . ' (' . fechaCorta($x['fecha_desde'])
                     . ' al ' . fechaCorta($x['fecha_hasta']) . ')', $solapan);
@@ -249,12 +266,14 @@ if (isPost()) {
             $factor = $n['tipo'] === 'quincenal' ? 0.5 : ($n['tipo'] === 'semanal' ? (1 / 4.33) : 1);
             $diasBase = nominaDiasBase($n['tipo']);
             $cuota = presCuotaDelPeriodo((int) $e['id'], $n['fecha_desde'], $n['fecha_hasta']);
-            $c = calcNominaRD((float) $e['salario'], ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+            // Quien entra o sale DENTRO del período cobra lo que estuvo.
+            $diasPago = nominaDiasDelPeriodo($e, $n['fecha_desde'], $n['fecha_hasta'], $diasBase);
+            $c = calcNominaRD((float) $e['salario'], ['dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                                                       'otras_deducciones' => $cuota], $factor);
             dbInsert('nomina_detalles', [
                 'nomina_id' => $nid, 'empleado_id' => (int) $e['id'], 'salario_base' => $c['salarioPeriodo'],
                 'salario_mensual' => (float) $e['salario'],
-                'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                'dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                 'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                 'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                 'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,
@@ -370,13 +389,14 @@ if (isPost()) {
                     // estaba no se le toca la columna: puede haberla ajustado
                     // alguien a mano y eso manda.
                     $cuota = presCuotaDelPeriodo((int) $emp['id'], $n['fecha_desde'], $n['fecha_hasta']);
+                    $diasPago = nominaDiasDelPeriodo($emp, $n['fecha_desde'], $n['fecha_hasta'], $diasBase);
                     $c = calcNominaRD((float) $emp['salario'],
-                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                        ['dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                          'otras_deducciones' => $cuota], $factor);
                     dbInsert('nomina_detalles', [
                         'nomina_id' => $nid, 'empleado_id' => (int) $emp['id'], 'salario_base' => $c['salarioPeriodo'],
                         'salario_mensual' => (float) $emp['salario'],
-                        'dias_base' => $diasBase, 'dias_trabajados' => $diasBase,
+                        'dias_base' => $diasBase, 'dias_trabajados' => $diasPago,
                         'horas_extra' => 0, 'monto_horas_extra' => 0, 'bonificaciones' => 0, 'comisiones' => 0,
                         'otros_ingresos' => 0, 'prima_vacacional' => 0, 'reembolso' => 0,
                         'vacaciones_diferencial' => 0, 'descuento_dias' => 0, 'per_capita' => 0,

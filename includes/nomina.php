@@ -536,3 +536,50 @@ function nominaExportarBanco(array $nomina, array $lineas): void
     fclose($out);
     exit;
 }
+
+/**
+ * Días a pagar cuando alguien entra o sale DENTRO del período.
+ *
+ * ── El agujero que tapa ──
+ *
+ * Al generar la nómina se ponía `dias_trabajados = dias_base` para todo el
+ * mundo, incluido quien se incorporó a mitad de quincena. Medido con el padrón
+ * real: alguien de 50.000 que entra el día 11 de una quincena del 1 al 15
+ * cobraba los 25.000 completos en vez de los ~8.333 que trabajó. **16.666 de más
+ * por persona**, en silencio, salvo que quien lleva la nómina se acordara de
+ * corregir los días a mano fila por fila.
+ *
+ * Lo mismo al revés con quien se va: cobraba la quincena entera aunque saliera
+ * el día 3.
+ *
+ * ── Cómo se prorratea ──
+ *
+ * Por días NATURALES del período, que es lo que mide la permanencia, y el
+ * resultado se expresa en los días base del convenio del cliente (11.91 para una
+ * quincena) porque es la unidad con la que calcula `calcNominaRD()`:
+ *
+ *      días = díasBase × (días naturales trabajados / días naturales del período)
+ *
+ * Quien estuvo el período entero recibe `díasBase` exacto, así que la quincena
+ * corriente no cambia ni un centavo.
+ */
+function nominaDiasDelPeriodo(array $emp, string $desde, string $hasta, float $diasBase): float
+{
+    $ini = substr($desde, 0, 10);
+    $fin = substr($hasta, 0, 10);
+    if ($ini > $fin) return $diasBase;
+
+    $entra = (string) ($emp['fecha_ingreso'] ?? '');
+    $sale  = (string) ($emp['fecha_salida']  ?? '');
+
+    $desdeReal = ($entra !== '' && $entra > $ini) ? $entra : $ini;
+    $hastaReal = ($sale  !== '' && $sale  < $fin) ? $sale  : $fin;
+    if ($desdeReal > $hastaReal) return 0.0;
+
+    $totales   = (int) floor((strtotime($fin) - strtotime($ini)) / 86400) + 1;
+    $trabajados = (int) floor((strtotime($hastaReal) - strtotime($desdeReal)) / 86400) + 1;
+    if ($totales <= 0) return $diasBase;
+    if ($trabajados >= $totales) return $diasBase;
+
+    return round($diasBase * $trabajados / $totales, 2);
+}
