@@ -271,6 +271,55 @@ if ($idsBorrador) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ *  Propuesta que llega del informe «Qué mover y a dónde»
+ *
+ *  El informe calcula qué mover y de dónde a dónde; retecleaqr veinte líneas a
+ *  mano es justo donde se cuela el número equivocado. Llega en la URL como
+ *  `sug=idProducto:cantidad,...` y aquí se convierte en las líneas del
+ *  formulario, VALIDÁNDOLAS: el producto tiene que existir y estar activo, la
+ *  cantidad ser positiva, y el origen y el destino ser sucursales que quien
+ *  mira pueda tocar. Lo que llega por la URL es una sugerencia, no una orden.
+ * ------------------------------------------------------------------------ */
+$sugerencia = null;
+if (can('transferencias.crear') && trim((string) get('sug')) !== '') {
+    $sugOrigen  = (int) get('origen');
+    $sugDestino = (int) get('destino');
+    $pares = [];
+    foreach (explode(',', (string) get('sug')) as $par) {
+        [$pid, $cant] = array_pad(explode(':', $par, 2), 2, null);
+        $pid = (int) $pid; $cant = round((float) $cant, 3);
+        if ($pid > 0 && $cant > 0) $pares[$pid] = ($pares[$pid] ?? 0) + $cant;
+    }
+    $okSuc = $sugOrigen > 0 && $sugDestino > 0 && $sugOrigen !== $sugDestino
+        && can_access_sucursal($sugOrigen)
+        && qVal("SELECT 1 FROM sucursales WHERE id = ? AND activo = 1", [$sugDestino]);
+
+    if ($pares && $okSuc) {
+        $ph2 = implode(',', array_fill(0, count($pares), '?'));
+        $lineasSug = [];
+        foreach (qAll("SELECT id, nombre FROM productos WHERE id IN ($ph2) AND activo = 1 AND tipo = 'producto'",
+                      array_keys($pares)) as $p) {
+            $lineasSug[] = ['producto_id' => (int) $p['id'], 'nombre' => $p['nombre'],
+                            'cantidad' => $pares[(int) $p['id']]];
+        }
+        if ($lineasSug) {
+            $sugerencia = ['id' => 0, 'origen' => $sugOrigen, 'destino' => $sugDestino,
+                           'fecha' => date('Y-m-d'),
+                           'notas' => 'Reposición sugerida por el sistema según lo que vende cada tienda.',
+                           'lineas' => $lineasSug];
+            $descartadas = count($pares) - count($lineasSug);
+            if ($descartadas > 0) {
+                flash('warning', $descartadas . ' línea(s) de la sugerencia se descartaron: '
+                    . 'ese producto ya no existe o está inactivo.');
+            }
+        }
+    } elseif ($pares) {
+        flash('error', 'La sugerencia no se pudo cargar: revisa que el origen y el destino sean '
+            . 'sucursales distintas a las que tengas acceso.');
+    }
+}
+
 $acciones = (can('transferencias.crear') && count($sucursales) > 1) ? '<button onclick="' . jsEvent('trf:new') . '" class="btn btn-primary">' . icon('transfer', 'w-4 h-4') . ' Nueva transferencia</button>' : '';
 layout_start('Transferencias', 'Movimiento de inventario entre sucursales', $acciones);
 
@@ -491,5 +540,15 @@ function trfForm() {
   };
 }
 </script>
+
+<?php if ($sugerencia): ?>
+  <?php /* Se reutiliza el mismo evento que edita un borrador: con id 0 el
+           formulario guarda uno nuevo. Así no hay dos caminos que mantener. */ ?>
+  <script>
+    document.addEventListener('alpine:initialized', function () {
+      window.dispatchEvent(new CustomEvent('trf:edit', { detail: <?= json_encode($sugerencia, JSON_UNESCAPED_UNICODE) ?> }));
+    });
+  </script>
+<?php endif; ?>
 
 <?php layout_end(); ?>

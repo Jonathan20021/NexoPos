@@ -147,6 +147,7 @@ foreach ($productos as $p) {
             $o['sobra'] = round($o['sobra'] - $mover, 3);
             $falta      = round($falta - $mover, 3);
             $movimientos[] = [
+                'producto_id' => $pid,
                 'producto' => $p['nombre'], 'codigo' => $p['codigo'], 'categoria' => $p['categoria'],
                 'origen' => $origen, 'destino' => $destino, 'unidades' => $mover,
                 'costo' => $costo, 'valor' => round($mover * $costo, 2),
@@ -308,8 +309,13 @@ echo rep_encabezado_impresion('Sugerencias de reposición', rep_periodo('mes'));
         . money($r['valor']) . ' a costo',
       'transfer', 'blue',
       can('transferencias.crear')
-        ? '<a href="' . e(url('modules/inventario/transferencias.php')) . '" class="btn btn-soft btn-sm no-print">'
-          . icon('plus', 'w-3.5 h-3.5') . ' Crear el traslado</a>' : '') ?>
+        // Se lleva la propuesta entera: producto e id, con su cantidad. Retecleaqr
+        // veinte líneas a mano es donde se cuela el número equivocado.
+        ? '<a href="' . e(url('modules/inventario/transferencias.php?origen=' . (int) $r['origen']
+              . '&destino=' . (int) $r['destino'] . '&sug='
+              . implode(',', array_map(fn($l) => (int) $l['producto_id'] . ':' . rtrim(rtrim(number_format($l['unidades'], 3, '.', ''), '0'), '.'), $r['lineas']))))
+          . '" class="btn btn-soft btn-sm no-print">'
+          . icon('plus', 'w-3.5 h-3.5') . ' Crear el traslado con estas líneas</a>' : '') ?>
     <div class="overflow-x-auto">
       <table class="data-table">
         <thead><tr>

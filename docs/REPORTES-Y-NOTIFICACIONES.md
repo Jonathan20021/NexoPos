@@ -148,6 +148,18 @@ mismo: que todo esté surtido, o que **no haya con qué calcularlo** —ningún
 artículo con stock mínimo y ninguna venta en la ventana—. Decir lo primero
 cuando pasa lo segundo es mentir con cara tranquilizadora.
 
+**Del informe al traslado sin retecleaqr.** Cada ruta lleva un botón que abre el
+formulario de transferencia **ya relleno** con sus líneas: origen, destino,
+productos y cantidades. Viaja por la URL como `sug=idProducto:cantidad,...` y la
+pantalla de transferencias lo trata como lo que es —una sugerencia, no una
+orden—: comprueba que el producto exista y esté activo, que la cantidad sea
+positiva y que origen y destino sean sucursales distintas a las que quien mira
+tenga acceso, y toma el **nombre de la base**, no el que venga en la URL. Si algo
+no cuadra lo dice, en vez de abrir un formulario con basura dentro.
+
+Reutiliza el mismo evento con el que se edita un borrador, con `id = 0`: así no
+hay dos caminos que mantener.
+
 ### Criterio contable (por qué los números cuadran entre reportes)
 - **Ingresos = `subtotal − descuento`**, sin ITBIS. El ITBIS se cobra por cuenta de la DGII:
   meterlo como ingreso infla la venta y falsea el margen.
