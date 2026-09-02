@@ -7,7 +7,7 @@
  * en el recibo del empleado.
  */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.contabilidad');
+require_any_perm(['reportes.contabilidad', 'reportes.nomina']);
 
 $p = rep_periodo('mes');
 [$scopeN, $scopeNP] = rep_scope('n.sucursal_id');

@@ -18,7 +18,7 @@
  * misma fuente que usa la ficha del empleado y el resumen de nómina.
  */
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
-require_perm('reportes.contabilidad');
+require_any_perm(['reportes.contabilidad', 'reportes.nomina']);
 
 [$scope, $scopeP] = sucursalFiltro('e.sucursal_id');
 

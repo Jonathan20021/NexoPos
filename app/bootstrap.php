@@ -31,6 +31,7 @@ require_once dirname(__DIR__) . '/includes/components.php';
 require_once dirname(__DIR__) . '/includes/tss.php';       // parámetros, topes y aportes de la TSS
 require_once dirname(__DIR__) . '/includes/nomina.php';    // cálculo TSS + ISR
 require_once dirname(__DIR__) . '/includes/prestamos.php'; // préstamos a empleados y su descuento
+require_once dirname(__DIR__) . '/includes/regalia.php';   // regalía pascual (arts. 219-222)
 require_once dirname(__DIR__) . '/includes/amonestaciones.php'; // régimen disciplinario y plazos de ley
 require_once dirname(__DIR__) . '/includes/marca_app.php'; // identidad visual de la app (paleta y logotipo)
 require_once dirname(__DIR__) . '/includes/tiendas.php';   // marcas comerciales (identidad del comprobante)

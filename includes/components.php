@@ -50,6 +50,7 @@ function nav_groups(): array
             ['Empleados', 'id', url('modules/rrhh/empleados.php'), 'rrhh_empleados.ver'],
             ['Asistencia', 'clock', url('modules/rrhh/asistencia.php'), 'rrhh_asistencia.ver'],
             ['Nómina', 'wallet', url('modules/rrhh/nomina.php'), 'rrhh_nomina.ver'],
+            ['Regalía pascual', 'sun', url('modules/rrhh/regalia.php'), 'rrhh_nomina.ver'],
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],
             ['Préstamos', 'wallet', url('modules/rrhh/prestamos.php'), 'prestamos.ver'],
             ['Amonestaciones', 'alert', url('modules/rrhh/amonestaciones.php'), 'amonestaciones.ver'],

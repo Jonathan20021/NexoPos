@@ -7,6 +7,17 @@ if (isPost()) {
     verify_csrf();
     $accion = post('accion');
 
+    // La regalía pascual se arma en su propia pantalla: su base es el año
+    // entero, no lleva AFP, SFS ni ISR, y «actualizar contra el padrón» la
+    // recalcularía como una quincena corriente y la destruiría. Desde aquí solo
+    // se confirma, se paga o se elimina.
+    $SOLO_REGALIA = ['editar_cabecera', 'quitar_linea', 'agregar_linea', 'regenerar', 'guardar_conceptos'];
+    if (in_array($accion, $SOLO_REGALIA, true) && postInt('id') > 0
+        && qVal("SELECT tipo FROM nominas WHERE id = ?", [postInt('id')]) === 'regalia') {
+        flash('error', 'La regalía pascual se edita en su propia pantalla.');
+        redirect('modules/rrhh/regalia.php?anio=' . (int) date('Y'));
+    }
+
     if ($accion === 'procesar') {
         require_perm('rrhh_nomina.procesar');
         $descripcion = trim(post('descripcion'));
@@ -552,12 +563,23 @@ if ($verId) {
     $acc = '<a href="' . url('modules/rrhh/nomina.php') . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Volver</a>'
         . '<a href="?ver=' . $verId . '&export=excel" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Excel</a>'
         . '<a href="?ver=' . $verId . '&export=banco" class="btn btn-ghost">' . icon('bank', 'w-4 h-4') . ' Archivo banco</a>'
-        . '<a href="?ver=' . $verId . '&export=pdf" target="_blank" class="btn btn-ghost">' . icon('print', 'w-4 h-4') . ' PDF</a>';
-    if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
+        . '<a href="?ver=' . $verId . '&export=pdf" target="_blank" class="btn btn-ghost">' . icon('print', 'w-4 h-4') . ' PDF</a>'
+        // El papel que se le entrega a cada persona: dos por hoja, con su
+        // desglose y su línea de firma. Ver modules/rrhh/volante.php.
+        . '<a href="' . url('modules/rrhh/volante.php?nomina=' . $verId) . '" target="_blank" class="btn btn-ghost">'
+        . icon('receipt', 'w-4 h-4') . ' Volantes</a>';
+    // La regalía no se edita aquí: enseñar los botones para que solo devuelvan un
+    // error es peor que no enseñarlos. En su lugar, el camino a su pantalla.
+    $esRegalia = $n['tipo'] === 'regalia';
+    if ($esRegalia && can('rrhh_nomina.procesar')) {
+        $acc .= '<a href="' . url('modules/rrhh/regalia.php?anio=' . (int) substr((string) $n['fecha_hasta'], 0, 4))
+              . '" class="btn btn-ghost">' . icon('sun', 'w-4 h-4') . ' Editar la regalía</a>';
+    }
+    if (!$esRegalia && $n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
         $acc .= '<button type="button" onclick="' . jsEvent('nom:edit') . '" class="btn btn-ghost">'
               . icon('edit', 'w-4 h-4') . ' Editar período</button>';
     }
-    if ($n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
+    if (!$esRegalia && $n['estado'] === 'borrador' && can('rrhh_nomina.procesar')) {
         // Dice lo que se conserva, no solo lo que cambia: el miedo al pulsarlo
         // es perder la captura de las 58 filas, y justo eso es lo que NO pasa.
         $avisoR = 'Se volverá a leer el padrón para el período '
@@ -602,8 +624,11 @@ if ($verId) {
                   : '')
               . '<button class="btn btn-success">' . icon('check', 'w-4 h-4') . ' Marcar pagada</button></form>';
     }
-    $editable = $n['estado'] === 'borrador' && can('rrhh_nomina.procesar');
-    layout_start('Nómina · ' . e($n['descripcion']), 'Periodo ' . fechaCorta($n['fecha_desde']) . ' al ' . fechaCorta($n['fecha_hasta']) . ' · ' . ucfirst($n['tipo']), $acc);
+    // La regalía se ve aquí pero se toca en su pantalla: la rejilla de captura
+    // pide horas extra, comisiones y días, que en una regalía no significan nada.
+    $editable = $n['estado'] === 'borrador' && $n['tipo'] !== 'regalia' && can('rrhh_nomina.procesar');
+    $etiquetaTipo = $esRegalia ? 'Regalía pascual · sin ISR ni TSS (arts. 219-222)' : ucfirst($n['tipo']);
+    layout_start('Nómina · ' . e($n['descripcion']), 'Periodo ' . fechaCorta($n['fecha_desde']) . ' al ' . fechaCorta($n['fecha_hasta']) . ' · ' . $etiquetaTipo, $acc);
     ?>
     <?php
       // Dónde está la nómina y qué falta. Un badge suelto dice el estado; esto
@@ -759,7 +784,10 @@ if ($verId) {
                          se partía en cuatro líneas y estiraba TODA la fila a
                          cuatro veces su alto, con las quince casillas de captura
                          flotando en el centro de un hueco enorme. */ ?>
-                <td class="whitespace-nowrap"><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8 shrink-0') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?> · <?= money($d['salario_base']) ?></p></div></div></td>
+                <td class="whitespace-nowrap"><div class="flex items-center gap-2"><?= avatar($d['nombre'] . ' ' . $d['apellido'], 'w-8 h-8 shrink-0') ?><div><p class="font-semibold text-slate-700"><?= e($d['nombre'] . ' ' . $d['apellido']) ?></p><p class="text-xs text-slate-400"><?= e($d['cedula']) ?> · <?= money($d['salario_base']) ?>
+                  <a href="<?= e(url('modules/rrhh/volante.php?nomina=' . $verId . '&empleado=' . (int) $d['empleado_id'])) ?>"
+                     target="_blank" class="text-blue-600 hover:underline no-print"
+                     title="Volante de pago de <?= e($d['nombre'] . ' ' . $d['apellido']) ?>">· volante</a></p></div></div></td>
                 <?php if ($editable): ?>
                   <td class="text-center"><?= $campoNum('dias_trabajados', $d, 'w-16') ?></td>
                   <td class="text-center"><?= $campoNum('monto_horas_extra', $d) ?></td>

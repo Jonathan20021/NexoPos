@@ -72,10 +72,12 @@ function rep_catalogo(): array
                 // Responde la pregunta que la dirección hizo por escrito: si había
                 // veinte y ahora hay quince, quién lo bajó y con qué explicación.
                 ['ajustes.php', 'Ajustes y mermas', 'Todo lo que bajó o subió la existencia sin una venta detrás, con su nota, su responsable y su costo.', 'trending-down', 'reportes.inventario'],
-                ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id'],
+                // Permiso propio: quien lleva la nómina y la TSS no necesita el libro
+                // diario ni el balance para sacar el acumulado del mes.
+                ['nomina.php', 'Resumen de nómina', 'Bruto, AFP, SFS, ISR y neto por periodo, empleado y departamento.', 'id', 'reportes.nomina'],
                 // Mira el presente, no lo ya pagado: cuánto cuesta hoy la gente
                 // contratada. Es la cifra para decidir si un local se sostiene.
-                ['costo_plantilla.php', 'Costo de la plantilla', 'Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales.', 'users'],
+                ['costo_plantilla.php', 'Costo de la plantilla', 'Lo que cuesta la gente contratada hoy, por sucursal y por marca, con los aportes patronales.', 'users', 'reportes.nomina'],
                 ['auxiliar_cuentas.php', 'Auxiliar de cuentas', 'Mayor por cuenta financiera con saldo inicial, movimientos y saldo final.', 'briefcase'],
             ],
         ],
