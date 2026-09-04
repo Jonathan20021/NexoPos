@@ -66,6 +66,11 @@ if (isPost()) {
             'horas_extra'      => $extra,
             'estado'           => $estado,
             'notas'            => $notas,
+            // Lo escribe una persona, así que manda ella: la sincronización del
+            // reloj respeta lo que tenga `origen = 'manual'`. Sin esta línea, una
+            // salida corregida a mano volvía a la del reloj en la pasada
+            // siguiente y la corrección se perdía sin que nadie lo viera.
+            'origen'           => 'manual',
         ];
 
         // UPSERT por la clave única (empleado_id, fecha).

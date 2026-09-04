@@ -466,10 +466,18 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
         if ($ya && $ya['origen'] === 'manual') {
             // Lo tocó una persona: manda ella. Se dice la diferencia para que
             // alguien pueda mirarla, pero no se pisa.
-            if ((string) $ya['hora_entrada'] !== (string) $entrada) {
+            //
+            // Se comparan LAS DOS horas. Mirar solo la entrada dejaba mudo el
+            // caso más común —y el motivo de que esto exista—: alguien olvidó
+            // ponchar la salida y se la pusieron a mano. Ahí la entrada coincide
+            // y la salida no, así que no se avisaba de nada.
+            $difEnt = (string) $ya['hora_entrada'] !== (string) $entrada;
+            $difSal = (string) ($ya['hora_salida'] ?? '') !== (string) ($salida ?? '');
+            if ($difEnt || $difSal) {
+                $comoEsta = ($ya['hora_entrada'] ?: '—') . '–' . ($ya['hora_salida'] ?: '—');
+                $comoElReloj = $entrada . '–' . ($salida ?: '—');
                 $parte['respetadas_manual'][] = trim($emp['nombre'] . ' ' . $emp['apellido'])
-                    . ' · ' . $fecha . ' · Nexo dice ' . ($ya['hora_entrada'] ?: '—')
-                    . ' y el reloj ' . $entrada;
+                    . ' · ' . $fecha . ' · Nexo dice ' . $comoEsta . ' y el reloj ' . $comoElReloj;
             }
             continue;
         }

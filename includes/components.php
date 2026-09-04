@@ -49,6 +49,8 @@ function nav_groups(): array
         ['Recursos Humanos', [
             ['Empleados', 'id', url('modules/rrhh/empleados.php'), 'rrhh_empleados.ver'],
             ['Asistencia', 'clock', url('modules/rrhh/asistencia.php'), 'rrhh_asistencia.ver'],
+            // Va justo después: el reloj alimenta la asistencia, no es otra cosa.
+            ['Reloj biométrico', 'pulse', url('modules/rrhh/ponche.php'), 'rrhh_asistencia.ver'],
             ['Nómina', 'wallet', url('modules/rrhh/nomina.php'), 'rrhh_nomina.ver'],
             ['Regalía pascual', 'sun', url('modules/rrhh/regalia.php'), 'rrhh_nomina.ver'],
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],

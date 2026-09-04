@@ -176,6 +176,32 @@ horas no.
 
 **No hay que convertir zonas horarias.** `punch_time` se usa tal cual.
 
+### Dónde se hace todo esto
+
+**Recursos Humanos → Reloj biométrico** (`modules/rrhh/ponche.php`). Ahí se
+empareja a la gente y se traen los ponches, con permisos y auditoría. Pide
+`rrhh_asistencia.ver` para mirar y `rrhh_asistencia.registrar` para guardar.
+
+La columna de la derecha viene **vacía a propósito**. La flecha «¿esta?» marca a
+quien más se parece por el nombre, pero es una pista, no una prueba: los nombres
+del reloj vienen con erratas. Lo que quede en «sin asignar» simplemente no entra.
+
+Reasignar un código de una persona a otra **libera antes el anterior**. Sin eso,
+el índice único rechaza el guardado y el emparejamiento se queda a medias.
+
+### Corregir a mano gana siempre
+
+Cualquier guardado desde **Asistencia** marca la fila como `origen = 'manual'`, y
+la sincronización ya no la toca: avisa de la diferencia y deja lo del humano.
+
+Esto faltaba y se desplegó roto: `asistencia.php` no escribía `origen`, así que
+una salida corregida a mano volvía a la del reloj en la pasada siguiente. Y el
+aviso comparaba **solo la entrada**, con lo que el caso más común —olvidó
+ponchar la salida y se la pusieron— no decía nada: ahí la entrada coincide y la
+salida no. Ahora compara las dos.
+
+### El CSV, para quien prefiera Excel
+
 ### Cómo se empareja a la gente
 
 Dos pasos, a propósito:
