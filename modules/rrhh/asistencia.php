@@ -32,7 +32,17 @@ if (isPost()) {
         return preg_match('/^\d{4}-\d{2}-\d{2}$/', $f) && $f > date('Y-m-d');
     };
 
-    if ($accion === 'marcar' || $accion === 'registrar') {
+    /* -----------------------------------------------------------------------
+     *  Corregir un día
+     *
+     *  Ya no se marca asistencia a mano: la registra el reloj. Lo que queda es
+     *  ENMENDAR un día concreto —alguien olvidó ponchar la salida, el aparato
+     *  estaba caído—, y eso no es ponchar, es corregir un hecho que ocurrió.
+     *
+     *  Exige escribir por qué. Una corrección sin motivo es indistinguible de
+     *  un dato inventado tres meses después, cuando alguien reclame sus horas.
+     * -------------------------------------------------------------------- */
+    if ($accion === 'registrar') {
         $empleadoId = postInt('empleado_id');
         $fechaPost  = trim(post('fecha'));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaPost)) $fechaPost = date('Y-m-d');
@@ -55,29 +65,19 @@ if (isPost()) {
 
         $estado = in_array(post('estado'), $estadosAsis, true) ? post('estado') : 'presente';
 
-        // Lo que ya hubiera apuntado ese día, que hace falta para no pisarlo.
-        $ya = qOne("SELECT id, hora_entrada, hora_salida, horas_trabajadas, horas_extra
-                      FROM asistencias WHERE empleado_id = ? AND fecha = ?", [$empleadoId, $fechaPost]);
+        $ya = qOne("SELECT id, hora_entrada, hora_salida FROM asistencias
+                     WHERE empleado_id = ? AND fecha = ?", [$empleadoId, $fechaPost]);
 
-        if ($accion === 'marcar') {
-            // Marcado rápido: fija el estado y NO TOCA LAS HORAS.
-            //
-            // Antes las ponía en nulo. Un clic en «Presente» sobre alguien cuyo
-            // ponche ya había entrado —10:23 a 18:02, 7,65 h— le borraba las
-            // horas, y como la fila pasa a ser manual la sincronización
-            // siguiente ya no las reponía: se perdían del día para siempre.
-            // Las marcas en bruto sobreviven en `asistencia_marcas`, pero el
-            // día quedaba en cero horas y eso es lo que se paga.
-            $entrada = $ya['hora_entrada'] ?? null;
-            $salida  = $ya['hora_salida'] ?? null;
-            $horas   = (float) ($ya['horas_trabajadas'] ?? 0);
-            $extra   = (float) ($ya['horas_extra'] ?? 0);
-        } else {
-            $entrada = trim(post('hora_entrada')) ?: null;
-            $salida  = trim(post('hora_salida')) ?: null;
-            [$horas, $extra] = calcularHoras($entrada, $salida);
+        $entrada = trim(post('hora_entrada')) ?: null;
+        $salida  = trim(post('hora_salida')) ?: null;
+        [$horas, $extra] = calcularHoras($entrada, $salida);
+
+        $notas = trim(post('notas'));
+        if ($notas === '') {
+            flash('error', 'Escribe por qué corriges este día. Sin motivo, dentro de tres meses '
+                . 'nadie podrá distinguir una corrección legítima de un dato inventado.');
+            redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
         }
-        $notas = trim(post('notas')) ?: null;
 
         $datos = [
             'empleado_id'      => $empleadoId,
@@ -101,72 +101,19 @@ if (isPost()) {
         if ($existe) {
             unset($datos['empleado_id'], $datos['fecha']);   // no se reescribe la clave
             dbUpdate('asistencias', $datos, 'id = ?', [(int) $existe]);
-            audit('rrhh_asistencia', 'registrar', "Asistencia actualizada (empleado #$empleadoId, $fechaPost): $estado", ['tabla' => 'asistencias', 'registro_id' => (int) $existe]);
+            audit('rrhh_asistencia', 'corregir',
+                "Día corregido (empleado #$empleadoId, $fechaPost): "
+                . ($ya['hora_entrada'] ?: '—') . '–' . ($ya['hora_salida'] ?: '—')
+                . ' pasa a ' . ($entrada ?: '—') . '–' . ($salida ?: '—') . ". Motivo: $notas",
+                ['tabla' => 'asistencias', 'registro_id' => (int) $existe]);
         } else {
             $nid = dbInsert('asistencias', $datos);
-            audit('rrhh_asistencia', 'registrar', "Asistencia registrada (empleado #$empleadoId, $fechaPost): $estado", ['tabla' => 'asistencias', 'registro_id' => $nid]);
+            audit('rrhh_asistencia', 'corregir',
+                "Día añadido a mano (empleado #$empleadoId, $fechaPost): "
+                . ($entrada ?: '—') . '–' . ($salida ?: '—') . ". Motivo: $notas",
+                ['tabla' => 'asistencias', 'registro_id' => $nid]);
         }
-        flash('success', 'Asistencia guardada correctamente.');
-        redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
-    }
-
-    /* -----------------------------------------------------------------------
-     *  Marcar a varias personas de una vez
-     *
-     *  Un día normal son 57 personas y casi todas vinieron. Marcarlas de una en
-     *  una eran 57 clics y 57 recargas de página, cada una devolviéndote arriba
-     *  del todo. La interacción estaba al revés: te hacía repetir el caso
-     *  común y dejaba el raro en un clic.
-     *
-     *  Vale lo mismo que el marcado de uno: NO toca las horas que ya hubiera,
-     *  respeta el alcance de sucursal y se salta a quien no exista o esté
-     *  inactivo en vez de fallar entero.
-     * -------------------------------------------------------------------- */
-    if ($accion === 'marcar_lote') {
-        $ids    = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['empleado_id'] ?? [])))));
-        $estado = in_array(post('estado'), $estadosAsis, true) ? post('estado') : 'presente';
-        $fechaPost = trim(post('fecha'));
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaPost)) $fechaPost = date('Y-m-d');
-        if ($futuro($fechaPost)) {
-            flash('error', 'No se puede registrar la asistencia de un día que todavía no ha pasado.');
-            redirect('modules/rrhh/asistencia.php');
-        }
-
-        if (!$ids) {
-            flash('info', 'No había nadie seleccionado.');
-            redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
-        }
-
-        [$wScope, $pScope] = sucursalScope('sucursal_id');
-        $ph = implode(',', array_fill(0, count($ids), '?'));
-        $emps = qAll("SELECT id, sucursal_id FROM empleados
-                       WHERE id IN ($ph) AND estado = 'activo' AND $wScope",
-                     array_merge($ids, $pScope));
-
-        $hechos = 0;
-        tx(function () use ($emps, $fechaPost, $estado, &$hechos) {
-            foreach ($emps as $e) {
-                $ya = qOne("SELECT id FROM asistencias WHERE empleado_id = ? AND fecha = ?",
-                           [(int) $e['id'], $fechaPost]);
-                // Solo el estado y el origen: las horas se quedan como estaban.
-                $datos = ['estado' => $estado, 'origen' => 'manual'];
-                if ($ya) {
-                    dbUpdate('asistencias', $datos, 'id = ?', [(int) $ya['id']]);
-                } else {
-                    dbInsert('asistencias', $datos + [
-                        'empleado_id' => (int) $e['id'], 'sucursal_id' => (int) $e['sucursal_id'],
-                        'fecha' => $fechaPost, 'hora_entrada' => null, 'hora_salida' => null,
-                        'horas_trabajadas' => 0, 'horas_extra' => 0,
-                    ]);
-                }
-                $hechos++;
-            }
-        });
-
-        audit('rrhh_asistencia', 'registrar', "Asistencia en lote ($fechaPost): $hechos como $estado");
-        $fuera = count($ids) - $hechos;
-        flash('success', "$hechos persona(s) marcada(s) como $estado."
-            . ($fuera > 0 ? " $fuera se saltaron: no están activas o no son de tu sucursal." : ''));
+        flash('success', 'Día corregido. Queda anotado quién lo hizo y por qué.');
         redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
     }
 
@@ -185,7 +132,7 @@ $empleados = qAll(
             d.nombre  AS departamento,
             a.id      AS asistencia_id,
             a.hora_entrada, a.hora_salida, a.horas_trabajadas, a.horas_extra,
-            a.estado  AS estado_dia, a.notas
+            a.estado  AS estado_dia, a.notas, a.origen
        FROM empleados e
        LEFT JOIN puestos       p ON p.id = e.puesto_id
        LEFT JOIN departamentos d ON d.id = e.departamento_id
@@ -258,20 +205,73 @@ $hEmpleados = qAll("SELECT DISTINCT e.id, e.nombre, e.apellido
                      WHERE $wH ORDER BY e.nombre, e.apellido", $pH);
 $hRango = qOne("SELECT MIN(fecha) AS d, MAX(fecha) AS h, COUNT(*) AS n FROM asistencia_marcas");
 
+/* ---------------------------------------------------------------------------
+ *  Por qué alguien no tiene marcas
+ *
+ *  Sin marcado a mano, una fila vacía solo dice «el reloj no registró nada». Y
+ *  eso puede ser que no vino, que estaba de vacaciones, o que ponchó en un
+ *  aparato que no tiene emparejada su ficha. Decir «ausente» sin saberlo sería
+ *  inventarse una falta.
+ *
+ *  Nexo ya sabe quién estaba de permiso: se cruza con las solicitudes
+ *  aprobadas para que la pantalla explique la ausencia en vez de dejarla muda.
+ * ------------------------------------------------------------------------ */
+$deLicencia = [];
+foreach (qAll("SELECT v.empleado_id, v.tipo, v.subtipo
+                 FROM vacaciones v
+                WHERE v.estado IN ('aprobada','disfrutada')
+                  AND ? BETWEEN v.fecha_desde AND v.fecha_hasta", [$fecha]) as $v) {
+    $deLicencia[(int) $v['empleado_id']] = $v['tipo'] === 'vacaciones'
+        ? 'Vacaciones' : ('Licencia' . ($v['subtipo'] ? ' · ' . $v['subtipo'] : ''));
+}
+
+// Quién ponchó pero su ficha no está emparejada: sus marcas existen y no le
+// cuentan a nadie. Es la explicación más frecuente de una fila vacía.
+$sinDuenoHoy = (int) qVal("SELECT COUNT(DISTINCT emp_code) FROM asistencia_marcas
+                            WHERE fecha = ? AND empleado_id IS NULL", [$fecha]);
+
 // KPIs de la fecha seleccionada
+//
+// Antes contaban «falta marcar», que era una tarea pendiente de una persona.
+// Ya no hay nada que teclear: lo que importa es qué sabe el reloj y qué no.
 $totalEmpleados = count($empleados);
-$presentes = $ausentes = $tardanzas = 0;
+$conMarcas = $incompletas = $conLicencia = $sinNada = 0;
 foreach ($empleados as $emp) {
-    switch ($emp['estado_dia']) {
-        case 'presente': $presentes++; break;
-        case 'ausente':  $ausentes++;  break;
-        case 'tardanza': $tardanzas++; break;
+    $ms = $marcasDelDia[(int) $emp['id']] ?? [];
+    if ($ms || $emp['hora_entrada']) {
+        $conMarcas++;
+        if (!$emp['hora_salida']) $incompletas++;
+    } elseif (isset($deLicencia[(int) $emp['id']])) {
+        $conLicencia++;
+    } else {
+        $sinNada++;
     }
 }
-// La cifra que de verdad se mira en esta pantalla: a quién falta por marcar.
-// Estaba el total de empleados, que no dice nada que no se sepa ya.
-$sinRegistro = 0;
-foreach ($empleados as $emp) if (!$emp['estado_dia']) $sinRegistro++;
+
+/**
+ * En qué grupo cae el día de esta persona.
+ *
+ *  Las cuatro categorías son las de los contadores, y salen de lo que el reloj
+ *  sabe —no de lo que alguien tecleó—. «Sin marcas» NO es «ausente»: puede ser
+ *  que no viniera, o que ponchara en un aparato cuya ficha no está emparejada.
+ *  Afirmar una falta sin saberlo es inventarse una.
+ */
+function grupoDelDia(array $emp, array $marcas, array $deLicencia): string
+{
+    if ($marcas || $emp['hora_entrada']) return $emp['hora_salida'] ? 'conmarcas' : 'incompleta';
+    return isset($deLicencia[(int) $emp['id']]) ? 'licencia' : 'sin';
+}
+
+/** El distintivo del día, dicho en lo que se sabe. */
+function badgeDelDia(string $grupo, array $emp, array $deLicencia): string
+{
+    switch ($grupo) {
+        case 'conmarcas':  return badge('Ponchó', 'emerald');
+        case 'incompleta': return badge('Sin salida', 'amber');
+        case 'licencia':   return badge($deLicencia[(int) $emp['id']], 'indigo');
+        default:           return '<span class="badge badge-slate">Sin marcas</span>';
+    }
+}
 
 /** Color del badge según el estado del día. */
 function colorEstadoDia(?string $estado): string
@@ -375,7 +375,10 @@ function bajoElNombre(array $emp): string
 }
 
 $esHoy = $fecha === date('Y-m-d');
-layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empleados activos');
+$acc = can('rrhh_asistencia.registrar')
+    ? '<a href="' . e(url('modules/rrhh/ponche.php')) . '" class="btn btn-soft">'
+      . icon('pulse', 'w-4 h-4') . ' Reloj biométrico</a>' : '';
+layout_start('Asistencia', 'Lo que registró el reloj biométrico, día a día', $acc);
 ?>
 
 <?php /* Buscar y filtrar se hacen en el navegador: son 56 filas ya cargadas y
@@ -384,32 +387,10 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
 <div x-data="{
        buscar: '',
        filtro: '',
-       sel: [],
-       /* Seleccionar actúa sobre LO QUE SE VE, no sobre las 57. Con el filtro
-          «falta marcar» puesto, «todos» son justo los que faltan: dos clics
-          para el día entero. Marcar a quien tienes escondido por un filtro
-          sería hacer algo que no estabas mirando. */
-       get idsVisibles() {
-         return [...this.$root.querySelectorAll('tbody tr[data-busca]')]
-                  .filter(f => this.coincide(f)).map(f => Number(f.dataset.id));
-       },
-       get todosPuestos() {
-         const v = this.idsVisibles;
-         return v.length > 0 && v.every(id => this.sel.includes(id));
-       },
-       alternarTodos() {
-         const v = this.idsVisibles;
-         this.sel = this.todosPuestos ? this.sel.filter(id => !v.includes(id))
-                                      : [...new Set([...this.sel, ...v])];
-       },
        /* Se cuenta aplicando el MISMO filtro, no preguntando al DOM quién está
-          escondido: `x-show` pone `display:none`, no el atributo `hidden`, así
-          que el `:not([hidden])` de antes casaba con todas y el contador decía
-          siempre «57 de 57» aunque solo se viera una fila. Un número equivocado
-          en pantalla es peor que ninguno.
-
-          Y solo las filas de la TABLA: en el móvil cada persona sale también
-          como tarjeta, y contar las dos listas daría el doble. */
+          escondido: `x-show` pone `display:none`, no el atributo `hidden`. Y
+          solo las filas de la TABLA: en el móvil cada persona sale también como
+          tarjeta, y contar las dos listas daría el doble. */
        get visibles() {
          return [...this.$root.querySelectorAll('tbody tr[data-busca]')]
                   .filter(f => this.coincide(f)).length;
@@ -459,35 +440,52 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
   </form>
 
   <?php /* Las tarjetas son además los filtros: la cifra que llama la atención
-           es la que quieres aislar, y hacer que responda al clic ahorra tener
-           que buscarla en una lista de 56. */ ?>
+           es la que quieres aislar. Y ya no cuentan «lo que falta teclear»,
+           porque no hay nada que teclear: cuentan lo que el reloj sabe. */ ?>
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-    <button type="button" @click="filtro = filtro === 'presente' ? '' : 'presente'"
+    <button type="button" @click="filtro = filtro === 'conmarcas' ? '' : 'conmarcas'"
             class="card px-4 py-3 text-left transition hover:border-emerald-300"
-            :class="filtro === 'presente' ? 'ring-2 ring-emerald-400 border-emerald-300' : ''">
-      <div class="text-xs text-slate-400 font-medium">Presentes</div>
-      <div class="text-2xl font-bold text-emerald-600"><?= $presentes ?></div>
+            :class="filtro === 'conmarcas' ? 'ring-2 ring-emerald-400 border-emerald-300' : ''">
+      <div class="text-xs text-slate-400 font-medium">Poncharon</div>
+      <div class="text-2xl font-bold text-emerald-600"><?= $conMarcas ?></div>
     </button>
-    <button type="button" @click="filtro = filtro === 'ausente' ? '' : 'ausente'"
-            class="card px-4 py-3 text-left transition hover:border-rose-300"
-            :class="filtro === 'ausente' ? 'ring-2 ring-rose-400 border-rose-300' : ''">
-      <div class="text-xs text-slate-400 font-medium">Ausentes</div>
-      <div class="text-2xl font-bold text-rose-600"><?= $ausentes ?></div>
-    </button>
-    <button type="button" @click="filtro = filtro === 'tardanza' ? '' : 'tardanza'"
+
+    <button type="button" @click="filtro = filtro === 'incompleta' ? '' : 'incompleta'"
             class="card px-4 py-3 text-left transition hover:border-amber-300"
-            :class="filtro === 'tardanza' ? 'ring-2 ring-amber-400 border-amber-300' : ''">
-      <div class="text-xs text-slate-400 font-medium">Tardanzas</div>
-      <div class="text-2xl font-bold text-amber-600"><?= $tardanzas ?></div>
+            :class="filtro === 'incompleta' ? 'ring-2 ring-amber-400 border-amber-300' : ''"
+            title="Entraron pero no poncharon la salida: ese día no tiene horas">
+      <div class="text-xs <?= $incompletas > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400 font-medium' ?>">Sin salida</div>
+      <div class="text-2xl font-bold <?= $incompletas > 0 ? 'text-amber-600' : 'text-slate-300' ?>"><?= $incompletas ?></div>
     </button>
+
+    <button type="button" @click="filtro = filtro === 'licencia' ? '' : 'licencia'"
+            class="card px-4 py-3 text-left transition hover:border-indigo-300"
+            :class="filtro === 'licencia' ? 'ring-2 ring-indigo-400 border-indigo-300' : ''"
+            title="De vacaciones o con licencia aprobada: por eso no hay marcas">
+      <div class="text-xs text-slate-400 font-medium">De permiso</div>
+      <div class="text-2xl font-bold text-indigo-600"><?= $conLicencia ?></div>
+    </button>
+
     <button type="button" @click="filtro = filtro === 'sin' ? '' : 'sin'"
-            class="card px-4 py-3 text-left transition <?= $sinRegistro > 0 ? 'border-slate-300 bg-slate-50' : '' ?>"
-            :class="filtro === 'sin' ? 'ring-2 ring-slate-400 border-slate-400' : ''">
-      <div class="text-xs <?= $sinRegistro > 0 ? 'text-slate-600 font-semibold' : 'text-slate-400 font-medium' ?>">Falta marcar</div>
-      <div class="text-2xl font-bold <?= $sinRegistro > 0 ? 'text-slate-800' : 'text-slate-300' ?>"><?= $sinRegistro ?></div>
+            class="card px-4 py-3 text-left transition hover:border-slate-300"
+            :class="filtro === 'sin' ? 'ring-2 ring-slate-400 border-slate-300' : ''"
+            title="El reloj no registró nada suyo. No quiere decir que no vinieran">
+      <div class="text-xs text-slate-400 font-medium">Sin marcas</div>
+      <div class="text-2xl font-bold text-slate-500"><?= $sinNada ?></div>
     </button>
   </div>
 </div>
+
+<?php if ($sinDuenoHoy > 0 && can('rrhh_asistencia.registrar')): ?>
+  <div class="card p-4 mb-4 border-l-4 border-amber-400 flex items-start gap-3">
+    <?= icon('alert', 'w-5 h-5 text-amber-500 shrink-0 mt-0.5') ?>
+    <p class="text-sm text-slate-600">
+      Hoy poncharon <strong><?= $sinDuenoHoy ?></strong> persona(s) cuyo código del reloj no
+      está emparejado con nadie de Nexo, así que su asistencia no le cuenta a nadie.
+      <a class="link" href="<?= e(url('modules/rrhh/ponche.php')) ?>">Emparejarlas</a>.
+    </p>
+  </div>
+<?php endif; ?>
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
@@ -521,17 +519,10 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
                    Puesto y departamento bajan a subtítulo del nombre, y entrada,
                    salida, horas y marcas se juntan: son UNA cosa, la jornada. */ ?>
           <tr>
-            <?php if ($puedeRegistrar): ?>
-              <th class="w-10">
-                <input type="checkbox" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                       :checked="todosPuestos" @change="alternarTodos()"
-                       title="Seleccionar todo lo que se ve">
-              </th>
-            <?php endif; ?>
             <th>Empleado</th>
             <th class="w-32">Estado</th>
             <th>La jornada</th>
-            <?php if ($puedeRegistrar): ?><th class="text-right w-56">Acciones</th><?php endif; ?>
+            <?php if ($puedeRegistrar): ?><th class="text-right w-24"></th><?php endif; ?>
           </tr>
         </thead>
         <tbody>
@@ -540,15 +531,10 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
               $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido'];
               $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? ''));
             ?>
-            <tr data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
+            <?php $grupo = grupoDelDia($emp, $marcasDelDia[(int) $emp['id']] ?? [], $deLicencia); ?>
+            <tr data-busca="<?= e($busca) ?>" data-estado="<?= e($grupo) ?>"
                 data-id="<?= (int) $emp['id'] ?>" x-show="coincide($el)"
-                :class="sel.includes(<?= (int) $emp['id'] ?>) ? 'bg-blue-50/60' : ''">
-              <?php if ($puedeRegistrar): ?>
-                <td>
-                  <input type="checkbox" value="<?= (int) $emp['id'] ?>" x-model.number="sel"
-                         class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                </td>
-              <?php endif; ?>
+                >
               <td>
                 <div class="flex items-center gap-3">
                   <?= avatar($nombreCompleto) ?>
@@ -561,43 +547,27 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
                 </div>
               </td>
               <td>
-                <?php if ($emp['estado_dia']): ?>
-                  <?= badge(ucfirst($emp['estado_dia']), colorEstadoDia($emp['estado_dia'])) ?>
-                <?php else: ?>
-                  <span class="badge badge-slate">Sin registro</span>
+                <?= badgeDelDia($grupo, $emp, $deLicencia) ?>
+                <?php if ($emp['origen'] === 'manual' && ($emp['hora_entrada'] || $emp['notas'])): ?>
+                  <span class="block text-[11px] text-slate-400 mt-0.5" title="<?= e((string) $emp['notas']) ?>">corregido a mano</span>
                 <?php endif; ?>
               </td>
 
               <td><?= pintarJornada($emp, $marcasDelDia[(int) $emp['id']] ?? []) ?></td>
               <?php if ($puedeRegistrar): ?>
-                <td>
-                  <div class="flex items-center justify-end gap-1">
-                    <form method="post" class="inline">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="accion" value="marcar">
-                      <input type="hidden" name="empleado_id" value="<?= (int) $emp['id'] ?>">
-                      <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
-                      <input type="hidden" name="estado" value="presente">
-                      <button class="btn btn-sm btn-success" title="Marcar presente"><?= icon('check', 'w-4 h-4') ?> Presente</button>
-                    </form>
-                    <form method="post" class="inline">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="accion" value="marcar">
-                      <input type="hidden" name="empleado_id" value="<?= (int) $emp['id'] ?>">
-                      <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
-                      <input type="hidden" name="estado" value="ausente">
-                      <button class="btn btn-sm btn-danger" title="Marcar ausente"><?= icon('x', 'w-4 h-4') ?> Ausente</button>
-                    </form>
-                    <button onclick="<?= jsEvent('asis:detalle', [
-                        'empleado_id'  => $emp['id'],
-                        'nombre'       => $nombreCompleto,
-                        'hora_entrada' => $emp['hora_entrada'] ?: '',
-                        'hora_salida'  => $emp['hora_salida'] ?: '',
-                        'estado'       => $emp['estado_dia'] ?: 'presente',
-                        'notas'        => $emp['notas'] ?: '',
-                    ]) ?>"
-                            class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Detalle"><?= icon('edit', 'w-4 h-4') ?></button>
-                  </div>
+                <?php /* Ya no se marca asistencia: la registra el reloj. Lo único
+                         que queda es enmendar un día concreto, y eso exige motivo. */ ?>
+                <td class="text-right">
+                  <button onclick="<?= jsEvent('asis:detalle', [
+                      'empleado_id'  => $emp['id'],
+                      'nombre'       => $nombreCompleto,
+                      'hora_entrada' => $emp['hora_entrada'] ? substr((string) $emp['hora_entrada'], 0, 5) : '',
+                      'hora_salida'  => $emp['hora_salida'] ? substr((string) $emp['hora_salida'], 0, 5) : '',
+                      'estado'       => $emp['estado_dia'] ?: 'presente',
+                      'notas'        => $emp['notas'] ?: '',
+                  ]) ?>" class="btn btn-ghost btn-sm" title="Corregir este día">
+                    <?= icon('edit', 'w-4 h-4') ?> Corregir
+                  </button>
                 </td>
               <?php endif; ?>
             </tr>
@@ -609,23 +579,16 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
       <?php foreach ($empleados as $emp):
         $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido'];
         $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? '')); ?>
-        <div data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
+        <?php $grupo = grupoDelDia($emp, $marcasDelDia[(int) $emp['id']] ?? [], $deLicencia); ?>
+        <div data-busca="<?= e($busca) ?>" data-estado="<?= e($grupo) ?>"
              x-show="coincide($el)" class="p-4"
-             :class="sel.includes(<?= (int) $emp['id'] ?>) ? 'bg-blue-50/60' : ''">
+             >
           <div class="flex items-start gap-3">
-            <?php if ($puedeRegistrar): ?>
-              <input type="checkbox" value="<?= (int) $emp['id'] ?>" x-model.number="sel"
-                     class="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0">
-            <?php endif; ?>
             <?= avatar($nombreCompleto) ?>
             <div class="min-w-0 flex-1">
               <div class="flex items-start justify-between gap-2">
                 <p class="font-semibold text-slate-700 leading-tight"><?= e($nombreCompleto) ?></p>
-                <?php if ($emp['estado_dia']): ?>
-                  <?= badge(ucfirst($emp['estado_dia']), colorEstadoDia($emp['estado_dia'])) ?>
-                <?php else: ?>
-                  <span class="badge badge-slate shrink-0">Sin registro</span>
-                <?php endif; ?>
+                <span class="shrink-0"><?= badgeDelDia($grupo, $emp, $deLicencia) ?></span>
               </div>
               <?php if ($sub = bajoElNombre($emp)): ?>
                 <p class="text-xs text-slate-400"><?= $sub ?></p>
@@ -639,27 +602,15 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
               <?php endif; ?>
 
               <?php if ($puedeRegistrar): ?>
-                <div class="flex items-center gap-2 mt-3">
-                  <?php foreach ([['presente', 'Presente', 'btn-success', 'check'],
-                                  ['ausente',  'Ausente',  'btn-danger',  'x']] as [$est, $txt, $cls, $ic]): ?>
-                    <form method="post" class="flex-1">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="accion" value="marcar">
-                      <input type="hidden" name="empleado_id" value="<?= (int) $emp['id'] ?>">
-                      <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
-                      <input type="hidden" name="estado" value="<?= $est ?>">
-                      <button class="btn btn-sm <?= $cls ?> w-full"><?= icon($ic, 'w-4 h-4') ?> <?= $txt ?></button>
-                    </form>
-                  <?php endforeach; ?>
+                <div class="mt-3">
                   <button onclick="<?= jsEvent('asis:detalle', [
                       'empleado_id'  => $emp['id'],
                       'nombre'       => $nombreCompleto,
-                      'hora_entrada' => $emp['hora_entrada'] ?: '',
-                      'hora_salida'  => $emp['hora_salida'] ?: '',
+                      'hora_entrada' => $emp['hora_entrada'] ? substr((string) $emp['hora_entrada'], 0, 5) : '',
+                      'hora_salida'  => $emp['hora_salida'] ? substr((string) $emp['hora_salida'], 0, 5) : '',
                       'estado'       => $emp['estado_dia'] ?: 'presente',
                       'notas'        => $emp['notas'] ?: '',
-                  ]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0"
-                          title="Detalle"><?= icon('edit', 'w-4 h-4') ?></button>
+                  ]) ?>" class="btn btn-ghost btn-sm"><?= icon('edit', 'w-4 h-4') ?> Corregir este día</button>
                 </div>
               <?php endif; ?>
             </div>
@@ -676,35 +627,6 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
   <?php endif; ?>
 </div>
 
-<?php if ($puedeRegistrar): ?>
-  <?php /* Pegada abajo y solo cuando hay selección: con 57 filas, un botón al
-           final de la lista obliga a bajar hasta el fondo para usarlo. */ ?>
-  <div x-show="sel.length > 0" x-cloak x-transition
-       class="fixed inset-x-0 bottom-0 z-40 px-4 pb-4 pointer-events-none">
-    <div class="max-w-3xl mx-auto pointer-events-auto rounded-2xl bg-slate-900 text-white shadow-pop
-                px-4 py-3 flex items-center gap-3 flex-wrap">
-      <span class="text-sm font-semibold">
-        <span x-text="sel.length"></span> seleccionada<span x-show="sel.length !== 1">s</span>
-      </span>
-      <button type="button" @click="sel = []" class="text-xs text-slate-300 hover:text-white underline">quitar</button>
-      <div class="flex-1"></div>
-      <?php foreach ([['presente', 'Presente', 'btn-success', 'check'],
-                      ['ausente',  'Ausente',  'btn-danger',  'x']] as [$est, $txt, $cls, $ic]): ?>
-        <form method="post" class="inline"
-              @submit="if (!confirm('¿Marcar como <?= $est ?> a ' + sel.length + ' persona(s)?')) $event.preventDefault()">
-          <?= csrf_field() ?>
-          <input type="hidden" name="accion" value="marcar_lote">
-          <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
-          <input type="hidden" name="estado" value="<?= $est ?>">
-          <template x-for="id in sel" :key="id">
-            <input type="hidden" name="empleado_id[]" :value="id">
-          </template>
-          <button class="btn btn-sm <?= $cls ?>"><?= icon($ic, 'w-4 h-4') ?> <?= $txt ?></button>
-        </form>
-      <?php endforeach; ?>
-    </div>
-  </div>
-<?php endif; ?>
 </div><!-- /buscador y filtros -->
 
 <?php if ($puedeRegistrar): ?>
@@ -721,12 +643,17 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
         <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
         <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div>
-            <h3 class="font-bold text-slate-800">Registro de asistencia</h3>
+            <h3 class="font-bold text-slate-800">Corregir el día</h3>
             <p class="text-xs text-slate-400" x-text="form.nombre + ' · <?= e(fechaCorta($fecha)) ?>'"></p>
           </div>
           <button type="button" @click="open=false" aria-label="Cerrar modal" title="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
         </div>
         <div class="p-6 space-y-4">
+          <p class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+            La asistencia la registra el reloj. Esto es para enmendar un día concreto
+            —alguien olvidó ponchar la salida, el aparato estaba caído—, y queda anotado
+            quién lo hizo y por qué.
+          </p>
           <div>
             <label class="label">Estado del día</label>
             <select name="estado" x-model="form.estado" class="select">
@@ -750,8 +677,13 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
           </div>
           <p class="text-xs text-slate-400">Las horas trabajadas y las horas extra (sobre 8h) se calculan automáticamente.</p>
           <div>
-            <label class="label">Notas</label>
-            <textarea name="notas" x-model="form.notas" rows="2" class="input" placeholder="Opcional"></textarea>
+            <label class="label">Por qué lo corriges *</label>
+            <textarea name="notas" x-model="form.notas" rows="2" class="input" required
+                      placeholder="Ej. olvidó ponchar la salida; lo confirmó su encargada"></textarea>
+            <p class="text-xs text-slate-400 mt-1">
+              Sin motivo, dentro de tres meses nadie podrá distinguir una corrección
+              legítima de un dato inventado.
+            </p>
           </div>
         </div>
         <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">

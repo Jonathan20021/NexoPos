@@ -88,88 +88,92 @@ $ids = array_map(fn($e) => (int) $e['id'], $emps);
 q("DELETE FROM asistencias WHERE fecha = ?", [$F]);
 
 /* ============================================================
-   1) EL FALLO QUE COSTABA HORAS
+   1) YA NO SE MARCA A MANO
    ============================================================ */
-echo "\n=== MARCAR NO BORRA LO QUE YA HABÍA ===\n";
+echo "
+=== EL MARCADO A MANO YA NO EXISTE ===
+";
 dbInsert('asistencias', ['empleado_id' => $ids[0], 'sucursal_id' => 1, 'fecha' => $F,
     'hora_entrada' => '10:23:00', 'hora_salida' => '18:02:00', 'horas_trabajadas' => 7.65,
     'horas_extra' => 0, 'estado' => 'presente', 'origen' => 'biotime']);
 
-comoUsuario($U, ['accion' => 'marcar', 'empleado_id' => $ids[0], 'fecha' => $F, 'estado' => 'tardanza']);
+comoUsuario($U, ['accion' => 'marcar', 'empleado_id' => $ids[0], 'fecha' => $F, 'estado' => 'ausente']);
 $a = qOne("SELECT * FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[0], $F]);
-ok('el marcado rápido conserva las horas del reloj',
-    $a && $a['hora_entrada'] === '10:23:00' && $a['hora_salida'] === '18:02:00'
-       && abs((float) $a['horas_trabajadas'] - 7.65) < 0.01,
-    $a ? "{$a['hora_entrada']}–{$a['hora_salida']} = {$a['horas_trabajadas']} h" : 'no existe');
-ok('y sí cambia el estado', $a && $a['estado'] === 'tardanza', (string) ($a['estado'] ?? '—'));
-ok('y la fila pasa a ser del humano', $a && $a['origen'] === 'manual', (string) ($a['origen'] ?? '—'));
+ok('la accion «marcar» ya no hace nada',
+    $a && $a['estado'] === 'presente' && $a['origen'] === 'biotime',
+    $a ? "{$a['estado']} / {$a['origen']}" : 'desapareció la fila');
+ok('y no tocó las horas del reloj',
+    $a && $a['hora_entrada'] === '10:23:00' && $a['hora_salida'] === '18:02:00');
 
-/* ============================================================
-   2) En lote
-   ============================================================ */
-echo "\n=== MARCAR A VARIOS DE UNA VEZ ===\n";
-$f = comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'presente',
-                      'empleado_id' => [$ids[1], $ids[2], $ids[3]]]);
-$n = (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=? AND estado='presente'", [$F]);
-ok('marca a los tres en una sola petición', $n === 3, "$n de 3 · " . pinta($f));
-
-/* --- y tampoco borra horas --- */
-$f = comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'presente',
-                      'empleado_id' => [$ids[0]]]);
-$a = qOne("SELECT * FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[0], $F]);
-ok('EN LOTE tampoco borra las horas',
-    $a && $a['hora_entrada'] === '10:23:00' && $a['hora_salida'] === '18:02:00',
-    $a ? "{$a['hora_entrada']}–{$a['hora_salida']}" : 'no existe');
-
-/* --- repetirlo no duplica --- */
 $antes = (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$F]);
-comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'ausente', 'empleado_id' => $ids]);
-ok('repetirlo actualiza, no duplica',
+comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'presente', 'empleado_id' => $ids]);
+ok('el marcado en lote tampoco existe',
     (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$F]) === $antes,
     $antes . ' → ' . qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$F]));
-ok('y el estado nuevo se aplicó a todos',
-    (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=? AND estado='ausente'", [$F]) === 4);
 
-/* --- selección vacía --- */
-$f = comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'presente']);
-ok('sin nadie seleccionado no hace nada y lo dice',
-    (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=? AND estado='presente'", [$F]) === 0,
+/* ============================================================
+   2) CORREGIR UN DÍA: la única vía que queda
+   ============================================================ */
+echo "
+=== CORREGIR UN DÍA ===
+";
+$f = comoUsuario($U, ['accion' => 'registrar', 'empleado_id' => $ids[0], 'fecha' => $F,
+    'estado' => 'presente', 'hora_entrada' => '10:23', 'hora_salida' => '18:02', 'notas' => '']);
+$a = qOne("SELECT * FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[0], $F]);
+ok('sin motivo escrito NO deja corregir',
+    $a['origen'] === 'biotime' && (bool) array_filter($f, fn($x) => $x[0] === 'ERROR'),
     pinta($f));
 
-/* --- ids inventados --- */
-comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $F, 'estado' => 'presente',
-                 'empleado_id' => [999999, 888888]]);
-ok('un id que no existe no crea una fila fantasma',
-    (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=? AND empleado_id IN (999999,888888)", [$F]) === 0);
+$f = comoUsuario($U, ['accion' => 'registrar', 'empleado_id' => $ids[1], 'fecha' => $F,
+    'estado' => 'presente', 'hora_entrada' => '08:00', 'hora_salida' => '17:00',
+    'notas' => 'olvidó ponchar la salida, lo confirmó su encargada']);
+$b = qOne("SELECT * FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[1], $F]);
+ok('con motivo sí corrige, y calcula las horas',
+    $b && $b['hora_entrada'] === '08:00:00' && $b['hora_salida'] === '17:00:00'
+       && abs((float) $b['horas_trabajadas'] - 9) < 0.02,
+    $b ? "{$b['hora_entrada']}–{$b['hora_salida']} = {$b['horas_trabajadas']} h" : 'no existe · ' . pinta($f));
+ok('la fila pasa a ser del humano, para que el reloj no la pise',
+    $b && $b['origen'] === 'manual', (string) ($b['origen'] ?? '—'));
+ok('y el motivo queda guardado',
+    $b && str_contains((string) $b['notas'], 'olvid'), (string) ($b['notas'] ?? '—'));
 
-/* --- fecha futura --- */
+$aud = qVal("SELECT descripcion FROM auditoria WHERE modulo='rrhh_asistencia' AND accion='corregir'
+              ORDER BY id DESC LIMIT 1");
+ok('la auditoría dice qué había, qué queda y por qué',
+    $aud && str_contains((string) $aud, 'Motivo:') && str_contains((string) $aud, '08:00'),
+    (string) $aud);
+
+/* ============================================================
+   3) Fechas y permisos
+   ============================================================ */
+echo "
+=== FECHAS Y PERMISOS ===
+";
 $manana = date('Y-m-d', strtotime('+1 day'));
-comoUsuario($U, ['accion' => 'marcar_lote', 'fecha' => $manana, 'estado' => 'presente', 'empleado_id' => [$ids[0]]]);
-ok('una fecha que no ha pasado se rechaza en el SERVIDOR, no solo en el selector',
-    (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$manana]) === 0,
-    qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$manana]) . ' fila(s) creadas');
-comoUsuario($U, ['accion' => 'marcar', 'empleado_id' => $ids[0], 'fecha' => $manana, 'estado' => 'presente']);
-ok('tampoco de una en una',
+comoUsuario($U, ['accion' => 'registrar', 'empleado_id' => $ids[0], 'fecha' => $manana,
+    'estado' => 'presente', 'hora_entrada' => '08:00', 'notas' => 'x']);
+ok('una fecha que no ha pasado se rechaza en el servidor',
     (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$manana]) === 0);
 q("DELETE FROM asistencias WHERE fecha = ?", [$manana]);
 
-/* ============================================================
-   3) Los permisos
-   ============================================================ */
-echo "\n=== LOS PERMISOS ===\n";
 if ($noPuede === null) {
-    echo "  (esta base no tiene ningún usuario SIN el permiso; se omite)\n";
+    echo "  (esta base no tiene ningún usuario SIN el permiso; se omite)
+";
 } else {
-    q("DELETE FROM asistencias WHERE fecha = ?", [$F]);
-    comoUsuario($noPuede['usuario'], ['accion' => 'marcar_lote', 'fecha' => $F,
-        'estado' => 'presente', 'empleado_id' => $ids]);
-    ok('quien no puede registrar asistencia tampoco puede en lote',
-        (int) qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$F]) === 0,
-        qVal("SELECT COUNT(*) FROM asistencias WHERE fecha=?", [$F]) . ' fila(s) creadas');
+    $antesN = (string) qVal("SELECT notas FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[1], $F]);
+    comoUsuario($noPuede['usuario'], ['accion' => 'registrar', 'empleado_id' => $ids[1], 'fecha' => $F,
+        'estado' => 'ausente', 'hora_entrada' => '01:00', 'notas' => 'no debería poder']);
+    ok('quien no puede registrar asistencia tampoco puede corregir',
+        (string) qVal("SELECT notas FROM asistencias WHERE empleado_id=? AND fecha=?", [$ids[1], $F]) === $antesN);
 }
 
 /* ---------- Limpieza ---------- */
 q("DELETE FROM asistencias WHERE fecha = ?", [$F]);
 
-echo "\n" . ($fallos === 0 ? "  MARCAR NO PIERDE HORAS\n\n" : "  $fallos FALLO(S)\n\n");
+echo "
+" . ($fallos === 0 ? "  EL RELOJ MANDA
+
+" : "  $fallos FALLO(S)
+
+");
 exit($fallos === 0 ? 0 : 1);

@@ -191,9 +191,11 @@ dbInsert('asistencias', ['empleado_id' => (int) $c['id'], 'sucursal_id' => 1, 'f
     'hora_entrada' => '08:00:00', 'hora_salida' => null, 'horas_trabajadas' => 0,
     'horas_extra' => 0, 'estado' => 'presente', 'origen' => 'biotime']);
 
+// Corregir exige motivo: ya no se marca asistencia a mano, se enmienda un día.
 comoUsuario($UPUEDE, 'modules/rrhh/asistencia.php', ['accion' => 'registrar',
     'empleado_id' => $c['id'], 'fecha' => $hoy, 'estado' => 'presente',
-    'hora_entrada' => '08:00', 'hora_salida' => '17:00']);
+    'hora_entrada' => '08:00', 'hora_salida' => '17:00',
+    'notas' => 'olvidó ponchar la salida']);
 $fila = qOne("SELECT * FROM asistencias WHERE empleado_id=? AND fecha=?", [$c['id'], $hoy]);
 ok('al corregir un día del reloj, la fila pasa a ser del humano',
     $fila && $fila['origen'] === 'manual' && $fila['hora_salida'] === '17:00:00',

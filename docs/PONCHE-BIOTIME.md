@@ -244,6 +244,31 @@ del reloj vienen con erratas. Lo que quede en «sin asignar» simplemente no ent
 Reasignar un código de una persona a otra **libera antes el anterior**. Sin eso,
 el índice único rechaza el guardado y el emparejamiento se queda a medias.
 
+### No hay marcado a mano
+
+La asistencia la registra el reloj. En **Asistencia** ya no se marca a nadie
+presente ni ausente: la pantalla enseña lo que el reloj registró, y lo agrupa
+en cuatro estados que salen de los datos, no de lo que alguien tecleó:
+
+| | De dónde sale |
+|---|---|
+| **Ponchó** | Tiene marcas y la jornada está completa |
+| **Sin salida** | Entró y no ponchó al salir: ese día no tiene horas |
+| **De permiso** | Cruce con las vacaciones y licencias aprobadas de Nexo |
+| **Sin marcas** | El reloj no registró nada suyo |
+
+**«Sin marcas» no es «ausente»**, y la diferencia importa. Puede ser que no
+viniera, o que ponchara con un código que nadie ha emparejado. Afirmar una falta
+sin saberlo es inventarse una, y eso acaba en un descuento de nómina que nadie
+puede defender. Cuando hay gente ponchando sin emparejar, la pantalla lo dice
+arriba con el enlace para arreglarlo.
+
+Lo único que queda a mano es **corregir un día concreto** —alguien olvidó
+ponchar la salida, el aparato estaba caído—. Eso no es ponchar, es enmendar un
+hecho, y **exige escribir por qué**: sin motivo, dentro de tres meses nadie
+puede distinguir una corrección legítima de un dato inventado. La auditoría
+guarda qué había, qué queda y la razón.
+
 ### Corregir a mano gana siempre
 
 Cualquier guardado desde **Asistencia** marca la fila como `origen = 'manual'`, y
