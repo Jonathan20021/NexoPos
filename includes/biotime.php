@@ -25,21 +25,55 @@
  * ---------------------------------------------------------------------------
  */
 
-/** Lo que hace falta para hablar con el reloj, todo desde la configuración. */
+/**
+ * Lo que hace falta para hablar con el reloj.
+ *
+ * Cada valor puede venir de una constante de configuración o del entorno, y el
+ * ENTORNO MANDA. Eso permite probar sin dejar la contraseña escrita en ningún
+ * fichero:
+ *
+ *     BIOTIME_CLAVE='...' php pruebas/biotime.php
+ *
+ * Una contraseña en un fichero es una contraseña que acaba en una copia de
+ * seguridad, en un adjunto de correo o en el portapapeles de alguien. Para el
+ * servicio que corre solo hace falta ponerla en algún sitio; para probar, no.
+ */
 function bioConfig(): array
 {
+    $v = static function (string $nombre): string {
+        $env = getenv($nombre);
+        if (is_string($env) && $env !== '') return $env;
+        return defined($nombre) ? (string) constant($nombre) : '';
+    };
     return [
-        'url'     => rtrim((string) (defined('BIOTIME_URL') ? BIOTIME_URL : ''), '/'),
-        'email'   => (string) (defined('BIOTIME_EMAIL') ? BIOTIME_EMAIL : ''),
-        'clave'   => (string) (defined('BIOTIME_CLAVE') ? BIOTIME_CLAVE : ''),
-        'empresa' => (string) (defined('BIOTIME_EMPRESA') ? BIOTIME_EMPRESA : ''),
+        'url'     => rtrim($v('BIOTIME_URL'), '/'),
+        'email'   => $v('BIOTIME_EMAIL'),
+        'clave'   => $v('BIOTIME_CLAVE'),
+        'empresa' => $v('BIOTIME_EMPRESA'),
     ];
 }
 
 function bioConfigurado(): bool
 {
+    return bioFaltantes() === [];
+}
+
+/**
+ * Qué constantes faltan, por su nombre.
+ *
+ * «Faltan BIOTIME_URL, BIOTIME_EMAIL, BIOTIME_CLAVE o BIOTIME_EMPRESA» cuando
+ * solo falta una manda a revisar cuatro cosas de las que tres están bien. Decir
+ * cuál es la que falta cuesta lo mismo.
+ */
+function bioFaltantes(): array
+{
     $c = bioConfig();
-    return $c['url'] !== '' && $c['email'] !== '' && $c['clave'] !== '' && $c['empresa'] !== '';
+    $faltan = [];
+    foreach (['url' => 'BIOTIME_URL', 'email' => 'BIOTIME_EMAIL',
+              'clave' => 'BIOTIME_CLAVE', 'empresa' => 'BIOTIME_EMPRESA'] as $k => $n) {
+        if ($c[$k] === '') $faltan[] = $n;
+    }
+    return $faltan;
 }
 
 /** Tapa la contraseña para que no acabe en un log ni en un mensaje de error. */
@@ -203,10 +237,15 @@ function bioDiagnostico(): array
     $pasos = [];
     $c = bioConfig();
 
-    $pasos[] = ['paso' => 'Configuración', 'ok' => bioConfigurado(),
-        'detalle' => bioConfigurado()
+    $faltan = bioFaltantes();
+    $pasos[] = ['paso' => 'Configuración', 'ok' => $faltan === [],
+        'detalle' => $faltan === []
             ? $c['url'] . ' · empresa «' . $c['empresa'] . '» · ' . $c['email']
-            : 'Faltan BIOTIME_URL, BIOTIME_EMAIL, BIOTIME_CLAVE o BIOTIME_EMPRESA'];
+            : 'Falta ' . implode(' y ', $faltan)
+              . (in_array('BIOTIME_CLAVE', $faltan, true) && count($faltan) === 1
+                  ? '. Pásala por el entorno y no queda escrita: '
+                    . "BIOTIME_CLAVE='...' php pruebas/biotime.php"
+                  : '')];
     if (!bioConfigurado()) return $pasos;
 
     $tok = bioToken(true);
