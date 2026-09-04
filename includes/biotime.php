@@ -150,9 +150,42 @@ function bioToken(bool $refrescar = false): ?string
         'password' => $c['clave'],
         'company'  => $c['empresa'],
     ]]);
+    bioUltimaAuth($r);
 
     $t = $r['json']['token'] ?? $r['json']['data']['token'] ?? null;
     return $token = (is_string($t) && $t !== '') ? $t : null;
+}
+
+/**
+ * Guarda y devuelve la última respuesta del login.
+ *
+ * Sin esto, cuando no entra solo se puede adivinar por qué, y adivinar aquí
+ * cuesta caro: «credenciales incorrectas» y «falta el campo company» piden
+ * arreglos completamente distintos. El servidor ya lo dice; hay que enseñarlo.
+ */
+function bioUltimaAuth(?array $r = null): ?array
+{
+    static $ultima = null;
+    if ($r !== null) $ultima = $r;
+    return $ultima;
+}
+
+/** Lo que contestó el reloj al intentar entrar, en una línea legible. */
+function bioPorQueNoEntra(): string
+{
+    $r = bioUltimaAuth();
+    if ($r === null) return 'No se llegó a intentar.';
+    if ($r['error']) return 'No se pudo conectar: ' . $r['error'];
+
+    // Django REST devuelve los errores por campo; se aplanan tal cual vienen.
+    $partes = [];
+    foreach ((array) ($r['json'] ?? []) as $campo => $v) {
+        $txt = is_array($v) ? implode(' ', array_map('strval', $v)) : (string) $v;
+        $partes[] = ($campo === 'non_field_errors' ? '' : $campo . ': ') . $txt;
+    }
+    $dice = $partes ? implode(' · ', $partes) : bioOfuscar(mb_substr($r['raw'], 0, 160));
+
+    return 'HTTP ' . $r['http'] . ' — ' . ($dice !== '' ? $dice : 'sin explicación');
 }
 
 /** GET autenticado. Devuelve la respuesta cruda de `bioHttp()`. */
@@ -252,7 +285,7 @@ function bioDiagnostico(): array
     $pasos[] = ['paso' => 'Entrar al reloj', 'ok' => $tok !== null,
         'detalle' => $tok !== null
             ? 'Token recibido (' . strlen($tok) . ' caracteres)'
-            : 'No autenticó. Con la nube el cuerpo tiene que ser {email, password, company}.'];
+            : bioPorQueNoEntra()];
     if ($tok === null) return $pasos;
 
     $emp = bioEmpleados(['page_size' => 5]);

@@ -35,11 +35,24 @@ foreach (bioDiagnostico() as $p) {
 }
 
 if ($fallos > 0) {
-    echo "\n  Con esto no se puede seguir. Lo más común:\n";
-    echo "  · Las constantes BIOTIME_* no están en config/config.local.php.\n";
-    echo "  · La nube pide {email, password, company}, no {username, password}.\n";
-    echo "    «company» es el subdominio: en importers.biotime.mx es «importers».\n";
-    echo "  · La cuenta no tiene permiso de API. En BioTime se habilita por usuario.\n\n";
+    $auth = bioUltimaAuth();
+    $credenciales = $auth && str_contains(mb_strtolower($auth['raw'] ?? ''), 'unable to log in');
+
+    echo "\n  Con esto no se puede seguir.\n";
+    if ($credenciales) {
+        // Cuando el servidor dice esto, la forma de la petición era CORRECTA:
+        // si sobrara o faltara «company», el error nombraría ese campo. Mandar
+        // a revisar el formato aquí es mandar a arreglar lo que ya funciona.
+        echo "  El reloj entendió la petición y rechazó las credenciales: la URL, la\n";
+        echo "  empresa y el formato están bien, y lo que no cuadra es el correo o la\n";
+        echo "  contraseña. Guárdala con:  php pruebas/biotime_clave.php\n\n";
+    } else {
+        echo "  Lo más común:\n";
+        echo "  · Las constantes BIOTIME_* no están en config/config.local.php.\n";
+        echo "  · La nube pide {email, password, company}, no {username, password}.\n";
+        echo "    «company» es el subdominio: en importers.biotime.mx es «importers».\n";
+        echo "  · La cuenta no tiene permiso de API. En BioTime se habilita por usuario.\n\n";
+    }
     exit(1);
 }
 
