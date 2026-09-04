@@ -25,10 +25,21 @@ if (isPost()) {
     require_perm('rrhh_asistencia.registrar');
     $accion = post('accion');
 
+    /* La asistencia de un día que no ha pasado no existe. El selector ya lo
+       impide con `max`, pero eso es del navegador: quien mande el formulario a
+       mano —o una pestaña abierta desde anoche— se lo salta. */
+    $futuro = static function (string $f): bool {
+        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $f) && $f > date('Y-m-d');
+    };
+
     if ($accion === 'marcar' || $accion === 'registrar') {
         $empleadoId = postInt('empleado_id');
         $fechaPost  = trim(post('fecha'));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaPost)) $fechaPost = date('Y-m-d');
+        if ($futuro($fechaPost)) {
+            flash('error', 'No se puede registrar la asistencia de un día que todavía no ha pasado.');
+            redirect('modules/rrhh/asistencia.php');
+        }
 
         // El empleado debe existir, estar activo y dentro del alcance de sucursal.
         [$wScope, $pScope] = sucursalScope('sucursal_id');
@@ -44,12 +55,23 @@ if (isPost()) {
 
         $estado = in_array(post('estado'), $estadosAsis, true) ? post('estado') : 'presente';
 
+        // Lo que ya hubiera apuntado ese día, que hace falta para no pisarlo.
+        $ya = qOne("SELECT id, hora_entrada, hora_salida, horas_trabajadas, horas_extra
+                      FROM asistencias WHERE empleado_id = ? AND fecha = ?", [$empleadoId, $fechaPost]);
+
         if ($accion === 'marcar') {
-            // Marcado rápido: solo fija el estado, sin horas.
-            $entrada = null;
-            $salida  = null;
-            $horas   = 0.0;
-            $extra   = 0.0;
+            // Marcado rápido: fija el estado y NO TOCA LAS HORAS.
+            //
+            // Antes las ponía en nulo. Un clic en «Presente» sobre alguien cuyo
+            // ponche ya había entrado —10:23 a 18:02, 7,65 h— le borraba las
+            // horas, y como la fila pasa a ser manual la sincronización
+            // siguiente ya no las reponía: se perdían del día para siempre.
+            // Las marcas en bruto sobreviven en `asistencia_marcas`, pero el
+            // día quedaba en cero horas y eso es lo que se paga.
+            $entrada = $ya['hora_entrada'] ?? null;
+            $salida  = $ya['hora_salida'] ?? null;
+            $horas   = (float) ($ya['horas_trabajadas'] ?? 0);
+            $extra   = (float) ($ya['horas_extra'] ?? 0);
         } else {
             $entrada = trim(post('hora_entrada')) ?: null;
             $salida  = trim(post('hora_salida')) ?: null;
@@ -75,7 +97,7 @@ if (isPost()) {
         ];
 
         // UPSERT por la clave única (empleado_id, fecha).
-        $existe = qVal("SELECT id FROM asistencias WHERE empleado_id = ? AND fecha = ?", [$empleadoId, $fechaPost]);
+        $existe = (int) ($ya['id'] ?? 0);
         if ($existe) {
             unset($datos['empleado_id'], $datos['fecha']);   // no se reescribe la clave
             dbUpdate('asistencias', $datos, 'id = ?', [(int) $existe]);
@@ -85,6 +107,66 @@ if (isPost()) {
             audit('rrhh_asistencia', 'registrar', "Asistencia registrada (empleado #$empleadoId, $fechaPost): $estado", ['tabla' => 'asistencias', 'registro_id' => $nid]);
         }
         flash('success', 'Asistencia guardada correctamente.');
+        redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
+    }
+
+    /* -----------------------------------------------------------------------
+     *  Marcar a varias personas de una vez
+     *
+     *  Un día normal son 57 personas y casi todas vinieron. Marcarlas de una en
+     *  una eran 57 clics y 57 recargas de página, cada una devolviéndote arriba
+     *  del todo. La interacción estaba al revés: te hacía repetir el caso
+     *  común y dejaba el raro en un clic.
+     *
+     *  Vale lo mismo que el marcado de uno: NO toca las horas que ya hubiera,
+     *  respeta el alcance de sucursal y se salta a quien no exista o esté
+     *  inactivo en vez de fallar entero.
+     * -------------------------------------------------------------------- */
+    if ($accion === 'marcar_lote') {
+        $ids    = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['empleado_id'] ?? [])))));
+        $estado = in_array(post('estado'), $estadosAsis, true) ? post('estado') : 'presente';
+        $fechaPost = trim(post('fecha'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaPost)) $fechaPost = date('Y-m-d');
+        if ($futuro($fechaPost)) {
+            flash('error', 'No se puede registrar la asistencia de un día que todavía no ha pasado.');
+            redirect('modules/rrhh/asistencia.php');
+        }
+
+        if (!$ids) {
+            flash('info', 'No había nadie seleccionado.');
+            redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
+        }
+
+        [$wScope, $pScope] = sucursalScope('sucursal_id');
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $emps = qAll("SELECT id, sucursal_id FROM empleados
+                       WHERE id IN ($ph) AND estado = 'activo' AND $wScope",
+                     array_merge($ids, $pScope));
+
+        $hechos = 0;
+        tx(function () use ($emps, $fechaPost, $estado, &$hechos) {
+            foreach ($emps as $e) {
+                $ya = qOne("SELECT id FROM asistencias WHERE empleado_id = ? AND fecha = ?",
+                           [(int) $e['id'], $fechaPost]);
+                // Solo el estado y el origen: las horas se quedan como estaban.
+                $datos = ['estado' => $estado, 'origen' => 'manual'];
+                if ($ya) {
+                    dbUpdate('asistencias', $datos, 'id = ?', [(int) $ya['id']]);
+                } else {
+                    dbInsert('asistencias', $datos + [
+                        'empleado_id' => (int) $e['id'], 'sucursal_id' => (int) $e['sucursal_id'],
+                        'fecha' => $fechaPost, 'hora_entrada' => null, 'hora_salida' => null,
+                        'horas_trabajadas' => 0, 'horas_extra' => 0,
+                    ]);
+                }
+                $hechos++;
+            }
+        });
+
+        audit('rrhh_asistencia', 'registrar', "Asistencia en lote ($fechaPost): $hechos como $estado");
+        $fuera = count($ids) - $hechos;
+        flash('success', "$hechos persona(s) marcada(s) como $estado."
+            . ($fuera > 0 ? " $fuera se saltaron: no están activas o no son de tu sucursal." : ''));
         redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
     }
 
@@ -302,6 +384,24 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
 <div x-data="{
        buscar: '',
        filtro: '',
+       sel: [],
+       /* Seleccionar actúa sobre LO QUE SE VE, no sobre las 57. Con el filtro
+          «falta marcar» puesto, «todos» son justo los que faltan: dos clics
+          para el día entero. Marcar a quien tienes escondido por un filtro
+          sería hacer algo que no estabas mirando. */
+       get idsVisibles() {
+         return [...this.$root.querySelectorAll('tbody tr[data-busca]')]
+                  .filter(f => this.coincide(f)).map(f => Number(f.dataset.id));
+       },
+       get todosPuestos() {
+         const v = this.idsVisibles;
+         return v.length > 0 && v.every(id => this.sel.includes(id));
+       },
+       alternarTodos() {
+         const v = this.idsVisibles;
+         this.sel = this.todosPuestos ? this.sel.filter(id => !v.includes(id))
+                                      : [...new Set([...this.sel, ...v])];
+       },
        /* Se cuenta aplicando el MISMO filtro, no preguntando al DOM quién está
           escondido: `x-show` pone `display:none`, no el atributo `hidden`, así
           que el `:not([hidden])` de antes casaba con todas y el contador decía
@@ -331,9 +431,31 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
              class="input" onchange="this.form.submit()">
     </div>
     <button type="submit" class="btn btn-soft"><?= icon('calendar', 'w-4 h-4') ?> Ver</button>
-    <?php if (!$esHoy): ?>
-      <a href="<?= url('modules/rrhh/asistencia.php') ?>" class="btn btn-ghost">Hoy</a>
+  </form>
+
+  <?php /* Marcar asistencia es ir día a día. Abrir el calendario para retroceder
+           uno es un clic de más repetido todos los días. El de mañana no existe:
+           la asistencia de un día que no ha pasado no se puede registrar. */ ?>
+  <div class="flex items-center gap-1">
+    <a href="<?= e(url('modules/rrhh/asistencia.php?fecha=' . date('Y-m-d', strtotime($fecha . ' -1 day')))) ?>"
+       class="btn btn-ghost btn-sm" title="Día anterior"><?= icon('chevron-down', 'w-4 h-4 rotate-90') ?></a>
+    <?php $manana = date('Y-m-d', strtotime($fecha . ' +1 day')); ?>
+    <?php if ($manana <= date('Y-m-d')): ?>
+      <a href="<?= e(url('modules/rrhh/asistencia.php?fecha=' . $manana)) ?>"
+         class="btn btn-ghost btn-sm" title="Día siguiente"><?= icon('chevron-down', 'w-4 h-4 -rotate-90') ?></a>
+    <?php else: ?>
+      <span class="btn btn-ghost btn-sm opacity-30 cursor-not-allowed" title="Mañana todavía no"><?= icon('chevron-down', 'w-4 h-4 -rotate-90') ?></span>
     <?php endif; ?>
+    <?php if (!$esHoy): ?>
+      <a href="<?= url('modules/rrhh/asistencia.php') ?>" class="btn btn-ghost btn-sm">Hoy</a>
+    <?php endif; ?>
+    <?php /* El día de la semana, escrito. Marcar asistencia un domingo casi
+             siempre es que te equivocaste de fecha, y «2026-09-06» no lo dice. */ ?>
+    <?php $DIAS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado']; ?>
+    <span class="ml-2 text-sm <?= (int) date('w', strtotime($fecha)) === 0 ? 'text-amber-600 font-semibold' : 'text-slate-500' ?>">
+      <?= e($DIAS[(int) date('w', strtotime($fecha))]) ?>
+    </span>
+  </div>
   </form>
 
   <?php /* Las tarjetas son además los filtros: la cifra que llama la atención
@@ -399,6 +521,13 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
                    Puesto y departamento bajan a subtítulo del nombre, y entrada,
                    salida, horas y marcas se juntan: son UNA cosa, la jornada. */ ?>
           <tr>
+            <?php if ($puedeRegistrar): ?>
+              <th class="w-10">
+                <input type="checkbox" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                       :checked="todosPuestos" @change="alternarTodos()"
+                       title="Seleccionar todo lo que se ve">
+              </th>
+            <?php endif; ?>
             <th>Empleado</th>
             <th class="w-32">Estado</th>
             <th>La jornada</th>
@@ -412,7 +541,14 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
               $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? ''));
             ?>
             <tr data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
-                x-show="coincide($el)">
+                data-id="<?= (int) $emp['id'] ?>" x-show="coincide($el)"
+                :class="sel.includes(<?= (int) $emp['id'] ?>) ? 'bg-blue-50/60' : ''">
+              <?php if ($puedeRegistrar): ?>
+                <td>
+                  <input type="checkbox" value="<?= (int) $emp['id'] ?>" x-model.number="sel"
+                         class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                </td>
+              <?php endif; ?>
               <td>
                 <div class="flex items-center gap-3">
                   <?= avatar($nombreCompleto) ?>
@@ -474,8 +610,13 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
         $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido'];
         $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? '')); ?>
         <div data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
-             x-show="coincide($el)" class="p-4">
+             x-show="coincide($el)" class="p-4"
+             :class="sel.includes(<?= (int) $emp['id'] ?>) ? 'bg-blue-50/60' : ''">
           <div class="flex items-start gap-3">
+            <?php if ($puedeRegistrar): ?>
+              <input type="checkbox" value="<?= (int) $emp['id'] ?>" x-model.number="sel"
+                     class="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0">
+            <?php endif; ?>
             <?= avatar($nombreCompleto) ?>
             <div class="min-w-0 flex-1">
               <div class="flex items-start justify-between gap-2">
@@ -535,6 +676,35 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
   <?php endif; ?>
 </div>
 
+<?php if ($puedeRegistrar): ?>
+  <?php /* Pegada abajo y solo cuando hay selección: con 57 filas, un botón al
+           final de la lista obliga a bajar hasta el fondo para usarlo. */ ?>
+  <div x-show="sel.length > 0" x-cloak x-transition
+       class="fixed inset-x-0 bottom-0 z-40 px-4 pb-4 pointer-events-none">
+    <div class="max-w-3xl mx-auto pointer-events-auto rounded-2xl bg-slate-900 text-white shadow-pop
+                px-4 py-3 flex items-center gap-3 flex-wrap">
+      <span class="text-sm font-semibold">
+        <span x-text="sel.length"></span> seleccionada<span x-show="sel.length !== 1">s</span>
+      </span>
+      <button type="button" @click="sel = []" class="text-xs text-slate-300 hover:text-white underline">quitar</button>
+      <div class="flex-1"></div>
+      <?php foreach ([['presente', 'Presente', 'btn-success', 'check'],
+                      ['ausente',  'Ausente',  'btn-danger',  'x']] as [$est, $txt, $cls, $ic]): ?>
+        <form method="post" class="inline"
+              @submit="if (!confirm('¿Marcar como <?= $est ?> a ' + sel.length + ' persona(s)?')) $event.preventDefault()">
+          <?= csrf_field() ?>
+          <input type="hidden" name="accion" value="marcar_lote">
+          <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
+          <input type="hidden" name="estado" value="<?= $est ?>">
+          <template x-for="id in sel" :key="id">
+            <input type="hidden" name="empleado_id[]" :value="id">
+          </template>
+          <button class="btn btn-sm <?= $cls ?>"><?= icon($ic, 'w-4 h-4') ?> <?= $txt ?></button>
+        </form>
+      <?php endforeach; ?>
+    </div>
+  </div>
+<?php endif; ?>
 </div><!-- /buscador y filtros -->
 
 <?php if ($puedeRegistrar): ?>
