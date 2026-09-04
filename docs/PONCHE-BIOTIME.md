@@ -110,7 +110,8 @@ Casando por nombre, que es lo único que queda:
 | Coinciden dos palabras o más | 27 |
 | Coincide una sola palabra (dudosas) | 16 |
 | Sin ninguna coincidencia | 5 |
-| Gente de Nexo que **no está** en el reloj | 24 de 56 |
+| Personas de más en Nexo, por cabezas | 8 (56 activas contra 48 en el reloj) |
+| Sin coincidencia de nombre en el reloj | 24 — más que 8 porque los nombres están mal escritos allá |
 
 Y las dudosas no se pueden resolver solas, porque los nombres del reloj están
 mal escritos o incompletos:
@@ -145,7 +146,68 @@ ponchar la salida y se le puso a mano en Nexo, la siguiente sincronización no
 debería pisarlo. Lo sensato es marcar la fila como tocada a mano y respetarla,
 avisando de la diferencia.
 
-## 7. Qué hay escrito
+## 7. La sincronización, y por qué cada regla está ahí
+
+`bioSincronizar($desde, $hasta)` trae los días y los deja en `asistencias`.
+Ninguna de estas reglas es estilo: cada una tapa un fallo visto en los datos
+reales de este cliente. Si se quita, vuelve el fallo.
+
+| Regla | El fallo que evita |
+|---|---|
+| **No escribe ausencias.** Solo toca días con marca | «No hay marca» y «no vino» son cosas distintas. Aquí ponchan 6 de 48: dar por ausente a quien no marcó llenaría la nómina de faltas falsas |
+| **No pisa `origen = 'manual'`** | Alguien corrigió una salida que se olvidó de ponchar; la siguiente pasada la borraría. Se respeta y se avisa de la diferencia |
+| **No adivina a nadie.** Solo `biotime_emp_code` | El emparejamiento por nombre eligió mal al probarlo. Un código sin equivalencia se informa, nunca se asigna |
+| **Una sola marca → salida vacía** | Poner la misma hora en entrada y salida diría «trabajó cero horas», que es mentira y además se paga |
+| **Fecha partida a mano, no con `strtotime()`** | El reloj manda «05-08-2026», día primero. `strtotime()` lo lee como 8 de mayo y guarda la fila en otro mes **sin quejarse** |
+| **Jornada que cruza medianoche → incompleta** | Restar daría horas negativas. «Primera y última del día» ya partió esa jornada en dos |
+| **Nada fuera del rango pedido** | Sincronizar «ayer» no puede tocar el mes pasado si el servidor devuelve de más |
+| **Una fila mala no tumba las demás** | Una persona sin emparejar no puede impedir que entren las otras cincuenta |
+| **La caché del padrón se tira en cada pasada** | Guardar la fila con su `estado` entre dos pasadas daría de alta la asistencia de alguien que ya se fue |
+| **Índice único en `biotime_emp_code`** | Dos personas con el mismo código = los ponches de una en la nómina de la otra |
+
+### El reloj del aparato
+
+`punch_time` viene en hora local de RD y `upload_time` en UTC, así que la
+diferencia tiene que ser de **−240 minutos**. En los datos de este cliente lo es
+en 28 de 31 marcas; las tres que se salen —una hasta 17 horas— son del aparato
+en montaje con el reloj mal puesto. `bioRelojDeFiar()` lo comprueba con 15
+minutos de tolerancia, porque un retraso de subida es normal y un desajuste de
+horas no.
+
+**No hay que convertir zonas horarias.** `punch_time` se usa tal cual.
+
+### Cómo se empareja a la gente
+
+Dos pasos, a propósito:
+
+```
+php pruebas/biotime_emparejar.php --proponer   → storage/biotime_emparejamiento.csv
+php pruebas/biotime_emparejar.php --aplicar    → guarda solo lo marcado «si»
+```
+
+La máquina propone y **una persona que las conoce decide**. Nada se aplica solo.
+Al proponerlo contra el padrón real: 27 probables, 16 dudosas, 5 sin parecido, y
+8 personas de Nexo que no están dadas de alta en el reloj.
+
+### Cómo corre
+
+```
+php modules/rrhh/ponche_cron.php              # últimos 3 días
+php modules/rrhh/ponche_cron.php --dias=7
+php modules/rrhh/ponche_cron.php --simular    # dice qué haría, sin escribir
+```
+
+Trae **tres días, no uno**: un aparato que estuvo sin red sube sus marcas tarde,
+y una ventana de un día las perdería para siempre porque nadie vuelve a mirar
+el ponche de anteayer. Repetir días ya traídos no cuesta nada —es idempotente—.
+
+Sale con **código 1 cuando hay algo que mirar** (gente sin emparejar, una
+corrección manual que no coincide, alguien inactivo que sigue ponchando), para
+que el cron avise en vez de fallar en silencio.
+
+Por URL exige `PONCHE_CRON_KEY`; sin esa constante el endpoint no se expone.
+
+## 8. Qué hay escrito
 
 - `includes/biotime.php` — el cliente: `bioToken()`, `bioGet()`, `bioLista()`
   (sigue `next` con tope de vueltas), `bioEmpleados()`, `bioPonches()`,
@@ -153,6 +215,12 @@ avisando de la diferencia.
 - `pruebas/biotime.php` — el diagnóstico. No escribe nada.
 - `pruebas/biotime_clave.php` — guarda la contraseña sin que pase por la línea
   de comandos ni por el historial del shell.
+- `pruebas/biotime_sync.php` — 35 comprobaciones de las reglas de §7, con filas
+  inyectadas a mano: prueba los casos que aún no han ocurrido pero ocurrirán.
+- `pruebas/biotime_emparejar.php` — propone y aplica la equivalencia.
+- `modules/rrhh/ponche_cron.php` — el disparador.
+- `database/migracion_ponche_biotime_p35.sql` — `empleados.biotime_emp_code`
+  (único), `asistencias.origen` y `asistencias.biotime_sync_at`.
 
 Las credenciales están en `config/config.local.php`, que no se versiona.
 `bioOfuscar()` tapa la contraseña y el token incluso en los mensajes de error.

@@ -280,6 +280,233 @@ function bioDiaPorDia(string $desde, string $hasta, array $params = []): array
     ]);
 }
 
+/* ===========================================================================
+ *  De las marcas del reloj a `asistencias`
+ *
+ *  Las reglas de abajo no son estilo: cada una tapa un fallo que se vio en los
+ *  datos reales de este cliente. Si alguna se quita, vuelve el fallo.
+ * ======================================================================== */
+
+/** Desfase esperado entre la hora de la marca y la de subida: RD es UTC−4. */
+const BIO_DESFASE_ESPERADO_MIN = -240;
+
+/** Cuánto puede desviarse de eso antes de que la marca no sea de fiar. */
+const BIO_DESFASE_TOLERANCIA_MIN = 15;
+
+/**
+ * Convierte la fecha del reloj a la del sistema.
+ *
+ * `firstLastReport` devuelve «31-08-2026», día primero. `strtotime()` lee eso
+ * como mes primero cuando el día es ≤ 12 —«05-08-2026» sale 8 de mayo— y el
+ * error es invisible: la fila se guarda, en el día equivocado. Por eso se parte
+ * a mano en vez de confiar en la conversión automática.
+ */
+function bioFechaISO(?string $fecha): ?string
+{
+    $fecha = trim((string) $fecha);
+    if ($fecha === '') return null;
+    if (preg_match('~^(\d{4})-(\d{2})-(\d{2})$~', $fecha, $m)) {
+        return checkdate((int) $m[2], (int) $m[3], (int) $m[1]) ? $fecha : null;
+    }
+    if (preg_match('~^(\d{2})-(\d{2})-(\d{4})$~', $fecha, $m)) {
+        return checkdate((int) $m[2], (int) $m[1], (int) $m[3])
+            ? $m[3] . '-' . $m[2] . '-' . $m[1] : null;
+    }
+    return null;
+}
+
+/** «08:45» o «08:45:26» → «08:45:00». Cualquier otra cosa, null. */
+function bioHoraISO(?string $hora): ?string
+{
+    $hora = trim((string) $hora);
+    if (!preg_match('~^(\d{1,2}):(\d{2})(?::(\d{2}))?$~', $hora, $m)) return null;
+    if ((int) $m[1] > 23 || (int) $m[2] > 59) return null;
+    return sprintf('%02d:%02d:00', (int) $m[1], (int) $m[2]);
+}
+
+/**
+ * ¿El aparato tiene la hora bien puesta?
+ *
+ * `punch_time` es hora local de RD y `upload_time` es UTC, así que la
+ * diferencia tiene que ser de cuatro horas. En los datos de este cliente lo es
+ * en 28 de 31 marcas; las tres que se salen —hasta 17 horas de desvío— son de
+ * un aparato en montaje con el reloj mal puesto.
+ *
+ * Sin esta comprobación, un aparato desajustado mete horas falsas en la nómina
+ * y nadie se entera hasta que alguien reclama.
+ */
+function bioDesfaseMinutos(array $marca): ?int
+{
+    $p = strtotime((string) ($marca['punch_time'] ?? ''));
+    $u = strtotime((string) ($marca['upload_time'] ?? ''));
+    if (!$p || !$u) return null;
+    return (int) round(($p - $u) / 60);
+}
+
+function bioRelojDeFiar(array $marca): bool
+{
+    $d = bioDesfaseMinutos($marca);
+    // Sin `upload_time` no se puede comprobar; se acepta, porque el reporte
+    // por días no lo trae y bloquearlo dejaría la integración sin datos.
+    if ($d === null) return true;
+    return abs($d - BIO_DESFASE_ESPERADO_MIN) <= BIO_DESFASE_TOLERANCIA_MIN;
+}
+
+/**
+ * La equivalencia entre el código del reloj y la persona de Nexo.
+ *
+ * Solo mira `biotime_emp_code`. NUNCA adivina por nombre ni por parecido: al
+ * probarlo, emparejar por nombre eligió a la persona equivocada. Un código sin
+ * equivalencia se informa y se salta; no se inventa.
+ */
+function bioEmpleadoDe(string $empCode, bool $olvidar = false): ?array
+{
+    // La caché vale DENTRO de una pasada, donde nadie cambia de estado a media
+    // sincronización, y se tira al empezar la siguiente. Guardar la fila entera
+    // —con su `estado`— entre dos pasadas daría de alta la asistencia de alguien
+    // que ya se fue, porque se recordaría el «activo» de la vez anterior.
+    static $cache = [];
+    if ($olvidar) { $cache = []; return null; }
+
+    $empCode = trim($empCode);
+    if ($empCode === '') return null;
+    if (array_key_exists($empCode, $cache)) return $cache[$empCode];
+
+    return $cache[$empCode] = qOne(
+        "SELECT id, nombre, apellido, sucursal_id, estado
+           FROM empleados WHERE biotime_emp_code = ?", [$empCode]
+    ) ?: null;
+}
+
+/**
+ * Trae los días del reloj y los deja en `asistencias`.
+ *
+ * Devuelve el parte de lo ocurrido: qué se escribió, qué se respetó y qué se
+ * quedó fuera y por qué. No lanza excepción por una fila mala — una persona sin
+ * emparejar no puede tumbar la sincronización de las otras cincuenta.
+ *
+ * LO QUE NO HACE, A PROPÓSITO:
+ *
+ *   · No escribe ausencias. «No hay marca» y «no vino» son cosas distintas: en
+ *     este cliente solo ponchan 6 de 48, así que dar por ausente a quien no
+ *     marcó llenaría la nómina de faltas falsas. La ausencia la decide una
+ *     persona.
+ *   · No pisa lo que corrigió un humano (`origen = 'manual'`). Lo informa.
+ *   · No inventa la hora de salida cuando solo hay una marca.
+ */
+function bioSincronizar(string $desde, string $hasta, array $opciones = []): array
+{
+    $simular = !empty($opciones['simular']);
+    bioEmpleadoDe('', true);   // cada pasada relee el padrón
+    $parte = [
+        'creadas' => 0, 'actualizadas' => 0, 'sin_cambio' => 0,
+        'respetadas_manual' => [], 'sin_emparejar' => [], 'reloj_desajustado' => [],
+        'incompletas' => [], 'fecha_mala' => 0, 'inactivos' => [],
+        'desde' => $desde, 'hasta' => $hasta, 'simulado' => $simular, 'error' => null,
+    ];
+
+    // `filas` permite reprocesar lo ya traído sin volver a pedirlo —y es lo
+    // que deja probar cada regla de abajo con casos que en los datos reales de
+    // este cliente todavía no han ocurrido, pero ocurrirán.
+    if (isset($opciones['filas'])) {
+        $r = ['ok' => true, 'filas' => (array) $opciones['filas'], 'error' => null];
+    } else {
+        $r = bioDiaPorDia($desde, $hasta);
+    }
+    if (!$r['ok']) { $parte['error'] = $r['error']; return $parte; }
+
+    $ahora = date('Y-m-d H:i:s');
+
+    foreach ($r['filas'] as $f) {
+        $code  = trim((string) ($f['emp_code'] ?? ''));
+        $fecha = bioFechaISO($f['att_date'] ?? null);
+        if ($fecha === null) { $parte['fecha_mala']++; continue; }
+
+        // Nunca fuera de lo pedido: si el servidor devuelve de más, no se
+        // escribe. Sincronizar «ayer» no puede tocar el mes pasado.
+        if ($fecha < $desde || $fecha > $hasta) { $parte['fecha_mala']++; continue; }
+
+        $emp = bioEmpleadoDe($code);
+        if ($emp === null) {
+            $nom = trim(($f['first_name'] ?? '') . ' ' . ($f['last_name'] ?? ''));
+            $parte['sin_emparejar'][$code] = $nom !== '' ? $nom : '(sin nombre)';
+            continue;
+        }
+        if ($emp['estado'] === 'inactivo') {
+            $parte['inactivos'][$code] = trim($emp['nombre'] . ' ' . $emp['apellido']);
+            continue;
+        }
+
+        $entrada = bioHoraISO($f['first_punch'] ?? null);
+        $salida  = bioHoraISO($f['last_punch'] ?? null);
+        if ($entrada === null) { $parte['fecha_mala']++; continue; }
+
+        // Una sola marca: se sabe que vino, no a qué hora se fue. Poner la
+        // misma hora en las dos columnas diría «trabajó cero horas», que es
+        // mentira y además se paga.
+        $unaSola = ($salida === null || $salida === $entrada);
+        if ($unaSola) {
+            $salida = null;
+            $parte['incompletas'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha;
+        }
+
+        $horas = 0.0;
+        if ($salida !== null) {
+            $h = (strtotime($fecha . ' ' . $salida) - strtotime($fecha . ' ' . $entrada)) / 3600;
+            // Una jornada que cruza medianoche sale negativa. No se corrige
+            // sola —«primera y última del día» ya la partió en dos— y se marca
+            // como incompleta en vez de guardar horas absurdas.
+            if ($h < 0) { $salida = null; $parte['incompletas'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha . ' (cruza medianoche)'; }
+            else        { $horas = round($h, 2); }
+        }
+
+        $ya = qOne("SELECT id, origen, hora_entrada, hora_salida FROM asistencias
+                     WHERE empleado_id = ? AND fecha = ?", [(int) $emp['id'], $fecha]);
+
+        if ($ya && $ya['origen'] === 'manual') {
+            // Lo tocó una persona: manda ella. Se dice la diferencia para que
+            // alguien pueda mirarla, pero no se pisa.
+            if ((string) $ya['hora_entrada'] !== (string) $entrada) {
+                $parte['respetadas_manual'][] = trim($emp['nombre'] . ' ' . $emp['apellido'])
+                    . ' · ' . $fecha . ' · Nexo dice ' . ($ya['hora_entrada'] ?: '—')
+                    . ' y el reloj ' . $entrada;
+            }
+            continue;
+        }
+
+        $datos = [
+            'hora_entrada'     => $entrada,
+            'hora_salida'      => $salida,
+            'horas_trabajadas' => $horas,
+            'horas_extra'      => 0,
+            'estado'           => 'presente',
+            'origen'           => 'biotime',
+            'biotime_sync_at'  => $ahora,
+        ];
+
+        if ($ya) {
+            if ((string) $ya['hora_entrada'] === (string) $entrada
+                && (string) $ya['hora_salida'] === (string) $salida) {
+                $parte['sin_cambio']++;
+                continue;
+            }
+            if (!$simular) dbUpdate('asistencias', $datos, 'id = ?', [(int) $ya['id']]);
+            $parte['actualizadas']++;
+        } else {
+            if (!$simular) {
+                dbInsert('asistencias', $datos + [
+                    'empleado_id' => (int) $emp['id'],
+                    'sucursal_id' => (int) $emp['sucursal_id'],
+                    'fecha'       => $fecha,
+                ]);
+            }
+            $parte['creadas']++;
+        }
+    }
+
+    return $parte;
+}
+
 /**
  * Diagnóstico: qué contesta el reloj a cada cosa.
  *

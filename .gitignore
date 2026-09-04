@@ -58,3 +58,6 @@ desktop.ini
 
 # --- Volcados HTML de las pruebas de pantalla (barrido de QA) ---
 /_audit/
+
+# El emparejamiento del reloj lleva nombres de personas reales.
+/storage/biotime_emparejamiento.csv
