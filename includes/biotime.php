@@ -246,13 +246,35 @@ function bioPonches(string $desde, string $hasta, array $params = []): array
 }
 
 /**
- * El día ya calculado contra el turno: entrada, salida, tardanza, salida
- * temprana y horas. Esto es lo que Nexo no puede deducir solo, porque no
- * tiene horarios.
+ * Una fila por ponche, con el nombre y el departamento pegados.
+ *
+ * OJO: esto NO trae el día resuelto contra el turno, aunque se llame «report».
+ * Comprobado contra el servidor: sus columnas son `att_date` y `punch_time`,
+ * una por marca. Ni turno, ni horas, ni tardanza. Para el día entero es
+ * bioDiaPorDia().
  */
 function bioReporte(string $desde, string $hasta, array $params = []): array
 {
     return bioLista('/att/api/transactionReport/', $params + [
+        'start_date' => $desde,
+        'end_date'   => $hasta,
+    ]);
+}
+
+/**
+ * Una fila por persona y día: primera marca, última y total.
+ *
+ * Este es el que encaja con `asistencias` de Nexo, casi columna por columna:
+ * first_punch → hora_entrada, last_punch → hora_salida, total_time →
+ * horas_trabajadas.
+ *
+ * Lo que NO trae es la tardanza, porque este BioTime no tiene turnos
+ * configurados —/att/api/shift/ y compañía contestan 404—. Da la hora de
+ * llegada, no si esa hora es tarde. Ver docs/PONCHE-BIOTIME.md §3.
+ */
+function bioDiaPorDia(string $desde, string $hasta, array $params = []): array
+{
+    return bioLista('/att/api/firstLastReport/', $params + [
         'start_date' => $desde,
         'end_date'   => $hasta,
     ]);
@@ -305,11 +327,12 @@ function bioDiagnostico(): array
             ? ($pon['total'] ?? count($pon['filas'])) . ' marca(s) entre ' . $desde . ' y ' . $hasta
             : $pon['error']];
 
-    $rep = bioReporte($desde, $hasta, ['page_size' => 5]);
-    $pasos[] = ['paso' => 'Día ya calculado', 'ok' => $rep['ok'],
+    // El día por día, que es el que encaja con `asistencias`. NO trae tardanza:
+    // este BioTime no tiene turnos configurados. Ver docs/PONCHE-BIOTIME.md §3.
+    $rep = bioDiaPorDia($desde, $hasta, ['page_size' => 5]);
+    $pasos[] = ['paso' => 'Día por día', 'ok' => $rep['ok'],
         'detalle' => $rep['ok']
-            ? ($rep['total'] ?? count($rep['filas'])) . ' día(s) con turno aplicado. Columnas: '
-              . implode(', ', array_slice(array_keys($rep['filas'][0] ?? []), 0, 14))
+            ? ($rep['total'] ?? count($rep['filas'])) . ' día(s) con primera y última marca'
             : $rep['error']];
 
     return $pasos;

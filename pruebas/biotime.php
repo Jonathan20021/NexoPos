@@ -102,7 +102,7 @@ echo "  " . str_repeat('─', 74) . "\n";
 $hasta = date('Y-m-d');
 $desde = date('Y-m-d', strtotime('-7 days'));
 
-$rep = bioReporte($desde, $hasta, ['page_size' => 3]);
+$rep = bioDiaPorDia($desde, $hasta, ['page_size' => 3]);
 if ($rep['ok'] && $rep['filas']) {
     foreach (array_slice($rep['filas'], 0, 2) as $i => $f) {
         echo "\n  — fila " . ($i + 1) . " —\n";
@@ -112,8 +112,35 @@ if ($rep['ok'] && $rep['filas']) {
         }
     }
 } else {
-    echo "  Sin días calculados entre $desde y $hasta.\n";
-    echo "  Si hay ponches pero no días, es que falta asignar turnos en BioTime.\n";
+    echo "  Sin marcas entre $desde y $hasta.\n";
+}
+
+/* -------------------------------------------------------------------------
+ *  ¿Se usa el reloj?
+ *
+ *  Es la pregunta que decide si la integración sirve de algo. Un reloj
+ *  conectado pero sin marcas llenaría `asistencias` de ausencias falsas:
+ *  quien no ponchó aparecería como que no vino.
+ * ---------------------------------------------------------------------- */
+echo "\n  ¿SE USA EL RELOJ?\n";
+echo "  " . str_repeat('─', 74) . "\n";
+$hist   = bioGet('/iclock/api/transactions/', ['page_size' => 500]);
+$marcas = $hist['json']['data'] ?? [];
+$horas  = array_values(array_filter(array_map('strval', array_column($marcas, 'punch_time'))));
+sort($horas);
+$quien  = array_count_values(array_filter(array_map('strval', array_column($marcas, 'emp_code'))));
+$dias   = array_unique(array_map(fn($x) => substr($x, 0, 10), $horas));
+
+printf("  marcas en todo el histórico ...... %s\n", $hist['json']['count'] ?? count($marcas));
+printf("  de %s a %s\n", $horas[0] ?? '—', end($horas) ?: '—');
+printf("  días distintos con alguna marca .. %d\n", count($dias));
+printf("  personas que han ponchado ........ %d de %d dadas de alta\n", count($quien), $total);
+
+if ($total > 0 && count($quien) < $total * 0.5) {
+    echo "\n  El reloj está conectado pero NO se está usando. Traerlo a Nexo ahora\n";
+    echo "  llenaría la asistencia de ausencias falsas: quien no ponchó aparecería\n";
+    echo "  como que no vino. Eso hay que resolverlo antes, y es de operaciones,\n";
+    echo "  no de programación. Ver docs/PONCHE-BIOTIME.md §5." . PHP_EOL;
 }
 
 echo "\n  El reloj contesta. Falta decidir cómo se casan las personas.\n\n";
