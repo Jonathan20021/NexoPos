@@ -61,8 +61,14 @@ if (isPost()) {
             dbUpdate('empleados', ['biotime_emp_code' => $code], 'id = ?', [$empId]);
             $puestos++;
         }
-        audit('rrhh_asistencia', 'emparejar', "Reloj: $puestos emparejada(s), $quitados quitada(s)");
-        flash('success', "$puestos persona(s) emparejada(s)" . ($quitados ? ", $quitados sin asignar" : '') . '.');
+        // Las marcas guardadas se reasignan en el acto, hacia atrás. Sin esto, el
+        // histórico de esa persona empezaría el día en que alguien la empareja— y
+        // sus ponches anteriores seguirían figurando como de nadie.
+        $reclamadas = bioReclamarMarcas();
+
+        audit('rrhh_asistencia', 'emparejar', "Reloj: $puestos emparejada(s), $quitados quitada(s), $reclamadas marca(s) reasignada(s)");
+        flash('success', "$puestos persona(s) emparejada(s)" . ($quitados ? ", $quitados sin asignar" : '') . '.'
+            . ($reclamadas > 0 ? " Se les asignaron $reclamadas marca(s) ya registradas." : ''));
         foreach ($choques as $c) flash('warning', $c);
         redirect('modules/rrhh/ponche.php');
     }

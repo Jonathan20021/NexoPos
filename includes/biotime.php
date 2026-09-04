@@ -378,6 +378,165 @@ function bioEmpleadoDe(string $empCode, bool $olvidar = false): ?array
     ) ?: null;
 }
 
+/* ===========================================================================
+ *  Las marcas en bruto
+ *
+ *  `asistencias` es el resumen del día; esto es lo que de verdad registró el
+ *  aparato. Se guarda entero porque el resumen pierde lo de en medio, y porque
+ *  «¿a qué hora salió a almorzar?» solo se puede contestar con el dato crudo.
+ * ======================================================================== */
+
+/**
+ * Cómo se identificó la persona, en cristiano.
+ *
+ * Las marcas en bruto traen un número; el informe trae la etiqueta. La
+ * equivalencia de abajo NO está sacada de un manual: se dedujo cruzando las dos
+ * fuentes sobre los datos reales de este cliente —verify_type 1 aparecía 6
+ * veces como «Fingerprint», 3 ocho veces como «Password» y 15 veintisiete veces
+ * como «Face»—. Un código que no esté aquí se enseña tal cual en vez de
+ * inventarle un nombre.
+ */
+function bioVerificacion($v): string
+{
+    $v = trim((string) $v);
+    return [
+        '1'  => 'Huella',
+        '3'  => 'Contraseña',
+        '15' => 'Rostro',
+    ][$v] ?? ($v === '' ? '—' : $v);
+}
+
+/**
+ * Baja las marcas de un rango y las guarda.
+ *
+ * Idempotente por `biotime_id`: traer dos veces el mismo rango no duplica. Y no
+ * borra nada, así que una marca que el reloj purgue con el tiempo se queda
+ * aquí, que es justo lo que se le pide a un histórico.
+ */
+function bioGuardarMarcas(string $desde, string $hasta): array
+{
+    $parte = ['leidas' => 0, 'nuevas' => 0, 'ya_estaban' => 0,
+              'reloj_desajustado' => [], 'ilegibles' => 0, 'error' => null];
+
+    $r = bioPonches($desde, $hasta);
+    if (!$r['ok']) { $parte['error'] = $r['error']; return $parte; }
+
+    // El emparejamiento se resuelve una vez para todo el lote.
+    $de = [];
+    foreach (qAll("SELECT id, biotime_emp_code FROM empleados WHERE biotime_emp_code IS NOT NULL") as $e) {
+        $de[(string) $e['biotime_emp_code']] = (int) $e['id'];
+    }
+
+    // Las marcas en bruto NO traen el nombre, solo el código. Se pide el padrón
+    // del reloj una vez y se guarda el nombre junto a cada marca: sin él, quien
+    // no esté emparejado aparecería en los avisos como un número suelto y no
+    // habría forma de saber a quién reclamarle.
+    $nombres = [];
+    $pad = bioEmpleados();
+    if ($pad['ok']) {
+        foreach ($pad['filas'] as $p) {
+            $n = trim(($p['first_name'] ?? '') . ' ' . ($p['last_name'] ?? ''));
+            if ($n !== '') $nombres[(string) $p['emp_code']] = mb_substr($n, 0, 120);
+        }
+    }
+
+    foreach ($r['filas'] as $m) {
+        $parte['leidas']++;
+        $bid  = (int) ($m['id'] ?? 0);
+        $code = trim((string) ($m['emp_code'] ?? ''));
+        $ts   = strtotime((string) ($m['punch_time'] ?? ''));
+        if ($bid <= 0 || $code === '' || !$ts) { $parte['ilegibles']++; continue; }
+
+        if (qVal("SELECT id FROM asistencia_marcas WHERE biotime_id = ?", [$bid])) {
+            $parte['ya_estaban']++;
+            continue;
+        }
+
+        $desfase = bioDesfaseMinutos($m);
+        if ($desfase !== null && abs($desfase - BIO_DESFASE_ESPERADO_MIN) > BIO_DESFASE_TOLERANCIA_MIN) {
+            // No se descarta: se guarda con su desfase anotado. Tirar el dato
+            // dejaría un hueco sin explicación; guardarlo marcado deja ver que
+            // ese aparato tenía la hora mal.
+            $parte['reloj_desajustado'][(string) ($m['terminal_alias'] ?? '?')] = $desfase;
+        }
+
+        dbInsert('asistencia_marcas', [
+            'biotime_id'   => $bid,
+            'emp_code'     => $code,
+            'empleado_id'  => $de[$code] ?? null,
+            'fecha'        => date('Y-m-d', $ts),
+            'hora'         => date('H:i:s', $ts),
+            'marcada_en'   => date('Y-m-d H:i:s', $ts),
+            'subida_en'    => ($u = strtotime((string) ($m['upload_time'] ?? ''))) ? date('Y-m-d H:i:s', $u) : null,
+            'desfase_min'  => $desfase,
+            'terminal'     => mb_substr((string) ($m['terminal_alias'] ?? ''), 0, 80) ?: null,
+            'verificacion' => mb_substr((string) ($m['verify_type'] ?? ''), 0, 30) ?: null,
+            'nombre_reloj' => $nombres[$code] ?? null,
+        ]);
+        $parte['nuevas']++;
+    }
+    return $parte;
+}
+
+/**
+ * Pone al día el `empleado_id` de las marcas guardadas.
+ *
+ * Las marcas se guardan aunque su persona no esté emparejada todavía: son un
+ * hecho ocurrido, no dependen de que alguien haya hecho su parte. Cuando el
+ * emparejamiento llega, esta función las reclama hacia atrás — si no, el
+ * histórico de esa persona empezaría el día en que se la empareja.
+ */
+function bioReclamarMarcas(): int
+{
+    $n = 0;
+    foreach (qAll("SELECT id, biotime_emp_code FROM empleados WHERE biotime_emp_code IS NOT NULL") as $e) {
+        $n += (int) q("UPDATE asistencia_marcas SET empleado_id = ?
+                        WHERE emp_code = ? AND (empleado_id IS NULL OR empleado_id <> ?)",
+                      [(int) $e['id'], (string) $e['biotime_emp_code'], (int) $e['id']])->rowCount();
+    }
+    // Y al revés: si a alguien se le quitó la equivalencia, sus marcas dejan de
+    // apuntarle. Un histórico que sigue nombrando a quien ya no corresponde es
+    // peor que uno incompleto.
+    $n += (int) q("UPDATE asistencia_marcas m
+                      LEFT JOIN empleados e ON e.biotime_emp_code = m.emp_code
+                     SET m.empleado_id = NULL
+                   WHERE m.empleado_id IS NOT NULL AND e.id IS NULL")->rowCount();
+    return $n;
+}
+
+/**
+ * El día de cada persona, sacado de las marcas guardadas.
+ *
+ * Devuelve la misma forma que `firstLastReport` para que la sincronización no
+ * tenga que distinguir de dónde viene el dato. La diferencia es que aquí el
+ * origen es local: se puede recalcular sin volver a pedirle nada al reloj.
+ */
+function bioDiasDesdeMarcas(string $desde, string $hasta): array
+{
+    $filas = qAll(
+        "SELECT emp_code,
+                DATE_FORMAT(fecha, '%d-%m-%Y') AS att_date,
+                MIN(hora) AS first_punch,
+                MAX(hora) AS last_punch,
+                COUNT(*)  AS marcas
+           FROM asistencia_marcas
+          WHERE fecha BETWEEN ? AND ?
+          GROUP BY emp_code, fecha
+          ORDER BY fecha, emp_code",
+        [$desde, $hasta]
+    );
+    // El nombre solo se usa para poder nombrar a quien no está emparejado.
+    foreach ($filas as &$f) {
+        $f['first_name'] = (string) qVal(
+            "SELECT nombre_reloj FROM asistencia_marcas
+              WHERE emp_code = ? AND nombre_reloj IS NOT NULL
+              ORDER BY id DESC LIMIT 1", [$f['emp_code']]);
+        $f['last_name'] = '';
+    }
+    unset($f);   // sin esto, la última fila se pisa en el próximo foreach por referencia
+    return $filas;
+}
+
 /**
  * Trae los días del reloj y los deja en `asistencias`.
  *
@@ -411,7 +570,19 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
     if (isset($opciones['filas'])) {
         $r = ['ok' => true, 'filas' => (array) $opciones['filas'], 'error' => null];
     } else {
-        $r = bioDiaPorDia($desde, $hasta);
+        // Primero se guardan las marcas en bruto y después se calcula el día A
+        // PARTIR de ellas, en vez de pedirle al reloj un segundo informe. Así
+        // hay una sola fuente —lo que la pantalla enseña y lo que la nómina usa
+        // salen de las mismas filas—, se conservan las marcas intermedias, y el
+        // desfase del aparato queda comprobado: `firstLastReport` no trae
+        // `upload_time`, así que por ahí esa comprobación nunca se disparaba.
+        $g = bioGuardarMarcas($desde, $hasta);
+        if ($g['error']) { $parte['error'] = $g['error']; return $parte; }
+        bioReclamarMarcas();
+        $parte['marcas_nuevas']      = $g['nuevas'];
+        $parte['marcas_ya_estaban']  = $g['ya_estaban'];
+        $parte['reloj_desajustado']  = $g['reloj_desajustado'];
+        $r = ['ok' => true, 'filas' => bioDiasDesdeMarcas($desde, $hasta), 'error' => null];
     }
     if (!$r['ok']) { $parte['error'] = $r['error']; return $parte; }
 

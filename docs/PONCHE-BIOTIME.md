@@ -176,6 +176,61 @@ horas no.
 
 **No hay que convertir zonas horarias.** `punch_time` se usa tal cual.
 
+### El histórico en bruto
+
+`asistencias` guarda el día resumido —entrada, salida, horas—, que es lo que
+necesita la nómina. Pero pierde lo de en medio: Nancy ponchó cuatro veces el 24
+de agosto (10:23, 10:24, 13:25 y 18:02) y solo quedaban la primera y la última.
+La salida a almorzar desaparecía, y con ella la única forma de contestar una
+reclamación que llega tres semanas después.
+
+`asistencia_marcas` guarda **cada ponche**, tal como lo dio el aparato, y
+`asistencias` se calcula ahora **a partir de ahí** en vez de pedirle al reloj un
+segundo informe. Eso trae tres cosas:
+
+1. **Una sola fuente.** Lo que la pantalla enseña y lo que la nómina usa salen
+   de las mismas filas.
+2. **Se puede recalcular sin el reloj.** El día sale de la base local.
+3. **El desfase del aparato por fin se comprueba.** `firstLastReport` no trae
+   `upload_time`, así que por ese camino `bioRelojDeFiar()` no se disparaba
+   nunca. Las marcas en bruto sí lo traen: en el histórico de este cliente hay
+   **once marcas de aparatos con la hora mal puesta**, una con 17 horas de
+   desvío, que hasta ahora entraban como buenas.
+
+Una marca desajustada **se guarda igual**, con su desfase anotado. Tirarla
+dejaría un hueco sin explicación; guardarla marcada deja ver qué aparato falla.
+
+`biotime_id` ÚNICO es lo que hace idempotente traer un rango dos veces. Y
+`bioReclamarMarcas()` reasigna hacia atrás al emparejar: sin eso, el histórico de
+una persona empezaría el día en que alguien la empareja.
+
+### Cómo se identificó la persona
+
+Las marcas en bruto traen un número; el informe trae la etiqueta. La
+equivalencia se dedujo cruzando las dos fuentes sobre los datos reales de este
+cliente, no de un manual:
+
+| `verify_type` | | veces comprobadas |
+|---|---|---|
+| 1 | Huella | 6 |
+| 3 | Contraseña | 8 |
+| 15 | Rostro | 27 |
+
+Un código que no esté en esa lista se enseña tal cual en vez de inventarle un
+nombre.
+
+### Dónde se consulta
+
+**Recursos Humanos → Asistencia** enseña, junto a cada persona, **las marcas de
+ese día** —con su aparato y cómo se identificó al pasar el ratón—, y debajo el
+**historial completo**, filtrable por rango y por persona. No se recorta a los
+últimos N días a propósito: una reclamación llega semanas después y un histórico
+que empieza «hace un mes» no sirve para contestarla.
+
+Las marcas de quien el reloj registró pero nadie emparejó salen aparte, en su
+propio aviso: existen, no son de nadie, y callarlas sería fingir que ese día no
+ponchó.
+
 ### Dónde se hace todo esto
 
 **Recursos Humanos → Reloj biométrico** (`modules/rrhh/ponche.php`). Ahí se

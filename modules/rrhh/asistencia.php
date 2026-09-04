@@ -1,5 +1,6 @@
 <?php
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
+require_once dirname(__DIR__, 2) . '/includes/biotime.php';
 require_perm('rrhh_asistencia.ver');
 
 $estadosAsis = ['presente', 'ausente', 'tardanza', 'permiso', 'vacaciones', 'licencia'];
@@ -111,6 +112,69 @@ $empleados = qAll(
       ORDER BY e.nombre, e.apellido",
     array_merge([$fecha], $pScope)
 );
+
+/* ---------------------------------------------------------------------------
+ *  Las marcas del reloj de ese día
+ *
+ *  La fila de arriba dice «entró a las 10:23 y salió a las 18:02». Eso es el
+ *  resumen; lo que de verdad ocurrió fueron cuatro marcas, y la de las 13:25
+ *  —salir a almorzar— no aparece por ningún lado. Aquí se enseñan todas, que es
+ *  lo único que permite contestar una reclamación.
+ * ------------------------------------------------------------------------ */
+$marcasDelDia = [];
+foreach (qAll("SELECT empleado_id, hora, terminal, verificacion, desfase_min
+                 FROM asistencia_marcas
+                WHERE fecha = ? AND empleado_id IS NOT NULL
+                ORDER BY hora", [$fecha]) as $m) {
+    $marcasDelDia[(int) $m['empleado_id']][] = $m;
+}
+
+// Y las de quien el reloj registró pero nadie ha emparejado todavía: sus marcas
+// existen, no son de nadie, y callarlas sería fingir que ese día no ponchó.
+$huerfanas = qAll("SELECT emp_code, nombre_reloj, COUNT(*) n,
+                          MIN(hora) AS primera, MAX(hora) AS ultima
+                     FROM asistencia_marcas
+                    WHERE fecha = ? AND empleado_id IS NULL
+                    GROUP BY emp_code, nombre_reloj ORDER BY primera", [$fecha]);
+
+/* ---------------------------------------------------------------------------
+ *  El historial completo de marcas
+ *
+ *  Todo lo que el reloj ha registrado desde que existe, filtrable y paginado.
+ *  No se recorta a los últimos N días a propósito: una reclamación de nómina
+ *  llega semanas después, y un histórico que empieza «hace un mes» no sirve
+ *  para contestarla.
+ * ------------------------------------------------------------------------ */
+$hDesde = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) get('h_desde')) ? get('h_desde') : '';
+$hHasta = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) get('h_hasta')) ? get('h_hasta') : '';
+$hQuien = (int) get('h_empleado');
+$hVer   = get('h') === '1' || $hDesde !== '' || $hHasta !== '' || $hQuien > 0;
+
+$hCond = ['1=1']; $hPar = [];
+if ($hDesde !== '') { $hCond[] = 'm.fecha >= ?'; $hPar[] = $hDesde; }
+if ($hHasta !== '') { $hCond[] = 'm.fecha <= ?'; $hPar[] = $hHasta; }
+if ($hQuien > 0)    { $hCond[] = 'm.empleado_id = ?'; $hPar[] = $hQuien; }
+
+// El alcance de sucursal manda también aquí. Las marcas de quien todavía no
+// está emparejado no pertenecen a ninguna sucursal, así que solo las ve quien
+// puede verlas todas: si no, desaparecerían sin que nadie lo supiera.
+[$wH, $pH] = sucursalScope('e.sucursal_id');
+$hCond[] = "(e.id IS NULL AND " . (current_sucursal_id() === null ? '1=1' : '1=0') . " OR $wH)";
+$hPar = array_merge($hPar, $pH);
+$hWhere = implode(' AND ', $hCond);
+
+$hJoin = "FROM asistencia_marcas m LEFT JOIN empleados e ON e.id = m.empleado_id WHERE $hWhere";
+$hTotal = (int) qVal("SELECT COUNT(*) $hJoin", $hPar);
+$hPg = paginar($hTotal, 100);
+$historial = $hVer ? qAll(
+    "SELECT m.*, CONCAT(e.nombre,' ',e.apellido) AS quien $hJoin
+      ORDER BY m.fecha DESC, m.hora DESC, m.id DESC
+      LIMIT {$hPg['porPagina']} OFFSET {$hPg['offset']}", $hPar) : [];
+
+$hEmpleados = qAll("SELECT DISTINCT e.id, e.nombre, e.apellido
+                      FROM asistencia_marcas m JOIN empleados e ON e.id = m.empleado_id
+                     WHERE $wH ORDER BY e.nombre, e.apellido", $pH);
+$hRango = qOne("SELECT MIN(fecha) AS d, MAX(fecha) AS h, COUNT(*) AS n FROM asistencia_marcas");
 
 // KPIs de la fecha seleccionada
 $totalEmpleados = count($empleados);
@@ -236,6 +300,7 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
             <th class="text-center">Entrada</th>
             <th class="text-center">Salida</th>
             <th class="text-center">Horas</th>
+            <th>Marcas del reloj</th>
             <?php if ($puedeRegistrar): ?><th class="text-right">Acciones</th><?php endif; ?>
           </tr>
         </thead>
@@ -272,6 +337,26 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
                   <?php endif; ?>
                 <?php else: ?>
                   <span class="text-slate-300">—</span>
+                <?php endif; ?>
+              </td>
+              <?php // Cada marca con su hora, su aparato y cómo se identificó. El
+                       // desfase raro se pinta en ámbar: ese aparato tenía el reloj
+                       // mal puesto y su hora no es de fiar. ?>
+              <td>
+                <?php $ms = $marcasDelDia[(int) $emp['id']] ?? []; ?>
+                <?php if (!$ms): ?>
+                  <span class="text-xs text-slate-300">sin marcas</span>
+                <?php else: ?>
+                  <div class="flex flex-wrap gap-1">
+                    <?php foreach ($ms as $m):
+                      $raro = $m['desfase_min'] !== null && abs((int) $m['desfase_min'] + 240) > 15; ?>
+                      <span class="px-1.5 py-0.5 rounded text-xs font-medium <?= $raro ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600' ?>"
+                            title="<?= e(($m['terminal'] ?: 'sin aparato') . ' · ' . bioVerificacion($m['verificacion'])
+                                        . ($raro ? ' · OJO: el aparato tenía la hora desajustada ' . (int) $m['desfase_min'] . ' min' : '')) ?>">
+                        <?= e(substr((string) $m['hora'], 0, 5)) ?><?= $raro ? ' ⚠' : '' ?>
+                      </span>
+                    <?php endforeach; ?>
+                  </div>
                 <?php endif; ?>
               </td>
               <?php if ($puedeRegistrar): ?>
@@ -376,5 +461,131 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
   </div>
 </div>
 <?php endif; ?>
+
+
+<?php /* ---------- Lo que el reloj registró y no es de nadie ---------- */ ?>
+<?php if ($huerfanas): ?>
+  <div class="card p-5 mt-6 border-l-4 border-amber-400">
+    <h3 class="font-bold text-slate-800 mb-1">
+      <?= icon('alert', 'w-5 h-5 inline -mt-1 text-amber-500') ?>
+      El reloj registró marcas que no son de nadie
+    </h3>
+    <p class="text-sm text-slate-600 mb-3">
+      Estas personas ponchan en el reloj pero no están emparejadas con nadie de Nexo,
+      así que su asistencia no se está contando.
+      <?php if (can('rrhh_asistencia.registrar')): ?>
+        <a class="link" href="<?= e(url('modules/rrhh/ponche.php')) ?>">Emparejarlas</a>.
+      <?php endif; ?>
+    </p>
+    <div class="flex flex-wrap gap-2">
+      <?php foreach ($huerfanas as $o): ?>
+        <span class="px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+          <strong><?= e($o['nombre_reloj'] ?: 'código ' . $o['emp_code']) ?></strong>
+          <span class="text-xs text-amber-700">
+            · <?= (int) $o['n'] ?> marca(s) · <?= e(substr((string) $o['primera'], 0, 5)) ?>
+            <?= $o['primera'] !== $o['ultima'] ? '→ ' . e(substr((string) $o['ultima'], 0, 5)) : '' ?>
+          </span>
+        </span>
+      <?php endforeach; ?>
+    </div>
+  </div>
+<?php endif; ?>
+
+<?php /* ---------- El histórico entero ---------- */ ?>
+<div class="card mt-6" id="historial">
+  <div class="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-4 flex-wrap">
+    <div class="flex items-center gap-3">
+      <span class="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0"><?= icon('history', 'w-5 h-5') ?></span>
+      <div>
+        <h3 class="font-bold text-slate-800">Historial de marcas</h3>
+        <p class="text-xs text-slate-500">
+          Cada ponche tal como lo registró el aparato, sin resumir.
+          <?php if ($hRango && $hRango['n'] > 0): ?>
+            <?= number_format((int) $hRango['n']) ?> marca(s) desde el <?= e(fechaCorta($hRango['d'])) ?>.
+          <?php else: ?>
+            Todavía no hay ninguna.
+          <?php endif; ?>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <form method="get" class="px-5 py-4 border-b border-slate-100 flex flex-wrap items-end gap-3">
+    <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
+    <input type="hidden" name="h" value="1">
+    <div><label class="label">Desde</label><input type="date" name="h_desde" value="<?= e($hDesde) ?>" class="input"></div>
+    <div><label class="label">Hasta</label><input type="date" name="h_hasta" value="<?= e($hHasta) ?>" class="input"></div>
+    <div>
+      <label class="label">Empleado</label>
+      <select name="h_empleado" class="input min-w-56">
+        <option value="0">Todos</option>
+        <?php foreach ($hEmpleados as $he): ?>
+          <option value="<?= (int) $he['id'] ?>" <?= $hQuien === (int) $he['id'] ? 'selected' : '' ?>>
+            <?= e(trim($he['nombre'] . ' ' . $he['apellido'])) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <button class="btn btn-primary"><?= icon('search', 'w-4 h-4') ?> Consultar</button>
+    <?php if ($hVer): ?>
+      <a href="<?= e(url('modules/rrhh/asistencia.php?fecha=' . $fecha)) ?>" class="btn btn-ghost">Limpiar</a>
+    <?php endif; ?>
+  </form>
+
+  <?php if (!$hVer): ?>
+    <p class="px-5 py-8 text-center text-sm text-slate-400">
+      Elige un rango o una persona y pulsa «Consultar».
+      <a class="link" href="<?= e(url('modules/rrhh/asistencia.php?fecha=' . $fecha . '&h=1')) ?>">O mira las últimas 100 marcas</a>.
+    </p>
+  <?php elseif (!$historial): ?>
+    <p class="px-5 py-8 text-center text-sm text-slate-400">No hay marcas con ese filtro.</p>
+  <?php else: ?>
+    <div class="overflow-x-auto">
+      <table class="data-table">
+        <thead><tr>
+          <th>Fecha</th><th>Hora</th><th>Empleado</th><th>Aparato</th>
+          <th>Cómo se identificó</th><th>Hora del aparato</th>
+        </tr></thead>
+        <tbody>
+          <?php foreach ($historial as $m):
+            $raro = $m['desfase_min'] !== null && abs((int) $m['desfase_min'] + 240) > 15; ?>
+            <tr>
+              <td class="whitespace-nowrap text-slate-600"><?= e(fechaCorta($m['fecha'])) ?></td>
+              <td class="font-semibold text-slate-800"><?= e(substr((string) $m['hora'], 0, 5)) ?></td>
+              <td>
+                <?php if ($m['quien']): ?>
+                  <span class="text-slate-700"><?= e($m['quien']) ?></span>
+                <?php else: ?>
+                  <span class="text-amber-700"><?= e($m['nombre_reloj'] ?: '—') ?></span>
+                  <span class="badge badge-amber ml-1">sin emparejar</span>
+                <?php endif; ?>
+                <span class="block text-xs text-slate-400">código <?= e($m['emp_code']) ?></span>
+              </td>
+              <td class="text-slate-500 text-sm"><?= e($m['terminal'] ?: '—') ?></td>
+              <td class="text-slate-500 text-sm"><?= e(bioVerificacion($m['verificacion'])) ?></td>
+              <td>
+                <?php if ($m['desfase_min'] === null): ?>
+                  <span class="text-xs text-slate-300">—</span>
+                <?php elseif ($raro): ?>
+                  <span class="badge badge-amber" title="Debería ser −240 min (UTC−4). Este aparato tenía la hora mal puesta, así que esta marca no es de fiar.">
+                    desajustado <?= (int) $m['desfase_min'] > 0 ? '+' : '' ?><?= (int) $m['desfase_min'] ?> min
+                  </span>
+                <?php else: ?>
+                  <span class="text-xs text-emerald-600">en hora</span>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?= paginacion($hPg) ?>
+    <p class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100">
+      «Hora del aparato» compara la hora de la marca con la de subida al servidor.
+      En República Dominicana la diferencia tiene que ser de −240 minutos; cuando no lo es,
+      ese aparato tenía el reloj mal puesto y su hora no se puede dar por buena.
+    </p>
+  <?php endif; ?>
+</div>
 
 <?php layout_end(); ?>
