@@ -172,10 +172,13 @@ if ($UNOPUEDE === null) {
    ============================================================ */
 echo "\n=== TRAER DESDE LA PANTALLA ===\n";
 $n0 = (int) qVal("SELECT COUNT(*) FROM asistencias");
+$m0 = (int) qVal("SELECT COUNT(*) FROM asistencia_marcas");
 $f = comoUsuario($UPUEDE, $P, ['accion' => 'traer', 'dias' => 7, 'modo' => 'simular']);
-ok('«ver qué haría» no escribe nada',
-    (int) qVal("SELECT COUNT(*) FROM asistencias") === $n0,
-    'antes ' . $n0 . ', después ' . qVal("SELECT COUNT(*) FROM asistencias"));
+ok('«ver qué haría» no escribe NADA, ni asistencias ni marcas',
+    (int) qVal("SELECT COUNT(*) FROM asistencias") === $n0
+    && (int) qVal("SELECT COUNT(*) FROM asistencia_marcas") === $m0,
+    'asistencias ' . $n0 . '→' . qVal("SELECT COUNT(*) FROM asistencias")
+    . ' · marcas ' . $m0 . '→' . qVal("SELECT COUNT(*) FROM asistencia_marcas"));
 ok('y contesta algo, sea el resultado o el motivo de no poder', $f !== [], pinta($f));
 
 /* ============================================================

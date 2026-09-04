@@ -413,9 +413,9 @@ function bioVerificacion($v): string
  * borra nada, así que una marca que el reloj purgue con el tiempo se queda
  * aquí, que es justo lo que se le pide a un histórico.
  */
-function bioGuardarMarcas(string $desde, string $hasta): array
+function bioGuardarMarcas(string $desde, string $hasta, bool $simular = false): array
 {
-    $parte = ['leidas' => 0, 'nuevas' => 0, 'ya_estaban' => 0,
+    $parte = ['leidas' => 0, 'nuevas' => 0, 'ya_estaban' => 0, 'filas' => [],
               'reloj_desajustado' => [], 'ilegibles' => 0, 'error' => null];
 
     $r = bioPonches($desde, $hasta);
@@ -447,10 +447,7 @@ function bioGuardarMarcas(string $desde, string $hasta): array
         $ts   = strtotime((string) ($m['punch_time'] ?? ''));
         if ($bid <= 0 || $code === '' || !$ts) { $parte['ilegibles']++; continue; }
 
-        if (qVal("SELECT id FROM asistencia_marcas WHERE biotime_id = ?", [$bid])) {
-            $parte['ya_estaban']++;
-            continue;
-        }
+        $yaEstaba = (bool) qVal("SELECT id FROM asistencia_marcas WHERE biotime_id = ?", [$bid]);
 
         $desfase = bioDesfaseMinutos($m);
         if ($desfase !== null && abs($desfase - BIO_DESFASE_ESPERADO_MIN) > BIO_DESFASE_TOLERANCIA_MIN) {
@@ -460,7 +457,7 @@ function bioGuardarMarcas(string $desde, string $hasta): array
             $parte['reloj_desajustado'][(string) ($m['terminal_alias'] ?? '?')] = $desfase;
         }
 
-        dbInsert('asistencia_marcas', [
+        $fila = [
             'biotime_id'   => $bid,
             'emp_code'     => $code,
             'empleado_id'  => $de[$code] ?? null,
@@ -472,10 +469,41 @@ function bioGuardarMarcas(string $desde, string $hasta): array
             'terminal'     => mb_substr((string) ($m['terminal_alias'] ?? ''), 0, 80) ?: null,
             'verificacion' => mb_substr((string) ($m['verify_type'] ?? ''), 0, 30) ?: null,
             'nombre_reloj' => $nombres[$code] ?? null,
-        ]);
+        ];
+        // Se devuelven TODAS —las nuevas y las que ya estaban— porque de ellas
+        // sale el día, y en simulación no hay nada guardado de donde sacarlo.
+        $parte['filas'][] = $fila;
+
+        if ($yaEstaba) { $parte['ya_estaban']++; continue; }
+        if (!$simular) dbInsert('asistencia_marcas', $fila);
         $parte['nuevas']++;
     }
     return $parte;
+}
+
+/**
+ * El día de cada persona a partir de unas marcas que ya se tienen en la mano.
+ *
+ * Es la misma cuenta que `bioDiasDesdeMarcas()` pero sin pasar por la base, que
+ * es lo que permite que «ver qué haría» prediga el resultado sin escribir nada.
+ */
+function bioDiasDeMarcas(array $marcas): array
+{
+    $por = [];
+    foreach ($marcas as $m) {
+        $k = $m['emp_code'] . '|' . $m['fecha'];
+        if (!isset($por[$k])) {
+            $por[$k] = ['emp_code' => $m['emp_code'],
+                        'att_date' => date('d-m-Y', strtotime($m['fecha'])),
+                        'first_punch' => $m['hora'], 'last_punch' => $m['hora'], 'marcas' => 0,
+                        'first_name' => (string) ($m['nombre_reloj'] ?? ''), 'last_name' => ''];
+        }
+        if ($m['hora'] < $por[$k]['first_punch']) $por[$k]['first_punch'] = $m['hora'];
+        if ($m['hora'] > $por[$k]['last_punch'])  $por[$k]['last_punch']  = $m['hora'];
+        $por[$k]['marcas']++;
+    }
+    ksort($por);
+    return array_values($por);
 }
 
 /**
@@ -576,13 +604,16 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
         // salen de las mismas filas—, se conservan las marcas intermedias, y el
         // desfase del aparato queda comprobado: `firstLastReport` no trae
         // `upload_time`, así que por ahí esa comprobación nunca se disparaba.
-        $g = bioGuardarMarcas($desde, $hasta);
+        $g = bioGuardarMarcas($desde, $hasta, $simular);
         if ($g['error']) { $parte['error'] = $g['error']; return $parte; }
-        bioReclamarMarcas();
+        if (!$simular) bioReclamarMarcas();
         $parte['marcas_nuevas']      = $g['nuevas'];
         $parte['marcas_ya_estaban']  = $g['ya_estaban'];
         $parte['reloj_desajustado']  = $g['reloj_desajustado'];
-        $r = ['ok' => true, 'filas' => bioDiasDesdeMarcas($desde, $hasta), 'error' => null];
+        // El día sale de las marcas que se acaban de leer, no de la base: en
+        // simulación no se ha guardado nada y consultarla daría un resultado
+        // viejo, que es peor que ninguno porque parece bueno.
+        $r = ['ok' => true, 'filas' => bioDiasDeMarcas($g['filas']), 'error' => null];
     }
     if (!$r['ok']) { $parte['error'] = $r['error']; return $parte; }
 
