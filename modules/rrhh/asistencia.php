@@ -302,8 +302,17 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
 <div x-data="{
        buscar: '',
        filtro: '',
+       /* Se cuenta aplicando el MISMO filtro, no preguntando al DOM quién está
+          escondido: `x-show` pone `display:none`, no el atributo `hidden`, así
+          que el `:not([hidden])` de antes casaba con todas y el contador decía
+          siempre «57 de 57» aunque solo se viera una fila. Un número equivocado
+          en pantalla es peor que ninguno.
+
+          Y solo las filas de la TABLA: en el móvil cada persona sale también
+          como tarjeta, y contar las dos listas daría el doble. */
        get visibles() {
-         return this.$root.querySelectorAll('tbody tr[data-busca]:not([hidden])').length;
+         return [...this.$root.querySelectorAll('tbody tr[data-busca]')]
+                  .filter(f => this.coincide(f)).length;
        },
        coincide(fila) {
          const t = this.buscar.trim().toLowerCase();
