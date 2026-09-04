@@ -84,3 +84,28 @@ define('MAIL_REPLY_TO', 'contacto@tudominio.com');
 // define('ECF_IP_PUBLICA', '');
 // define('ECF_CA_BUNDLE', __DIR__ . '/ca-ecf.local.crt');
 // define('ECF_CRON_KEY', 'una-cadena-larga-y-aleatoria');
+
+/* ---------------------------------------------------------------------------
+ *  Reloj biométrico — BioTime Cloud (ZKTeco)
+ *
+ *  El ponche de Importers está en https://importers.biotime.mx. Estas cuatro
+ *  constantes son lo único que Nexo necesita para leerlo.
+ *
+ *  BIOTIME_URL       El tenant, sin barra al final.
+ *  BIOTIME_EMPRESA   El subdominio, que la nube llama «company». Para
+ *                    importers.biotime.mx es «importers». Sin esto la nube
+ *                    contesta 400 sin decir qué falta.
+ *  BIOTIME_EMAIL     Correo de la cuenta. Conviene una cuenta propia para la
+ *                    integración, no la de una persona: si alguien se va y se
+ *                    le desactiva el usuario, la sincronización deja de andar
+ *                    y nadie sabe por qué.
+ *  BIOTIME_CLAVE     Su contraseña. No se guarda en la base de datos ni se
+ *                    escribe en ningún log: `bioOfuscar()` la tapa incluso en
+ *                    los mensajes de error.
+ *
+ *  Para comprobar que entra:  php pruebas/biotime.php
+ */
+// define('BIOTIME_URL', 'https://importers.biotime.mx');
+// define('BIOTIME_EMPRESA', 'importers');
+// define('BIOTIME_EMAIL', '');
+// define('BIOTIME_CLAVE', '');
