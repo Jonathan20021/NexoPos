@@ -233,6 +233,27 @@ que el cron avise en vez de fallar en silencio.
 
 Por URL exige `PONCHE_CRON_KEY`; sin esa constante el endpoint no se expone.
 
+### Con un servicio externo (cron-job.org y parecidos)
+
+Estos servicios llaman una **URL** y juzgan por el **estado HTTP**, no por el
+código de salida. `exit(1)` no cambia el estado, así que sin cuidado darían por
+buena una ejecución en la que el reloj no contestó. El criterio es:
+
+| Situación | HTTP | Por qué |
+|---|---|---|
+| Falta configuración | **500** | Falla de verdad: hay que arreglarlo |
+| No se pudo hablar con el reloj | **500** | Igual |
+| Clave del cron ausente o mala | **403** | No se expone |
+| Se sincronizó, pero hay gente sin emparejar | **200** | El trabajo se hizo |
+
+Lo último es deliberado. Avisar cada día durante meses de que faltan 43
+emparejamientos es la forma más rápida de que nadie vuelva a leer un aviso. Eso
+es una tarea de operaciones, no un fallo de la ejecución —y sale escrito en el
+cuerpo de la respuesta, que estos servicios guardan.
+
+Por CLI sí se distinguen los tres códigos (0, 1 y 2), por si alguien encadena
+comandos.
+
 ## 8. Qué hay escrito
 
 - `includes/biotime.php` — el cliente: `bioToken()`, `bioGet()`, `bioLista()`

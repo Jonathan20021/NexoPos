@@ -5,8 +5,9 @@
  * En cPanel → Cron Jobs, una vez al día de madrugada:
  *   /usr/local/bin/php /home2/usuario/dominio/modules/rrhh/ponche_cron.php
  *
- * O por URL, que exige la clave:
- *   curl -s "https://tudominio.com/modules/rrhh/ponche_cron.php?key=LA_CLAVE"
+ * O por URL —que es como la llaman los servicios externos tipo cron-job.org—,
+ * y entonces exige la clave:
+ *   https://tudominio.com/modules/rrhh/ponche_cron.php?key=LA_CLAVE
  *
  * La clave se define en config/config.local.php:
  *   define('PONCHE_CRON_KEY', 'una-cadena-larga-y-aleatoria');
@@ -20,7 +21,21 @@
  *   --desde=... --hasta=...   un rango exacto
  *   --simular       dice lo que haría sin escribir nada
  *
- * Sale con 0 si fue bien y 1 si no pudo conectar o quedó algo que mirar.
+ * ---------------------------------------------------------------------------
+ *  CÓDIGOS DE SALIDA Y ESTADO HTTP
+ *
+ *  Un vigilante externo —cron-job.org, UptimeRobot— solo mira el estado HTTP.
+ *  Y «no se pudo hablar con el reloj» y «hay 43 personas sin emparejar» son
+ *  cosas MUY distintas:
+ *
+ *    · fallo de verdad  → HTTP 500 y salida 1. El vigilante avisa.
+ *    · algo que mirar   → HTTP 200 y salida 0. El trabajo se hizo; lo que falta
+ *                         es de operaciones, y avisar cada hora de lo mismo
+ *                         durante meses es la forma más rápida de que nadie
+ *                         vuelva a leer un aviso.
+ *
+ *  Por CLI se mantienen los dos códigos separados (0, 1 y 2) por si alguien
+ *  encadena comandos.
  */
 define('NEXOPOS_CRON', true);
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
@@ -53,9 +68,16 @@ function arg(string $nombre, ?string $porDefecto = null): ?string
     return is_string($v) && $v !== '' ? $v : $porDefecto;
 }
 
+/** Termina diciendo la verdad por los dos canales: el código y el estado HTTP. */
+function terminar(int $codigo, ?int $http = null): never
+{
+    if (PHP_SAPI !== 'cli' && $http !== null) http_response_code($http);
+    exit($codigo);
+}
+
 if (!bioConfigurado()) {
-    fwrite(STDERR, "El reloj no está configurado: falta " . implode(' y ', bioFaltantes()) . ".\n");
-    exit(1);
+    echo "El reloj no está configurado: falta " . implode(' y ', bioFaltantes()) . ".\n";
+    terminar(2, 500);
 }
 
 $dias  = max(1, min(90, (int) arg('dias', '3')));
@@ -68,8 +90,8 @@ $p  = bioSincronizar($desde, $hasta, ['simular' => $simular]);
 $ms = (int) round((microtime(true) - $t0) * 1000);
 
 if ($p['error']) {
-    fwrite(STDERR, "No se pudo traer el ponche: {$p['error']}\n");
-    exit(1);
+    echo "No se pudo traer el ponche: {$p['error']}\n";
+    terminar(2, 500);
 }
 
 printf("Ponche %s → %s%s  (%d ms)\n", $desde, $hasta, $simular ? '  [SIMULACIÓN]' : '', $ms);
@@ -83,7 +105,8 @@ if ($p['sin_emparejar']) {
     $hayQueMirar = true;
     echo "\n  SIN EMPAREJAR — sus marcas no entraron en ningún sitio:\n";
     foreach ($p['sin_emparejar'] as $code => $nombre) printf("    %-6s %s\n", $code, $nombre);
-    echo "    Empareja con:  php pruebas/biotime_emparejar.php\n";
+    echo "    Emparejalas en Recursos Humanos → Reloj biométrico.
+";
 }
 if ($p['respetadas_manual']) {
     $hayQueMirar = true;
@@ -112,4 +135,8 @@ if (!$simular) {
     ));
 }
 
-exit($hayQueMirar ? 1 : 0);
+// El trabajo se hizo. Que haya gente sin emparejar es una tarea pendiente de
+// alguien, no un error de esta ejecución: por HTTP se contesta 200 para que el
+// vigilante no dé la alarma todos los días por lo mismo.
+if ($hayQueMirar) echo "\n  (hay tareas pendientes, pero la sincronización se completó)\n";
+terminar($hayQueMirar ? 1 : 0, 200);
