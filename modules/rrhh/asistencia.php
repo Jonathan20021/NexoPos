@@ -204,6 +204,94 @@ function colorEstadoDia(?string $estado): string
     ][$estado] ?? 'slate';
 }
 
+/**
+ * La jornada de una persona, dibujada.
+ *
+ *  Antes eran cuatro columnas —entrada, salida, horas y marcas— que había que
+ *  leer y restar de cabeza. Aquí van las horas y, debajo, dónde cayeron dentro
+ *  del día: quien llegó tarde se ve sin leer, y quien tiene un solo punto es
+ *  que no ponchó la salida.
+ *
+ *  Vive en una función porque la pintan dos sitios —la tabla del ordenador y
+ *  las tarjetas del móvil— y dos copias del mismo dibujo se separan a la
+ *  primera corrección.
+ *
+ *  La ventana va de las 5 a las 23; una marca fuera se pega al borde y se avisa
+ *  en su título, en vez de desaparecer del dibujo.
+ */
+function pintarJornada(array $emp, array $marcas): string
+{
+    $INI = 5 * 60; $FIN = 23 * 60;
+    $pos = static function (?string $hhmm) use ($INI, $FIN): ?float {
+        if (!$hhmm) return null;
+        [$h, $m] = array_map('intval', explode(':', $hhmm));
+        return max(0.0, min(100.0, round((($h * 60 + $m) - $INI) / ($FIN - $INI) * 100, 2)));
+    };
+    $ent = $emp['hora_entrada'] ? substr((string) $emp['hora_entrada'], 0, 5) : null;
+    $sal = $emp['hora_salida']  ? substr((string) $emp['hora_salida'], 0, 5)  : null;
+    if (!$ent && !$marcas) return '<span class="text-sm text-slate-300">—</span>';
+
+    $pEnt = $pos($ent); $pSal = $pos($sal);
+    $h = '<div class="min-w-[11rem]">';
+
+    // Hora de 24, también en el resumen. Antes el resumen decía «10:23 AM» y las
+    // marcas «10:23» en la misma fila. En una pantalla donde se restan horas, el
+    // am/pm es de donde salen los errores: un 8:00 que en realidad era de noche.
+    $h .= '<div class="flex items-baseline gap-2 flex-wrap">';
+    $h .= '<span class="font-semibold text-slate-800 tabular-nums">' . e($ent ?: '—') . '</span>';
+    $h .= '<span class="text-slate-300">→</span>';
+    if ($sal) {
+        $h .= '<span class="font-semibold text-slate-800 tabular-nums">' . e($sal) . '</span>';
+        if ((float) $emp['horas_trabajadas'] > 0) {
+            $h .= '<span class="text-xs text-slate-500">' . e(qty($emp['horas_trabajadas'])) . ' h</span>';
+        }
+        if ((float) $emp['horas_extra'] > 0) {
+            $h .= '<span class="badge badge-amber" title="Horas extra">+' . e(qty($emp['horas_extra'])) . '</span>';
+        }
+    } elseif ($ent) {
+        // El caso más frecuente de este cliente: 10 de 12 días. Con dos rayas
+        // parecía que no había pasado nada.
+        $h .= '<span class="badge badge-amber">falta la salida</span>';
+    } else {
+        $h .= '<span class="text-slate-300">—</span>';
+    }
+    $h .= '</div>';
+
+    if ($marcas || $pEnt !== null) {
+        $h .= '<div class="relative h-5 mt-1.5" title="De 05:00 a 23:00">';
+        $h .= '<div class="absolute inset-x-0 top-2 h-px bg-slate-200"></div>';
+        if ($pEnt !== null && $pSal !== null && $pSal > $pEnt) {
+            $h .= '<div class="absolute top-1.5 h-1 rounded-full bg-emerald-200" style="left:'
+                . $pEnt . '%;width:' . round($pSal - $pEnt, 2) . '%"></div>';
+        }
+        foreach ($marcas as $m) {
+            $raro = $m['desfase_min'] !== null && abs((int) $m['desfase_min'] + 240) > 15;
+            $p = $pos(substr((string) $m['hora'], 0, 5));
+            $fuera = $p === 0.0 || $p === 100.0;
+            $h .= '<span class="absolute top-1 w-2 h-2 rounded-full ring-2 ring-white '
+                . ($raro ? 'bg-amber-500' : 'bg-blue-500') . '" style="left:calc(' . $p . '% - 4px)" title="'
+                . e(substr((string) $m['hora'], 0, 5) . ' · ' . ($m['terminal'] ?: 'sin aparato')
+                    . ' · ' . bioVerificacion($m['verificacion'])
+                    . ($raro ? ' · OJO: el aparato tenía la hora desajustada ' . (int) $m['desfase_min'] . ' min' : '')
+                    . ($fuera ? ' · fuera de la franja dibujada' : '')) . '"></span>';
+        }
+        $h .= '</div><p class="text-[11px] text-slate-400 leading-tight">';
+        $h .= $marcas
+            ? count($marcas) . ' marca' . (count($marcas) === 1 ? '' : 's') . ': '
+              . e(implode(' · ', array_map(fn($x) => substr((string) $x['hora'], 0, 5), $marcas)))
+            : 'escrito a mano, sin marcas del reloj';
+        $h .= '</p>';
+    }
+    return $h . '</div>';
+}
+
+/** Puesto y departamento, sin decir «sin puesto» cincuenta y siete veces. */
+function bajoElNombre(array $emp): string
+{
+    $p = array_filter([$emp['puesto'] ?? '', $emp['departamento'] ?? '']);
+    return $p ? e(implode(' · ', $p)) : '';
+}
+
 $esHoy = $fecha === date('Y-m-d');
 layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empleados activos');
 ?>
@@ -289,19 +377,23 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
   <?php if (!$empleados): ?>
     <?= empty_state('Sin empleados activos', 'No hay empleados activos en esta sucursal para registrar asistencia.', 'id') ?>
   <?php else: ?>
-    <div class="overflow-x-auto">
+    <?php /* En el móvil una tabla de cuatro columnas se va de lado y solo se ve
+             el nombre: no se puede marcar a nadie sin desplazarse en horizontal, y
+             esta pantalla se usa de pie, viendo llegar a la gente. De ahí para
+             abajo se pinta en tarjetas, con los mismos badges y los mismos
+             botones para que no parezca otra aplicación. */ ?>
+    <div class="hidden md:block overflow-x-auto">
       <table class="data-table">
         <thead>
+          <?php /* Eran nueve columnas y no cabían: la tabla se iba de lado y los
+                   botones —que son a lo que se viene— quedaban fuera de pantalla.
+                   Puesto y departamento bajan a subtítulo del nombre, y entrada,
+                   salida, horas y marcas se juntan: son UNA cosa, la jornada. */ ?>
           <tr>
             <th>Empleado</th>
-            <th>Puesto</th>
-            <th>Departamento</th>
-            <th>Estado</th>
-            <th class="text-center">Entrada</th>
-            <th class="text-center">Salida</th>
-            <th class="text-center">Horas</th>
-            <th>Marcas del reloj</th>
-            <?php if ($puedeRegistrar): ?><th class="text-right">Acciones</th><?php endif; ?>
+            <th class="w-32">Estado</th>
+            <th>La jornada</th>
+            <?php if ($puedeRegistrar): ?><th class="text-right w-56">Acciones</th><?php endif; ?>
           </tr>
         </thead>
         <tbody>
@@ -315,11 +407,14 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
               <td>
                 <div class="flex items-center gap-3">
                   <?= avatar($nombreCompleto) ?>
-                  <span class="font-semibold text-slate-700"><?= e($nombreCompleto) ?></span>
+                  <div class="min-w-0">
+                    <p class="font-semibold text-slate-700 truncate"><?= e($nombreCompleto) ?></p>
+                    <?php if ($sub = bajoElNombre($emp)): ?>
+                      <p class="text-xs text-slate-400 truncate"><?= $sub ?></p>
+                    <?php endif; ?>
+                  </div>
                 </div>
               </td>
-              <td class="text-slate-500"><?= e($emp['puesto'] ?: '—') ?></td>
-              <td class="text-slate-500"><?= e($emp['departamento'] ?: '—') ?></td>
               <td>
                 <?php if ($emp['estado_dia']): ?>
                   <?= badge(ucfirst($emp['estado_dia']), colorEstadoDia($emp['estado_dia'])) ?>
@@ -327,38 +422,8 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
                   <span class="badge badge-slate">Sin registro</span>
                 <?php endif; ?>
               </td>
-              <td class="text-center text-slate-600"><?= $emp['hora_entrada'] ? e(date('h:i A', strtotime($emp['hora_entrada']))) : '—' ?></td>
-              <td class="text-center text-slate-600"><?= $emp['hora_salida'] ? e(date('h:i A', strtotime($emp['hora_salida']))) : '—' ?></td>
-              <td class="text-center">
-                <?php if ((float) $emp['horas_trabajadas'] > 0): ?>
-                  <span class="font-medium text-slate-700"><?= e(qty($emp['horas_trabajadas'])) ?>h</span>
-                  <?php if ((float) $emp['horas_extra'] > 0): ?>
-                    <span class="badge badge-amber ml-1" title="Horas extra">+<?= e(qty($emp['horas_extra'])) ?></span>
-                  <?php endif; ?>
-                <?php else: ?>
-                  <span class="text-slate-300">—</span>
-                <?php endif; ?>
-              </td>
-              <?php // Cada marca con su hora, su aparato y cómo se identificó. El
-                       // desfase raro se pinta en ámbar: ese aparato tenía el reloj
-                       // mal puesto y su hora no es de fiar. ?>
-              <td>
-                <?php $ms = $marcasDelDia[(int) $emp['id']] ?? []; ?>
-                <?php if (!$ms): ?>
-                  <span class="text-xs text-slate-300">sin marcas</span>
-                <?php else: ?>
-                  <div class="flex flex-wrap gap-1">
-                    <?php foreach ($ms as $m):
-                      $raro = $m['desfase_min'] !== null && abs((int) $m['desfase_min'] + 240) > 15; ?>
-                      <span class="px-1.5 py-0.5 rounded text-xs font-medium <?= $raro ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600' ?>"
-                            title="<?= e(($m['terminal'] ?: 'sin aparato') . ' · ' . bioVerificacion($m['verificacion'])
-                                        . ($raro ? ' · OJO: el aparato tenía la hora desajustada ' . (int) $m['desfase_min'] . ' min' : '')) ?>">
-                        <?= e(substr((string) $m['hora'], 0, 5)) ?><?= $raro ? ' ⚠' : '' ?>
-                      </span>
-                    <?php endforeach; ?>
-                  </div>
-                <?php endif; ?>
-              </td>
+
+              <td><?= pintarJornada($emp, $marcasDelDia[(int) $emp['id']] ?? []) ?></td>
               <?php if ($puedeRegistrar): ?>
                 <td>
                   <div class="flex items-center justify-end gap-1">
@@ -395,6 +460,64 @@ layout_start('Control de Asistencia', 'Registra la asistencia diaria de los empl
         </tbody>
       </table>
     </div>
+    <div class="md:hidden divide-y divide-slate-100">
+      <?php foreach ($empleados as $emp):
+        $nombreCompleto = $emp['nombre'] . ' ' . $emp['apellido'];
+        $busca = mb_strtolower($nombreCompleto . ' ' . ($emp['puesto'] ?? '') . ' ' . ($emp['departamento'] ?? '')); ?>
+        <div data-busca="<?= e($busca) ?>" data-estado="<?= e($emp['estado_dia'] ?: 'sin') ?>"
+             x-show="coincide($el)" class="p-4">
+          <div class="flex items-start gap-3">
+            <?= avatar($nombreCompleto) ?>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-start justify-between gap-2">
+                <p class="font-semibold text-slate-700 leading-tight"><?= e($nombreCompleto) ?></p>
+                <?php if ($emp['estado_dia']): ?>
+                  <?= badge(ucfirst($emp['estado_dia']), colorEstadoDia($emp['estado_dia'])) ?>
+                <?php else: ?>
+                  <span class="badge badge-slate shrink-0">Sin registro</span>
+                <?php endif; ?>
+              </div>
+              <?php if ($sub = bajoElNombre($emp)): ?>
+                <p class="text-xs text-slate-400"><?= $sub ?></p>
+              <?php endif; ?>
+              <?php /* En la tarjeta, un «—» suelto solo deja un hueco entre el
+                       departamento y los botones. En la tabla sí hace falta, porque
+                       una celda vacía descuadra la fila. */ ?>
+              <?php $ms = $marcasDelDia[(int) $emp['id']] ?? []; ?>
+              <?php if ($emp['hora_entrada'] || $ms): ?>
+                <div class="mt-2"><?= pintarJornada($emp, $ms) ?></div>
+              <?php endif; ?>
+
+              <?php if ($puedeRegistrar): ?>
+                <div class="flex items-center gap-2 mt-3">
+                  <?php foreach ([['presente', 'Presente', 'btn-success', 'check'],
+                                  ['ausente',  'Ausente',  'btn-danger',  'x']] as [$est, $txt, $cls, $ic]): ?>
+                    <form method="post" class="flex-1">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="accion" value="marcar">
+                      <input type="hidden" name="empleado_id" value="<?= (int) $emp['id'] ?>">
+                      <input type="hidden" name="fecha" value="<?= e($fecha) ?>">
+                      <input type="hidden" name="estado" value="<?= $est ?>">
+                      <button class="btn btn-sm <?= $cls ?> w-full"><?= icon($ic, 'w-4 h-4') ?> <?= $txt ?></button>
+                    </form>
+                  <?php endforeach; ?>
+                  <button onclick="<?= jsEvent('asis:detalle', [
+                      'empleado_id'  => $emp['id'],
+                      'nombre'       => $nombreCompleto,
+                      'hora_entrada' => $emp['hora_entrada'] ?: '',
+                      'hora_salida'  => $emp['hora_salida'] ?: '',
+                      'estado'       => $emp['estado_dia'] ?: 'presente',
+                      'notas'        => $emp['notas'] ?: '',
+                  ]) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0"
+                          title="Detalle"><?= icon('edit', 'w-4 h-4') ?></button>
+                </div>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    </div>
+
     <div x-show="visibles === 0" x-cloak class="px-5 py-12 text-center">
       <p class="font-semibold text-slate-700">Ningún empleado coincide</p>
       <p class="text-sm text-slate-400 mt-1">Prueba con otro nombre o quita el filtro.</p>
