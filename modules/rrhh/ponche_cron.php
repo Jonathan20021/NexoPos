@@ -7,7 +7,12 @@
  *
  * O por URL —que es como la llaman los servicios externos tipo cron-job.org—,
  * y entonces exige la clave:
- *   https://tudominio.com/modules/rrhh/ponche_cron.php?key=LA_CLAVE
+ *   https://tudominio.com/modules/rrhh/ponche_cron?key=LA_CLAVE
+ *
+ * OJO CON LA «.php» EN LA URL. El .htaccess redirige con 301 a la forma sin
+ * extensión, y ni curl (sin -L) ni los servicios de cron externos siguen
+ * redirecciones: reciben el 301, lo dan por bueno y NO EJECUTAN NADA. Se ve
+ * un cron «en verde» que en realidad no ha corrido nunca.
  *
  * La clave se define en config/config.local.php:
  *   define('PONCHE_CRON_KEY', 'una-cadena-larga-y-aleatoria');

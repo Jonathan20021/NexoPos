@@ -116,6 +116,10 @@ define('MAIL_REPLY_TO', 'contacto@tudominio.com');
  *  Solo hace falta si vas a disparar la sincronización por URL en vez de por
  *  CLI. Sin ella, ese endpoint no se expone.
  *
- *    curl -s "https://tudominio.com/modules/rrhh/ponche_cron.php?key=LA_CLAVE"
+ *    curl -s "https://tudominio.com/modules/rrhh/ponche_cron?key=LA_CLAVE"
+ *
+ *  SIN la «.php»: el .htaccess redirige con 301 a la forma limpia y los
+ *  servicios de cron externos no siguen redirecciones — el job saldría en
+ *  verde sin haber ejecutado nada.
  */
 // define('PONCHE_CRON_KEY', 'una-cadena-larga-y-aleatoria');

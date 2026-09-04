@@ -200,6 +200,17 @@ El [`.htaccess`](.htaccess) de la raíz hace tres cosas:
 3. **Solo redirige peticiones GET.** Un 301 sobre un POST haría que el navegador
    reenviara el formulario como GET y se perderían los datos.
 
+**Cuidado con los crons por URL.** El 301 vale también para ellos, y ni `curl`
+sin `-L` ni los servicios externos (cron-job.org y parecidos) siguen
+redirecciones: reciben el 301, lo dan por bueno y no ejecutan nada. El job sale
+en verde sin haber corrido nunca. **Las URLs de cron van sin `.php`:**
+
+```
+https://tudominio.com/modules/finanzas/ecf_cron?key=LA_CLAVE
+https://tudominio.com/modules/marketing/cron?key=LA_CLAVE
+https://tudominio.com/modules/rrhh/ponche_cron?key=LA_CLAVE
+```
+
 Requiere `mod_rewrite` y `AllowOverride All` (activos por defecto en cPanel).
 Si el módulo no estuviera, el bloque `<IfModule mod_rewrite.c>` simplemente no
 se aplica: las URLs seguirían con `.php` y nada dejaría de funcionar.

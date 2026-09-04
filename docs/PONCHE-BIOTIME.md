@@ -235,6 +235,20 @@ Por URL exige `PONCHE_CRON_KEY`; sin esa constante el endpoint no se expone.
 
 ### Con un servicio externo (cron-job.org y parecidos)
 
+**La URL va SIN `.php`.**
+
+```
+https://nexo.kyrosrd.com/modules/rrhh/ponche_cron?key=LA_CLAVE
+```
+
+El `.htaccess` redirige `…ponche_cron.php` a la forma limpia con un **301**, y
+ni `curl` sin `-L` ni los servicios de cron externos siguen redirecciones:
+reciben el 301, lo dan por bueno y **no ejecutan nada**. El job sale en verde
+sin haber corrido nunca, que es el peor de los fallos posibles porque nadie
+va a buscarlo.
+
+Lo mismo vale para `ecf_cron` y `marketing/cron`.
+
 Estos servicios llaman una **URL** y juzgan por el **estado HTTP**, no por el
 código de salida. `exit(1)` no cambia el estado, así que sin cuidado darían por
 buena una ejecución en la que el reloj no contestó. El criterio es:

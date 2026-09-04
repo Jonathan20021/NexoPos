@@ -15,7 +15,12 @@
  *   /usr/local/bin/php /home2/usuario/dominio/modules/finanzas/ecf_cron.php
  *
  * O por URL (requiere la clave):
- *   curl -s "https://tudominio.com/modules/finanzas/ecf_cron.php?key=LA_CLAVE"
+ *   curl -s "https://tudominio.com/modules/finanzas/ecf_cron?key=LA_CLAVE"
+ *
+ * OJO CON LA «.php» EN LA URL. El .htaccess redirige con 301 a la forma sin
+ * extensión, y ni curl (sin -L) ni los servicios de cron externos siguen
+ * redirecciones: reciben el 301, lo dan por bueno y NO EJECUTAN NADA. Se ve
+ * un cron «en verde» que en realidad no ha corrido nunca.
  *
  * La clave se define en config/config.local.php:
  *   define('ECF_CRON_KEY', 'una-cadena-larga-y-aleatoria');
