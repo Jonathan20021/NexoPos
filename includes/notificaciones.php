@@ -304,6 +304,7 @@ function notif_generar(): void
     notif_gen_sanidad();
     notif_gen_seguridad();
     notif_gen_ecf();
+    notif_gen_ponche();
 }
 
 /**
@@ -686,6 +687,146 @@ function notif_gen_caja(): void
  * Prioridad alta desde el primer día: una transferencia parada es una tienda
  * esperando mercancía que cree que ya salió.
  */
+/**
+ * El reloj biométrico, vigilado.
+ *
+ * Toda la asistencia entra por la integración con BioTime. Eso quiere decir que
+ * si la integración se calla, la asistencia deja de existir y NADIE se entera
+ * hasta que alguien mira la nómina. Ya pasó: el cron corría todos los días a
+ * las 5:00 y llevaba cuatro sin traer una sola marca, sin que nada lo dijera.
+ *
+ * Un integrador que falla se arregla. Uno que se calla, no: no hay quien sepa
+ * que hay algo que arreglar.
+ *
+ * Cuatro situaciones, todas reales en los datos de este cliente:
+ *
+ *   1. El reloj lleva días sin registrar nada.
+ *   2. Hay gente ponchando cuyo código no está emparejado: su asistencia no le
+ *      cuenta a nadie.
+ *   3. Días con entrada y sin salida: sin salida no hay horas, y eso es lo que
+ *      se paga.
+ *   4. Aparatos con la hora mal puesta: sus marcas no son de fiar.
+ */
+function notif_gen_ponche(): void
+{
+    // `biotime.php` no se carga en bootstrap —solo lo usan las pantallas del
+    // reloj—, así que hay que pedirlo aquí. Sin esto, la guarda de abajo saldría
+    // siempre por `function_exists` y el vigilante no se dispararía nunca:
+    // exactamente el silencio que viene a romper.
+    require_once __DIR__ . '/biotime.php';
+
+    // Sin la integración configurada no hay nada que vigilar, y avisar de algo
+    // que nadie encendió sería ruido desde el primer día.
+    if (!function_exists('bioConfigurado') || !bioConfigurado()) {
+        notif_sync('ponche_mudo', []);
+        notif_sync('ponche_sin_emparejar', []);
+        notif_sync('ponche_sin_salida', []);
+        notif_sync('ponche_reloj_malo', []);
+        return;
+    }
+
+    /* ---------- 1) El reloj se calló ---------- */
+    $ultima = qVal("SELECT MAX(marcada_en) FROM asistencia_marcas");
+    $items = [];
+    if ($ultima) {
+        $dias = (int) floor((time() - strtotime((string) $ultima)) / 86400);
+        // Tres días cubre un fin de semana largo sin dar la lata cada lunes.
+        if ($dias >= 3) {
+            $items[] = [
+                'clave' => 'ponche_mudo:1', 'categoria' => 'rrhh',
+                'prioridad' => $dias >= 7 ? 'alta' : 'media',
+                'titulo' => 'El reloj lleva ' . $dias . ' días sin registrar nada',
+                'mensaje' => 'La última marca es del ' . fechaCorta($ultima) . '. Mientras esto siga así, '
+                    . 'la asistencia de todos está vacía: no hay otra forma de registrarla.',
+                'url' => 'modules/rrhh/ponche.php',
+                'icono' => 'clock', 'color' => $dias >= 7 ? 'rose' : 'amber',
+                'sucursal_id' => null, 'permiso' => 'rrhh_asistencia.ver',
+            ];
+        }
+    }
+    notif_sync('ponche_mudo', $items);
+
+    /* ---------- 2) Poncha gente que no le cuenta a nadie ---------- */
+    $sinDueno = qAll(
+        "SELECT emp_code, MAX(nombre_reloj) AS nombre, COUNT(*) AS n, MAX(fecha) AS ultima
+           FROM asistencia_marcas
+          WHERE empleado_id IS NULL
+          GROUP BY emp_code
+          ORDER BY n DESC"
+    );
+    $items = [];
+    if ($sinDueno) {
+        $quienes = array_slice(array_map(
+            fn($x) => ($x['nombre'] ?: 'código ' . $x['emp_code']), $sinDueno), 0, 4);
+        $n = count($sinDueno);
+        $items[] = [
+            'clave' => 'ponche_sin_emparejar:1', 'categoria' => 'rrhh', 'prioridad' => 'media',
+            'titulo' => $n === 1
+                ? 'Una persona poncha y su asistencia no le cuenta a nadie'
+                : $n . ' personas ponchan y su asistencia no le cuenta a nadie',
+            'mensaje' => 'Su código del reloj no está emparejado con ninguna ficha de Nexo, así que '
+                . 'su asistencia no existe: ' . implode(', ', $quienes)
+                . ($n > 4 ? ' y ' . ($n - 4) . ' más' : '') . '.',
+            'url' => 'modules/rrhh/ponche.php',
+            'icono' => 'users', 'color' => 'amber',
+            'sucursal_id' => null, 'permiso' => 'rrhh_asistencia.registrar',
+        ];
+    }
+    notif_sync('ponche_sin_emparejar', $items);
+
+    /* ---------- 3) Entraron y no poncharon la salida ---------- */
+    // Solo del último mes: un día de hace medio año ya no se va a completar, y
+    // recordarlo para siempre convierte el aviso en parte del paisaje.
+    $sinSalida = qAll(
+        "SELECT a.sucursal_id AS sid, su.nombre AS sucursal, COUNT(*) AS n
+           FROM asistencias a
+           JOIN sucursales su ON su.id = a.sucursal_id
+          WHERE a.hora_entrada IS NOT NULL AND a.hora_salida IS NULL
+            AND a.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          GROUP BY a.sucursal_id, su.nombre"
+    );
+    $items = [];
+    foreach ($sinSalida as $r) {
+        $n = (int) $r['n'];
+        $items[] = [
+            'clave' => 'ponche_sin_salida:' . (int) $r['sid'], 'categoria' => 'rrhh', 'prioridad' => 'media',
+            'titulo' => $n . ' día' . ($n === 1 ? '' : 's') . ' sin hora de salida en ' . $r['sucursal'],
+            'mensaje' => 'Entraron y no poncharon al salir. Sin la salida esos días quedan en cero '
+                . 'horas trabajadas, que es lo que se paga.',
+            'url' => 'modules/rrhh/asistencia.php',
+            'icono' => 'clock', 'color' => 'amber',
+            'sucursal_id' => (int) $r['sid'], 'permiso' => 'rrhh_asistencia.ver',
+        ];
+    }
+    notif_sync('ponche_sin_salida', $items);
+
+    /* ---------- 4) Aparatos con la hora mal puesta ---------- */
+    // El desfase entre la hora de la marca y la de subida tiene que ser de
+    // −240 minutos (RD es UTC−4). Cuando no lo es, ese aparato miente la hora.
+    $malos = qAll(
+        "SELECT terminal, COUNT(*) AS n, MAX(fecha) AS ultima
+           FROM asistencia_marcas
+          WHERE desfase_min IS NOT NULL AND ABS(desfase_min + 240) > 15
+            AND fecha >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+          GROUP BY terminal"
+    );
+    $items = [];
+    foreach ($malos as $r) {
+        $items[] = [
+            'clave' => 'ponche_reloj_malo:' . md5((string) $r['terminal']), 'categoria' => 'rrhh',
+            'prioridad' => 'media',
+            'titulo' => 'El aparato «' . ($r['terminal'] ?: 'sin nombre') . '» tiene la hora mal puesta',
+            'mensaje' => (int) $r['n'] . ' marca(s) suyas llegaron con la hora desajustada, la última el '
+                . fechaCorta($r['ultima']) . '. Las horas que registre ese aparato no son de fiar '
+                . 'hasta que alguien le ponga la hora.',
+            'url' => 'modules/rrhh/asistencia.php?h=1',
+            'icono' => 'alert', 'color' => 'amber',
+            'sucursal_id' => null, 'permiso' => 'rrhh_asistencia.ver',
+        ];
+    }
+    notif_sync('ponche_reloj_malo', $items);
+}
+
 function notif_gen_transferencias_por_aprobar(): void
 {
     $rows = qAll(

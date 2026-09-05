@@ -219,6 +219,36 @@ cliente, no de un manual:
 Un código que no esté en esa lista se enseña tal cual en vez de inventarle un
 nombre.
 
+### La campana vigila el reloj
+
+Toda la asistencia entra por la integración. Eso significa que si la
+integración se calla, la asistencia deja de existir y nadie se entera hasta que
+alguien mira la nómina. **Ya pasó**: el cron corría todos los días a las 5:00 y
+llevaba cuatro sin traer una sola marca, sin que nada lo dijera.
+
+Un integrador que falla se arregla. Uno que se calla, no: no hay quien sepa que
+hay algo que arreglar. `notif_gen_ponche()` vigila cuatro situaciones:
+
+| Aviso | Cuándo |
+|---|---|
+| **El reloj lleva N días sin registrar nada** | 3 días o más. Sube a prioridad alta a los 7 |
+| **Ponchan y su asistencia no le cuenta a nadie** | Hay marcas con un código sin emparejar |
+| **Días sin hora de salida** | Entraron y no poncharon al salir, en los últimos 30 días |
+| **El aparato «X» tiene la hora mal puesta** | Su desfase se aleja de los −240 min |
+
+Tres decisiones que no son obvias:
+
+· **Tres días, no uno.** Uno saltaría cada lunes por el fin de semana.
+· **Los días sin salida caducan a los 30.** Uno de hace medio año ya no se va a
+  completar, y recordarlo para siempre convierte el aviso en parte del paisaje.
+· **Son situaciones vivas, no mensajes.** Cuando se emparejan, cuando vuelve a
+  entrar una marca, cuando se corrige el día — el aviso se retira solo. Ver
+  `notif_sync()` en `includes/notificaciones.php`.
+
+`biotime.php` no se carga en bootstrap, así que el vigilante lo pide él mismo.
+Sin eso, su guarda de `function_exists` saldría siempre por el lado corto y no
+se dispararía nunca: exactamente el silencio que viene a romper.
+
 ### Dónde se consulta
 
 **Recursos Humanos → Asistencia** enseña, junto a cada persona, **las marcas de
