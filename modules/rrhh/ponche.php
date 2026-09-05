@@ -120,28 +120,90 @@ $nexo = qAll("SELECT id, nombre, apellido, cedula, biotime_emp_code, sucursal_id
 $porCodigo = [];
 foreach ($nexo as $e) if ($e['biotime_emp_code'] !== null) $porCodigo[(string) $e['biotime_emp_code']] = (int) $e['id'];
 
-// Se propone, no se asigna. `sugerido` solo pinta la opción; guardar exige que
-// alguien la elija.
+/* ---------------------------------------------------------------------------
+ *  A quién se PARECE cada persona del reloj
+ *
+ *  El criterio de antes era «la que más palabras comparta», y eligió mal:
+ *  «Martzabel Lora» fue a dar a «Soraya Lora Mercedes» cuando es «Maritzabel
+ *  Lora Piña». Compartían «Lora», que en este padrón la tienen dos mujeres, así
+ *  que no discrimina nada.
+ *
+ *  El que se usa ahora pesa la palabra por lo RARA que sea. Una que solo tiene
+ *  una persona en toda la nómina —«Yirda», «Ynfante», «Yosmairi»— decide; una
+ *  que comparten cuatro no decide nada. Con esto se emparejaron 32 personas sin
+ *  un solo error, y separó bien «Yilda Valdez» de «Yosmairi Mejía Valdez», que
+ *  el criterio viejo confundía.
+ *
+ *  Un caso está DETERMINADO cuando coinciden dos palabras o más, al menos una
+ *  es exclusiva de ese candidato, no hay un segundo igual de bueno, y está
+ *  activo. Todo lo demás es dudoso, y entonces se enseñan TODOS los candidatos:
+ *  es justo ahí donde se elige mal, y esconder al rival sería tender la trampa.
+ *
+ *  Aun estando determinado, NADA se asigna solo. La máquina propone.
+ * ------------------------------------------------------------------------ */
+
+// Cuántas personas de Nexo comparten cada palabra. Es lo que convierte un
+// parecido en una prueba: «lora» la tienen dos, «yirda» una sola.
+$frecuencia = [];
+foreach ($nexo as $e) {
+    foreach (array_unique(ponPartes($e['nombre'] . ' ' . $e['apellido'])) as $p) {
+        $frecuencia[$p] = ($frecuencia[$p] ?? 0) + 1;
+    }
+}
+
 $gente = [];
 foreach ($reloj['filas'] as $r) {
     $code = trim((string) ($r['emp_code'] ?? ''));
     if ($code === '') continue;
     $nom = trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? ''));
-    $pr = ponPartes($nom);
+    $pr  = ponPartes($nom);
 
-    $sug = null; $comunes = 0;
+    $cands = [];
     foreach ($nexo as $e) {
-        $n = count(array_intersect($pr, ponPartes($e['nombre'] . ' ' . $e['apellido'])));
-        if ($n > $comunes) { $comunes = $n; $sug = (int) $e['id']; }
+        $com = array_values(array_intersect($pr, ponPartes($e['nombre'] . ' ' . $e['apellido'])));
+        if (!$com) continue;
+        $excl = array_values(array_filter($com, fn($p) => ($frecuencia[$p] ?? 9) === 1));
+        $cands[] = ['id' => (int) $e['id'], 'nombre' => trim($e['nombre'] . ' ' . $e['apellido']),
+                    'com' => $com, 'excl' => $excl];
     }
+    // Primero por palabras exclusivas, después por cuántas coinciden en total.
+    usort($cands, fn($x, $y) => [count($y['excl']), count($y['com'])] <=> [count($x['excl']), count($x['com'])]);
+
+    $mejor = $cands[0] ?? null;
+    $empate = $mejor ? count(array_filter($cands, fn($c) =>
+        count($c['excl']) === count($mejor['excl']) && count($c['com']) === count($mejor['com']))) : 0;
+
+    if ($mejor && count($mejor['com']) >= 2 && count($mejor['excl']) >= 1 && $empate === 1) {
+        $confianza = 'determinado';
+        $porque = 'coinciden ' . implode(' y ', $mejor['com'])
+                . ', y «' . implode('», «', $mejor['excl']) . '» no la tiene nadie más';
+    } elseif (!$mejor) {
+        $confianza = 'sin parecido';
+        $porque = 'ningún nombre de Nexo se le parece';
+    } elseif ($empate > 1) {
+        $confianza = 'dudoso';
+        $porque = $empate . ' personas encajan igual de bien: hay a qué equivocarse';
+    } elseif (count($mejor['excl']) === 0) {
+        $confianza = 'dudoso';
+        $porque = 'solo coinciden palabras que tienen varias personas';
+    } else {
+        $confianza = 'dudoso';
+        $porque = 'coincide una sola palabra («' . implode('», «', $mejor['com']) . '»)';
+    }
+
     $gente[] = [
         'code' => $code, 'nombre' => $nom ?: '(sin nombre)',
         'depto' => (string) ($r['department']['dept_name'] ?? $r['dept_name'] ?? ''),
         'asignado' => $porCodigo[$code] ?? 0,
-        'sugerido' => $comunes >= 1 ? $sug : null,
-        'confianza' => $comunes >= 2 ? 'probable' : ($comunes === 1 ? 'dudosa' : 'sin parecido'),
+        'sugerido' => $mejor['id'] ?? null,
+        'confianza' => $confianza,
+        'porque' => $porque,
+        // Los rivales solo se enseñan cuando hay duda: en un caso determinado
+        // serían ruido, y en uno dudoso son la información que falta.
+        'rivales' => $confianza === 'dudoso' ? array_slice($cands, 0, 4) : [],
     ];
 }
+
 usort($gente, fn($a, $b) => [$a['asignado'] ? 1 : 0, $a['nombre']] <=> [$b['asignado'] ? 1 : 0, $b['nombre']]);
 
 $emparejados = count(array_filter($gente, fn($g) => $g['asignado'] > 0));
@@ -230,7 +292,11 @@ layout_start('Reloj biométrico', 'Emparejar a la gente y traer los ponches a As
     <div class="overflow-x-auto">
       <table class="data-table">
         <thead><tr>
-          <th>En el reloj</th><th>Departamento</th><th class="w-28">Parecido</th><th class="w-80">Es esta persona de Nexo</th>
+          <?php /* El «parecido» lleva el porqué escrito y los rivales cuando los hay:
+                 en 28 píxeles eso se partía en cinco líneas y no se leía. El
+                 departamento, en cambio, es un dato de apoyo. */ ?>
+        <th class="w-56">En el reloj</th><th class="w-40">Departamento</th>
+        <th class="w-64">Parecido</th><th class="w-72">Es esta persona de Nexo</th>
         </tr></thead>
         <tbody>
           <?php foreach ($gente as $g): ?>
@@ -241,10 +307,27 @@ layout_start('Reloj biométrico', 'Emparejar a la gente y traer los ponches a As
               </td>
               <td class="text-slate-500 text-sm"><?= e($g['depto'] ?: '—') ?></td>
               <td>
-                <?php if ($g['asignado']): ?><span class="badge badge-emerald">emparejada</span>
-                <?php elseif ($g['confianza'] === 'probable'): ?><span class="badge badge-slate">probable</span>
-                <?php elseif ($g['confianza'] === 'dudosa'): ?><span class="badge badge-amber">dudosa</span>
-                <?php else: ?><span class="text-xs text-slate-400">sin parecido</span><?php endif; ?>
+                <?php if ($g['asignado']): ?>
+                  <span class="badge badge-emerald">emparejada</span>
+                <?php elseif ($g['confianza'] === 'determinado'): ?>
+                  <span class="badge badge-slate" title="<?= e($g['porque']) ?>">determinado</span>
+                <?php elseif ($g['confianza'] === 'dudoso'): ?>
+                  <span class="badge badge-amber" title="<?= e($g['porque']) ?>">dudoso</span>
+                <?php else: ?>
+                  <span class="text-xs text-slate-400">sin parecido</span>
+                <?php endif; ?>
+                <?php if (!$g['asignado']): ?>
+                  <span class="block text-[11px] text-slate-400 leading-tight mt-0.5"><?= e($g['porque']) ?></span>
+                <?php endif; ?>
+                <?php /* En los dudosos se enseñan los rivales: esconder al otro
+                         candidato sería tender la trampa justo donde se falla. */ ?>
+                <?php if ($g['rivales'] && count($g['rivales']) > 1): ?>
+                  <span class="block text-[11px] text-amber-700 leading-tight mt-1">
+                    <?php foreach ($g['rivales'] as $rv): ?>
+                      <span class="block">· <?= e($rv['nombre']) ?></span>
+                    <?php endforeach; ?>
+                  </span>
+                <?php endif; ?>
               </td>
               <td>
                 <select name="empleado[<?= e($g['code']) ?>]" class="input w-full"
@@ -253,7 +336,8 @@ layout_start('Reloj biométrico', 'Emparejar a la gente y traer los ponches a As
                   <?php foreach ($nexo as $e):
                     $sel = $g['asignado'] ? ($g['asignado'] === (int) $e['id']) : false; ?>
                     <option value="<?= (int) $e['id'] ?>" <?= $sel ? 'selected' : '' ?>>
-                      <?= e(trim($e['nombre'] . ' ' . $e['apellido'])) ?><?= $e['cedula'] ? ' · ' . e($e['cedula']) : '' ?><?= (!$g['asignado'] && $g['sugerido'] === (int) $e['id']) ? '   ← ¿esta?' : '' ?>
+                      <?= e(trim($e['nombre'] . ' ' . $e['apellido'])) ?><?= $e['cedula'] ? ' · ' . e($e['cedula']) : '' ?><?= (!$g['asignado'] && $g['sugerido'] === (int) $e['id'])
+                            ? ($g['confianza'] === 'determinado' ? '   ← es esta' : '   ← ¿será esta?') : '' ?>
                     </option>
                   <?php endforeach; ?>
                 </select>
@@ -265,9 +349,11 @@ layout_start('Reloj biométrico', 'Emparejar a la gente y traer los ponches a As
     </div>
 
     <p class="px-5 py-3 text-xs text-slate-400 border-t border-slate-100">
-      La flecha «¿esta?» marca a quien más se parece por el nombre, pero los nombres del reloj
-      vienen con erratas: al probarlo automáticamente eligió a la persona equivocada. Elige tú.
-      Lo que quede en «sin asignar» simplemente no entra: sus marcas se quedan en el reloj.
+      El parecido se mide por lo RARA que sea cada palabra: una que solo tiene una persona
+      en toda la nómina decide, una que comparten cuatro no decide nada. «Determinado» quiere
+      decir que no hay a qué equivocarse; «dudoso» enseña debajo a todos los que encajan.
+      Aun así, <strong>nada se asigna solo</strong>: elige tú. Lo que quede en «sin asignar»
+      simplemente no entra, y sus marcas se quedan en el reloj esperando.
     </p>
   </div>
 </form>

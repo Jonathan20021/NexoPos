@@ -261,6 +261,40 @@ Las marcas de quien el reloj registró pero nadie emparejó salen aparte, en su
 propio aviso: existen, no son de nadie, y callarlas sería fingir que ese día no
 ponchó.
 
+### Cómo se propone a quién se parece cada quien
+
+El primer criterio fue «la que más palabras comparta», y eligió mal: **«Martzabel
+Lora» fue a dar a «Soraya Lora Mercedes»** cuando es «Maritzabel Lora Piña».
+Compartían «Lora», que en este padrón la tienen dos mujeres, así que no
+discrimina nada.
+
+El que se usa ahora pesa cada palabra **por lo rara que sea**. Una que solo
+tiene una persona en toda la nómina —«Yirda», «Ynfante», «Yosmairi»— decide;
+una que comparten cuatro no decide nada.
+
+Un caso está **determinado** cuando se cumplen las cuatro cosas: coinciden dos
+palabras o más, al menos una es exclusiva de ese candidato, no hay un segundo
+igual de bueno, y está activo. Todo lo demás es **dudoso**, y entonces la
+pantalla enseña **todos** los candidatos debajo:
+
+```
+Martzabel Lora   dudoso · 2 personas encajan igual de bien
+                        · Maritzabel Lora Piña
+                        · Soraya Lora Mercedes
+```
+
+Esconder al rival sería tender la trampa justo donde se falla.
+
+Con este criterio se emparejaron **32 personas de este cliente sin un solo
+error**, y separó bien «Yilda Valdez» de «Yosmairi Mejía Valdez», que el anterior
+confundía. Aun así, **nada se asigna solo**: la máquina propone y una persona
+decide.
+
+`pruebas/ponche_criterio.php` reproduce los 17 casos reales —los aciertos y las
+trampas— y comprueba además que el criterio de la pantalla siga siendo ese: un
+criterio que decide a quién se le carga un ponche no puede cambiarse sin que
+salte nada.
+
 ### Dónde se hace todo esto
 
 **Recursos Humanos → Reloj biométrico** (`modules/rrhh/ponche.php`). Ahí se
