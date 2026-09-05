@@ -1,3 +1,3 @@
-build=19
-fecha=2026-09-04T09:45:09Z
-base=279ac41
+build=20
+fecha=2026-09-05T00:59:05Z
+base=44e060a
