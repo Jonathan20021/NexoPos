@@ -403,6 +403,37 @@ El año se cuenta **de servicio**, desde el aniversario de ingreso de cada quien
 (`vac_anio_servicio()`), no de enero a diciembre: si no, quien entró en septiembre parece
 no tener vacaciones cada enero.
 
+### La antigüedad falsa no pasa callada
+
+`fecha_ingreso` decide el preaviso (art. 76), la cesantía (art. 80), los días de
+vacaciones (art. 177) y la regalía proporcional. **Quince archivos la leen.**
+
+Cuando un padrón se carga de golpe, esa columna se queda con la fecha de la
+carga. En producción, **56 de 57 personas comparten el 16/07/2026**. Nadie llega
+a los cinco meses, y eso tiene dos consecuencias:
+
+· El panel de saldo de vacaciones salía **vacío y sin explicar por qué**.
+· A quien se liquidara hoy se le pagarían **semanas de antigüedad en vez de
+  años**, y el cálculo saldría convencido.
+
+Eso no es un fallo del programa: es un dato que falta. Pero un dato que falta y
+produce una cifra convincente es peor que uno que no produce nada.
+
+`notif_gen_antiguedad()` lo dice: cuando la fecha más repetida cubre al menos el
+40% del padrón y son diez personas o más, avisa con prioridad alta y **nombra
+qué cálculos quedan mal**. Contratar a diez el mismo día pasa; que sean casi
+todas, no. También avisa de quien no tenga ninguna fecha.
+
+Y el panel de vacaciones, cuando no hay saldo, **explica el motivo** en vez de
+desaparecer: cuánta gente no genera derecho y por qué, más el aviso de la fecha
+repetida si es el caso. Un panel que se esconde no distingue «no hay saldo» de
+«esto está roto».
+
+> **Cuidado con la fecha cero.** La primera versión de esa comprobación comparó
+> contra `'0000-00-00'`. MariaDB lo traga; **MySQL 8 lleva `NO_ZERO_DATE` y
+> rechaza la consulta entera con el error 1525**. Se pregunta por
+> `YEAR(fecha_ingreso) < 1900`, que funciona en las dos.
+
 ### El saldo, y lo que se debe
 
 `vac_balance()` da derecho − disfrutado = saldo. La pantalla lo enseña en «Días que se

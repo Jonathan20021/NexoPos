@@ -216,10 +216,11 @@ $kpiEnVacaciones = (int) qVal(
  *  no tener vacaciones cada enero.
  * ------------------------------------------------------------------------ */
 $saldos = [];
-foreach (qAll("SELECT e.id, e.nombre, e.apellido, e.fecha_ingreso, e.salario
-                 FROM empleados e
-                WHERE e.estado IN ('activo','vacaciones') AND $wEmp
-                ORDER BY e.nombre, e.apellido", $pEmp) as $emp) {
+$nexoTodos = qAll("SELECT e.id, e.nombre, e.apellido, e.fecha_ingreso, e.salario
+                     FROM empleados e
+                    WHERE e.estado IN ('activo','vacaciones') AND $wEmp
+                    ORDER BY e.nombre, e.apellido", $pEmp);
+foreach ($nexoTodos as $emp) {
     $b = vac_balance($emp);
     if ($b['derecho'] <= 0) continue;   // todavía no genera derecho: no es saldo, es nada
     $saldos[] = $b + [
@@ -232,6 +233,25 @@ foreach (qAll("SELECT e.id, e.nombre, e.apellido, e.fecha_ingreso, e.salario
 // Primero quien más días acumula: es quien más riesgo tiene de perderlos y
 // más deuda representa.
 usort($saldos, fn($a, $b) => $b['saldo'] <=> $a['saldo']);
+
+/* Por qué no hay a quién enseñar, cuando no lo hay.
+ *
+ *  El panel se escondía entero si nadie generaba derecho, y quien lo buscaba no
+ *  podía saber si faltaba la función, estaba rota, o es que de verdad no hay
+ *  saldo. En producción pasa lo tercero, y por un motivo que importa: 56 de 57
+ *  personas comparten la fecha de ingreso de la carga inicial, así que nadie
+ *  llega a los cinco meses del art. 177. */
+$sinDerecho = [];
+foreach ($nexoTodos as $e) {
+    $d = vac_derecho_anual((string) $e['fecha_ingreso']);
+    if ($d['dias'] <= 0) $sinDerecho[$d['regla']] = ($sinDerecho[$d['regla']] ?? 0) + 1;
+}
+arsort($sinDerecho);
+
+// La señal de que las fechas son un marcador y no la antigüedad real.
+$mismaFecha = qOne("SELECT fecha_ingreso, COUNT(*) n FROM empleados
+                     WHERE estado IN ('activo','vacaciones') AND fecha_ingreso IS NOT NULL
+                     GROUP BY fecha_ingreso ORDER BY n DESC LIMIT 1");
 $saldoDias    = array_sum(array_column($saldos, 'saldo'));
 $saldoImporte = array_sum(array_column($saldos, 'importe'));
 
@@ -392,6 +412,40 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
     <?= paginacion($pg) ?>
   <?php endif; ?>
 </div>
+
+<?php if (!$saldos && $nexoTodos): ?>
+  <?php /* Un panel que desaparece no dice nada. Si no hay saldo, hay un motivo
+           y conviene decirlo: casi siempre es que las fechas de ingreso no son
+           las de verdad, y de esas fechas salen también el preaviso, la
+           cesantía y la regalía. */ ?>
+  <div class="card p-5 mt-6 border-l-4 border-slate-300">
+    <h3 class="font-bold text-slate-800 mb-1">Todavía no hay días que deber</h3>
+    <p class="text-sm text-slate-600">
+      Ninguna de las <?= count($nexoTodos) ?> personas genera vacaciones ahora mismo:
+      <?php foreach ($sinDerecho as $regla => $n): ?>
+        <span class="block text-xs mt-0.5">· <?= (int) $n ?> — <?= e(mb_strtolower($regla)) ?></span>
+      <?php endforeach; ?>
+    </p>
+    <?php if ($mismaFecha && (int) $mismaFecha['n'] >= 10
+              && (int) $mismaFecha['n'] >= count($nexoTodos) * 0.4): ?>
+      <div class="mt-3 rounded-xl bg-amber-50 border border-amber-200 p-3">
+        <p class="text-sm text-amber-800">
+          <?= icon('alert', 'w-4 h-4 inline -mt-0.5') ?>
+          <strong><?= (int) $mismaFecha['n'] ?> de <?= count($nexoTodos) ?></strong> figuran con la misma fecha
+          de ingreso, el <?= e(fechaCorta($mismaFecha['fecha_ingreso'])) ?>. Eso suele ser la fecha en que se
+          cargó el padrón, no la de cada quien.
+        </p>
+        <p class="text-xs text-amber-700 mt-1">
+          De esa fecha salen también el preaviso, la cesantía y la regalía proporcional. Mientras no
+          se corrijan, esos cálculos dan una cifra equivocada sin avisar.
+          <?php if (can('rrhh_empleados.ver')): ?>
+            <a class="link" href="<?= e(url('modules/rrhh/empleados.php')) ?>">Revisar el padrón</a>.
+          <?php endif; ?>
+        </p>
+      </div>
+    <?php endif; ?>
+  </div>
+<?php endif; ?>
 
 <?php if ($saldos): ?>
 <?php /* Los días acumulados son una deuda de la empresa aunque no estén en el

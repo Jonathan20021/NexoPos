@@ -305,6 +305,7 @@ function notif_generar(): void
     notif_gen_seguridad();
     notif_gen_ecf();
     notif_gen_ponche();
+    notif_gen_antiguedad();
 }
 
 /**
@@ -707,6 +708,78 @@ function notif_gen_caja(): void
  *      se paga.
  *   4. Aparatos con la hora mal puesta: sus marcas no son de fiar.
  */
+/**
+ * La antigüedad es dinero, y aquí casi nadie la tiene de verdad.
+ *
+ * `fecha_ingreso` decide el preaviso, la cesantía, los días de vacaciones del
+ * art. 177 y la regalía proporcional de quien entra a mitad de año. Quince
+ * archivos del sistema la leen.
+ *
+ * Cuando se carga un padrón de golpe, esa columna suele quedarse con la fecha
+ * de la carga para todo el mundo. En producción, 56 de 57 personas comparten
+ * el 2026-07-16. Nadie llega a los cinco meses, así que:
+ *
+ *   · nadie genera vacaciones y la pantalla del saldo sale vacía;
+ *   · a quien se liquide hoy se le pagarían semanas de antigüedad en vez de
+ *     años, y el cálculo saldría convencido.
+ *
+ * Eso no es un fallo del programa: es un dato que falta. Pero un dato que falta
+ * y produce una cifra que parece buena es peor que uno que falta y no produce
+ * nada, así que se dice.
+ */
+function notif_gen_antiguedad(): void
+{
+    $activos = (int) qVal("SELECT COUNT(*) FROM empleados WHERE estado <> 'inactivo'");
+    $items = [];
+
+    if ($activos >= 10) {
+        $r = qOne(
+            "SELECT fecha_ingreso, COUNT(*) AS n
+               FROM empleados
+              WHERE estado <> 'inactivo' AND fecha_ingreso IS NOT NULL
+              GROUP BY fecha_ingreso
+              ORDER BY n DESC LIMIT 1"
+        );
+        $n = (int) ($r['n'] ?? 0);
+        // Contratar a diez personas el mismo día pasa; que sean casi todas, no.
+        // El 40% distingue una tanda de contrataciones de un marcador de carga.
+        if ($n >= 10 && $n >= $activos * 0.4) {
+            $items[] = [
+                'clave' => 'antiguedad_marcador:1', 'categoria' => 'rrhh', 'prioridad' => 'alta',
+                'titulo' => $n . ' de ' . $activos . ' personas tienen la misma fecha de ingreso',
+                'mensaje' => 'Todas figuran con el ' . fechaCorta($r['fecha_ingreso']) . ', que tiene pinta de ser '
+                    . 'la fecha en que se cargó el padrón y no la de cada quien. De ahí salen el preaviso, '
+                    . 'la cesantía, los días de vacaciones y la regalía proporcional: mientras no se '
+                    . 'corrijan, esos cálculos dan una cifra equivocada sin avisar.',
+                'url' => 'modules/rrhh/empleados.php',
+                'icono' => 'calendar', 'color' => 'rose',
+                'sucursal_id' => null, 'permiso' => 'rrhh_empleados.ver',
+            ];
+        }
+    }
+
+    // Y quien no tenga ninguna: ahí no hay cálculo posible, solo un cero.
+    // Ojo con la fecha cero: MySQL 8 lleva NO_ZERO_DATE y RECHAZA la consulta
+    // entera si se compara contra '0000-00-00' —error 1525—, mientras que MariaDB
+    // la traga. Se pregunta por el año, que funciona en las dos.
+    $sinFecha = (int) qVal("SELECT COUNT(*) FROM empleados
+                             WHERE estado <> 'inactivo'
+                               AND (fecha_ingreso IS NULL OR YEAR(fecha_ingreso) < 1900)");
+    if ($sinFecha > 0) {
+        $items[] = [
+            'clave' => 'antiguedad_sin_fecha:1', 'categoria' => 'rrhh', 'prioridad' => 'alta',
+            'titulo' => $sinFecha . ' persona(s) sin fecha de ingreso',
+            'mensaje' => 'Sin ella no se puede calcular su preaviso, su cesantía ni sus vacaciones. '
+                . 'Si hay que liquidar a alguna, el sistema no sabría cuánto le toca.',
+            'url' => 'modules/rrhh/empleados.php',
+            'icono' => 'calendar', 'color' => 'rose',
+            'sucursal_id' => null, 'permiso' => 'rrhh_empleados.ver',
+        ];
+    }
+
+    notif_sync('antiguedad', $items);
+}
+
 function notif_gen_ponche(): void
 {
     // `biotime.php` no se carga en bootstrap —solo lo usan las pantallas del
