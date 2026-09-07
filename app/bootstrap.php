@@ -62,6 +62,7 @@ require_once dirname(__DIR__) . '/includes/notificaciones.php';
 require_once dirname(__DIR__) . '/includes/sanidad.php';
 require_once dirname(__DIR__) . '/includes/barcode.php';
 require_once dirname(__DIR__) . '/includes/busqueda.php';
+require_once dirname(__DIR__) . '/includes/entrenamiento.php';  // academia (arrastra los dos temarios)
 require_once dirname(__DIR__) . '/includes/reportes.php';
 require_once dirname(__DIR__) . '/includes/direccion.php';  // consultas del área de Dirección (usa reportes.php)
 require_once dirname(__DIR__) . '/includes/charts.php';

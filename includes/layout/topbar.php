@@ -40,10 +40,44 @@ $redir = $_SERVER['REQUEST_URI'] ?? url('modules/dashboard/index.php');
       </form>
     <?php endif; ?>
 
-    <!-- Fecha -->
-    <div class="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl h-10 px-3.5 text-sm font-medium text-slate-600">
+    <!-- Fecha.
+         Aparece a partir de `xl`, no de `lg`. En 1024 el menú lateral ya ocupa
+         260 px y a la barra le quedan 755: con buscador, sucursal, fecha, ayuda,
+         campana y usuario el bloque medía 813 y la página scrolleaba en
+         horizontal. La fecha es lo prescindible de esa fila —está en cada
+         documento y en el sistema operativo—, así que es lo que cede el sitio. -->
+    <div class="hidden xl:flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl h-10 px-3.5 text-sm font-medium text-slate-600">
       <?= icon('calendar', 'w-4 h-4 text-slate-400') ?>
       <?= e(fechaLarga(date('Y-m-d'))) ?>
+    </div>
+
+    <!-- Ayuda de esta pantalla -->
+    <?php $ayuda = ent_ayuda_actual(); ?>
+    <div class="relative" x-data="{open:false}">
+      <button @click="open=!open" aria-label="Ayuda" title="Ayuda de esta pantalla"
+              class="relative w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition">
+        <?= icon('book', 'w-5 h-5') ?>
+        <?php if ($ayuda && $ayuda['estado'] !== 'completada'): ?>
+          <?php /* Un punto, no un número: señala que hay algo que leer sin
+                    convertir la ayuda en una tarea pendiente más. */ ?>
+          <span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-white"></span>
+        <?php endif; ?>
+      </button>
+      <div x-show="open" @click.outside="open=false" x-transition style="display:none"
+           class="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-pop border border-slate-100 p-2 z-50">
+        <?php if ($ayuda): ?>
+          <a href="<?= e($ayuda['url']) ?>" class="block px-3 py-2.5 rounded-xl hover:bg-blue-50 group">
+            <p class="text-[11px] uppercase tracking-wider font-bold text-blue-600">Cómo funciona esta pantalla</p>
+            <p class="text-sm font-semibold text-slate-700 mt-0.5 leading-snug group-hover:text-blue-700"><?= e($ayuda['titulo']) ?></p>
+            <p class="text-xs text-slate-400 mt-0.5"><?= (int) $ayuda['minutos'] ?> min<?= $ayuda['estado'] === 'completada' ? ' · ya la completaste' : '' ?></p>
+          </a>
+          <div class="h-px bg-slate-100 my-1"></div>
+        <?php else: ?>
+          <p class="px-3 py-2.5 text-xs text-slate-400 leading-relaxed">Esta pantalla todavía no tiene su lección. Empieza por el temario de tu rol.</p>
+        <?php endif; ?>
+        <a href="<?= e(url('modules/entrenamiento/index.php')) ?>" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50"><?= icon('target', 'w-4 h-4') ?> Centro de Entrenamiento</a>
+        <a href="<?= e(url('modules/entrenamiento/glosario.php')) ?>" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50"><?= icon('book', 'w-4 h-4') ?> Glosario</a>
+      </div>
     </div>
 
     <!-- Notificaciones -->

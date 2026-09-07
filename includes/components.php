@@ -98,6 +98,15 @@ function nav_groups(): array
             ['Expediente de auditoría', 'shield', url('modules/reportes/expediente_auditoria.php'), 'reportes.sanidad'],
             ['Reporte gerencial', 'chart', url('modules/finanzas/reportes.php'), 'reportes.ejecutivo'],
         ]],
+        // Sin permiso a propósito: el temario se recorta solo con los permisos de
+        // quien mira, así que la entrada la ve todo el mundo. Va antes de
+        // Administración para que quede al alcance del personal de piso, que es
+        // quien más la necesita y quien nunca baja hasta el final del menú.
+        ['Ayuda y Entrenamiento', [
+            ['Centro de Entrenamiento', 'target', url('modules/entrenamiento/index.php'), null],
+            ['Glosario', 'book', url('modules/entrenamiento/glosario.php'), null],
+            ['Avance del equipo', 'users', url('modules/entrenamiento/equipo.php'), 'entrenamiento.equipo'],
+        ]],
         ['Administración', [
             ['Sucursales', 'store', url('modules/admin/sucursales.php'), 'sucursales.ver'],
             ['Tiendas y marcas', 'tag', url('modules/admin/tiendas.php'), 'tiendas.ver'],

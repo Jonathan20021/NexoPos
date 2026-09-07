@@ -88,6 +88,7 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
     $escapado = buscar_like($q);
     $like   = '%' . $escapado . '%';
     $exacto = $escapado . '%';
+    $needleEnt = buscar_normalizar($q);   // el temario se busca en memoria, no en SQL
 
     /* ---------- Productos ---------- */
     if (can('productos.ver')) {
@@ -413,6 +414,28 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
         }
         if ($items) $grupos[] = ['grupo' => 'Oportunidades', 'icono' => 'briefcase', 'color' => 'rose', 'items' => $items];
     }
+
+    /* ---------- Entrenamiento ----------
+       Sin `can()`: `ent_catalogo_visible()` ya trae solo lo que esta persona
+       puede estudiar. Va al final a propósito: quien busca «nómina» quiere la
+       nómina, y la lección que la explica solo debajo. */
+    $items = [];
+    foreach (ent_catalogo_visible() as $rk => $ruta) {
+        foreach ($ruta['lecciones'] as $lk => $lec) {
+            if (strpos(buscar_normalizar($lec['titulo'] . ' ' . $lec['resumen']), $needleEnt) === false) continue;
+            $estado = ent_estado_leccion(ent_clave($rk, $lk));
+            $items[] = [
+                'titulo'    => $lec['titulo'],
+                'subtitulo' => $ruta['titulo'] . ' · ' . (int) ($lec['minutos'] ?? 5) . ' min',
+                'etiqueta'  => $estado === 'completada' ? 'Completada' : ($estado === 'en_curso' ? 'En curso' : 'Lección'),
+                'etiqueta_color' => $estado === 'completada' ? 'emerald' : ($estado === 'en_curso' ? 'blue' : 'slate'),
+                'url'       => url('modules/entrenamiento/leccion.php')
+                               . '?ruta=' . rawurlencode($rk) . '&leccion=' . rawurlencode($lk),
+            ];
+            if (count($items) >= $tope) break 2;
+        }
+    }
+    if ($items) $grupos[] = ['grupo' => 'Entrenamiento', 'icono' => 'book', 'color' => 'cyan', 'items' => $items];
 
     return $grupos;
 }

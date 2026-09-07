@@ -165,6 +165,16 @@ function permission_catalog(): array
                 'diseno'     => 'Diseño del correo (colores y logo)',
             ]],
         ],
+        // El Centro de Entrenamiento NO lleva permiso de entrada: todo el que
+        // entra al sistema tiene derecho a que le expliquen lo que puede tocar,
+        // y el temario ya se recorta solo con sus permisos. Lo que sí lleva
+        // permiso es mirar el avance ajeno, que es supervisión de personal.
+        'Entrenamiento' => [
+            'entrenamiento' => ['label' => 'Centro de Entrenamiento', 'acciones' => [
+                'equipo'  => 'Ver el avance y las evaluaciones de todo el equipo',
+                'asignar' => 'Reiniciar el avance de otra persona',
+            ]],
+        ],
         'CRM' => [
             'crm' => ['label' => 'CRM (ficha 360°, embudo y seguimientos)', 'acciones' => [
                 'ver'      => 'Ver',
