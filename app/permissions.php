@@ -82,6 +82,9 @@ function permission_catalog(): array
             'rrhh_vacaciones'    => ['label' => 'Vacaciones y Licencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'aprobar' => 'Aprobar']],
             'tss'                => ['label' => 'TSS · Seguridad Social', 'acciones' => [
                 'ver'        => 'Ver aportes y novedades',
+                // Se separa de `configurar`: cambiar una tasa es política; registrar
+                // el pago mueve dinero y cierra el mes ante la Tesorería.
+                'pagar'      => 'Registrar el pago mensual a la Tesorería y del ISR retenido',
                 'configurar' => 'Cambiar el salario mínimo cotizable, tasas y topes',
             ]],
             'prestamos'          => ['label' => 'Préstamos a empleados', 'acciones' => [
@@ -94,6 +97,14 @@ function permission_catalog(): array
                 'ver'    => 'Ver el expediente disciplinario',
                 'crear'  => 'Levantar y notificar',
                 'anular' => 'Anular y dejar sin efecto',
+            ]],
+            // Calcular una liquidación es una cosa; firmarla y pagarla, otra: es el
+            // documento con el que la persona sale de la empresa.
+            'prestaciones'       => ['label' => 'Prestaciones laborales', 'acciones' => [
+                'ver'    => 'Ver y calcular liquidaciones',
+                'crear'  => 'Guardar y firmar una liquidación',
+                'pagar'  => 'Marcar como pagada',
+                'anular' => 'Anular una liquidación',
             ]],
         ],
         'Finanzas' => [
@@ -134,6 +145,7 @@ function permission_catalog(): array
                 'operacion'    => 'Reportes de operación y ventas',
                 'sucursales'   => 'Comparativo de sucursales (sin abrir el resto de dirección)',
                 'inventario'   => 'Existencias: valorizado y por tienda (sin abrir el resto de contabilidad)',
+                'nomina'       => 'Nómina: resumen, costo de plantilla, provisiones y variación (sin abrir el resto de contabilidad)',
                 'vencimientos' => 'Control de vencimientos (sin abrir el resto de sanidad)',
                 'sanidad'      => 'Reportes de cumplimiento sanitario',
             ]],

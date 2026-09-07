@@ -56,6 +56,21 @@ Patrón PRG: tras procesar un POST siempre `redirect(...)`. Usa `flash('success'
   $rows = qAll("SELECT ... FROM ventas v WHERE $w ORDER BY ...", $p);
   ```
 
+### ⚠ Un permiso nuevo se añade en DOS sitios, no en uno
+
+Sembrarlo en la tabla `permisos` con la migración **no basta**. Hay que declararlo también en
+`permission_catalog()` (`app/permissions.php`), porque de ahí salen tres cosas: las casillas de
+la pantalla de Roles, la lista blanca del guardado y la siembra del instalador.
+
+Un permiso que está en la base pero no en el catálogo no solo queda invisible: la pantalla de
+Roles **borra la matriz del rol** y reinserta solo lo que el catálogo validó, así que abrir un
+rol y pulsar Guardar —sin tocar nada— se lo arranca a quien ya lo tenía, en silencio.
+
+Pasó de verdad con seis permisos de las migraciones P28, P30 y P31 (`prestaciones.*`,
+`reportes.nomina`, `tss.pagar`). Al rol de TSS/Nómina le quitaba cuatro de sus diez permisos.
+**Administración → Integridad de datos** lo vigila ahora en las dos direcciones; si añades un
+permiso, pasa por ahí antes de dar el trabajo por terminado.
+
 ## Seguridad
 - En cada formulario: `<?= csrf_field() ?>`. Al inicio del bloque POST: `verify_csrf();`
 - Verificar permiso de la acción específica antes de escribir: `require_perm('modulo.crear')` etc.

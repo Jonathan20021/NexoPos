@@ -575,6 +575,68 @@ $operacion[] = chk(
 
 $grupos[] = ['titulo' => 'Operación multi-sucursal', 'icono' => 'store', 'color' => 'violet', 'checks' => $operacion];
 
+/* ============================================================
+ *  Permisos
+ *
+ *  Existe por un fallo real: tres migraciones (P28, P30 y P31) sembraron seis
+ *  permisos en la base y los usaron en `require_perm()`, pero nadie los añadió
+ *  a `permission_catalog()`. La pantalla de Roles se dibuja desde el catálogo y
+ *  al guardar BORRA la matriz del rol para reinsertar solo lo que el catálogo
+ *  validó — así que abrir un rol y pulsar Guardar, sin tocar nada, le arrancaba
+ *  esos seis permisos en silencio. Al de TSS/Nómina le quitaba cuatro de diez.
+ * ============================================================ */
+$permisos = [];
+
+$permisos[] = chk(
+    'Permisos que el código usa y el catálogo no declara',
+    'Un permiso que existe en la base pero no está en `permission_catalog()` no se dibuja en la pantalla de Roles. '
+    . 'Nadie lo puede conceder ni quitar, y —peor— guardar cualquier rol se lo arranca a quien ya lo tenía, sin avisar.',
+    function () {
+        $enBD  = qCol("SELECT clave FROM permisos ORDER BY clave");
+        $huerfanos = array_values(array_diff($enBD, array_keys(permission_keys())));
+        $detalle = [];
+        foreach ($huerfanos as $clave) {
+            $roles = qCol("SELECT r.nombre FROM rol_permisos rp
+                             JOIN roles r ON r.id = rp.rol_id
+                             JOIN permisos p ON p.id = rp.permiso_id
+                            WHERE p.clave = ? ORDER BY r.id", [$clave]);
+            $detalle[] = $clave . ($roles ? ' — lo perderían: ' . implode(', ', $roles) : ' — no lo tiene ningún rol');
+        }
+        return [count($huerfanos), $detalle];
+    },
+    'Añade cada clave a `permission_catalog()` en app/permissions.php, en el grupo y con la etiqueta que le puso su migración.'
+);
+
+$permisos[] = chk(
+    'Permisos del catálogo que faltan en la base',
+    'Al revés: el catálogo los ofrece en la pantalla de Roles, pero la fila no existe. '
+    . 'La casilla se puede marcar y guardar sin que conceda nada, porque no hay `permiso_id` que insertar.',
+    function () {
+        $faltan = array_values(array_diff(array_keys(permission_keys()), qCol("SELECT clave FROM permisos")));
+        return [count($faltan), $faltan];
+    },
+    'Falta aplicar la migración que los siembra, o hay que añadirlos con un INSERT IGNORE en la tabla `permisos`.'
+);
+
+$permisos[] = chk(
+    'Roles activos sin ningún permiso',
+    'Un rol sin permisos deja a quien lo tenga viendo solo el dashboard. Suele ser el rastro de un guardado que salió mal.',
+    function () {
+        $malos = qAll(
+            "SELECT r.nombre, (SELECT COUNT(*) FROM usuarios u WHERE u.rol_id = r.id AND u.activo = 1) AS personas
+               FROM roles r
+              WHERE r.activo = 1 AND r.es_super = 0
+                AND NOT EXISTS (SELECT 1 FROM rol_permisos rp WHERE rp.rol_id = r.id)
+              ORDER BY r.nombre"
+        );
+        return [count($malos), array_map(
+            fn($m) => $m['nombre'] . ' — ' . (int) $m['personas'] . ' persona(s) activa(s)', $malos)];
+    },
+    'Vuelve a asignarle sus permisos desde Administración → Roles y Permisos.'
+);
+
+$grupos[] = ['titulo' => 'Permisos', 'icono' => 'shield', 'color' => 'rose', 'checks' => $permisos];
+
 /* ---------- Resumen ---------- */
 $totalChecks = 0; $conProblema = 0; $conError = 0;
 foreach ($grupos as $g) {
@@ -621,9 +683,12 @@ layout_start(
 </div>
 
 <?php foreach ($grupos as $g):
+  // El `?? ` no sobra: sin él, añadir un grupo con un color que no esté en la
+  // tabla imprime un aviso de PHP en medio de la pantalla.
   $fondo = ['blue' => 'bg-blue-50 text-blue-600', 'amber' => 'bg-amber-50 text-amber-600',
             'indigo' => 'bg-indigo-50 text-indigo-600', 'emerald' => 'bg-emerald-50 text-emerald-600',
-            'violet' => 'bg-violet-50 text-violet-600'][$g['color']];
+            'violet' => 'bg-violet-50 text-violet-600', 'rose' => 'bg-rose-50 text-rose-600',
+           ][$g['color']] ?? 'bg-slate-100 text-slate-600';
 ?>
   <section class="card overflow-hidden mb-5">
     <div class="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
