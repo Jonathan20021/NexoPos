@@ -13,10 +13,15 @@ $glosario  = ent_glosario();
 $total     = 0;
 $filtrado  = [];
 
+// Se busca sin tildes con `buscar_normalizar()`, la misma función que usa el
+// buscador global. Aquí nadie escribe «cesantía» ni «nómina» con su tilde: sin
+// esto, buscar «cesantia» devolvía cero resultados sobre un término que existe.
+$nq = buscar_normalizar($q);
+
 foreach ($glosario as $cat => $terminos) {
     $sub = [];
     foreach ($terminos as $t => $d) {
-        if ($q === '' || str_contains(mb_strtolower($t . ' ' . $d), mb_strtolower($q))) {
+        if ($q === '' || str_contains(buscar_normalizar($t . ' ' . $d), $nq)) {
             $sub[$t] = $d;
         }
     }
