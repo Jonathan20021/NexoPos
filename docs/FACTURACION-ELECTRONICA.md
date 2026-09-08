@@ -518,6 +518,43 @@ venta se cobró, el cliente se fue con su ticket y todo parece normal.
 6. Probar la conexión y emitir contra el ambiente de pruebas desde la Consola.
 7. Solo entonces, encender el interruptor y cambiar el ambiente a producción.
 
+### Estado en producción (08-09-2026)
+
+Todo está puesto **menos el último paso**, que es una decisión con fecha:
+
+| Pieza | Estado |
+|---|---|
+| Credenciales de producción | Cargadas (`importEnvio`). Login verificado contra `https://rd.api.tech-luganis.net`: HTTP 200, token de 30 min |
+| `ambiente` | `produccion` |
+| Rangos autorizados DGII | **E31** `1085–3084` (aut. 6005458872) y **E32** `12001–16213` (aut. 6005458879), cargados el 27-08-2026 |
+| `activo` | **0 — apagado a propósito** |
+| Ventas emitidas | 0. El sistema todavía no ha facturado nada |
+
+**Con `activo = 0` el sistema está inerte:** el POS asigna NCF preimpreso
+(B01/B02/B04) exactamente como siempre, no se genera ningún e-NCF, el tick no
+despierta y el cron sale sin hacer nada. El corte lo da una persona encendiendo
+ese interruptor en Finanzas → Facturación Electrónica → Configuración.
+
+> **Las credenciales de pruebas y las de producción NO son intercambiables.**
+> Comprobado: `importEnvio` contra el ambiente de pruebas responde
+> `Credenciales inválidas` (código `1000`). Cambiar el usuario sin cambiar el
+> ambiente —o al revés— deja la emisión rota en cada venta.
+
+### ⚠ «Envío automático apagado» NO significa «envío manual»
+
+Es la trampa de esta pantalla y conviene tenerla clara antes de usarla como
+freno. `envio_automatico = 0` solo saca la transmisión de la petición de la
+venta: el comprobante **se genera igual y consume su secuencia autorizada**, y
+`ecfTickSiToca()` —enganchado en `includes/layout/notificaciones.php`— lo
+transmite en cuanto cualquiera carga una página. Ese tick mira `activo`, no
+`envio_automatico`.
+
+Lo único que costaría apagarlo es el QR en el ticket de esa venta, que sale con
+«transmisión pendiente» hasta que se reimprime.
+
+**Si lo que se quiere es que no se transmita nada todavía, el interruptor es
+`activo = 0`.** No hay otro.
+
 ### Si la red inspecciona el tráfico TLS
 
 En la red donde se desarrolló esto hay un **FortiGate** que intercepta TLS y
