@@ -51,6 +51,12 @@ function nav_groups(): array
             ['Asistencia', 'clock', url('modules/rrhh/asistencia.php'), 'rrhh_asistencia.ver'],
             // Va justo después: el reloj alimenta la asistencia, no es otra cosa.
             ['Reloj biométrico', 'pulse', url('modules/rrhh/ponche.php'), 'rrhh_asistencia.ver'],
+            // Y estos dos son con qué se juzga lo que el reloj trae: sin
+            // horario no hay tardanza y sin feriados un 27 de febrero es una
+            // falta de toda la empresa. Van pegados a la asistencia porque solo
+            // se entra aquí cuando algo de ella no cuadra.
+            ['Horarios de trabajo', 'clock', url('modules/rrhh/jornadas.php'), 'rrhh_jornadas.ver'],
+            ['Feriados', 'calendar', url('modules/rrhh/feriados.php'), 'rrhh_feriados.ver'],
             ['Nómina', 'wallet', url('modules/rrhh/nomina.php'), 'rrhh_nomina.ver'],
             ['Regalía pascual', 'sun', url('modules/rrhh/regalia.php'), 'rrhh_nomina.ver'],
             ['Vacaciones y Licencias', 'sun', url('modules/rrhh/vacaciones.php'), 'rrhh_vacaciones.ver'],

@@ -1,11 +1,18 @@
 # El ponche: BioTime Cloud → Nexo
 
 Importers marca entrada y salida en un reloj biométrico de ZKTeco alojado en
-`https://importers.biotime.mx` (BioTime Cloud 2.0). Nexo tiene su propia tabla
-`asistencias` que hoy **se llena a mano**.
+`https://importers.biotime.mx` (BioTime Cloud 2.0). Nexo lo trae solo a su tabla
+`asistencias`, todos los días.
 
-**Estado: la conexión funciona y está probada. La integración NO se puede hacer
-todavía, y el motivo no es técnico.** Ver §5.
+**Estado: la integración está hecha, probada y corriendo** —el cron entra cada
+día a las 5:00— **y desde P38 también calcula tardanza, feriados y descansos**
+(§9). Lo que sigue sin resolverse **no es técnico**: el reloj apenas se usa, y
+mientras eso no cambie no hay nada que traer. Los números, en §5.
+
+> Las secciones 1 a 6 se escribieron durante el estudio inicial y conservan lo
+> que se midió entonces. Donde algo dejó de ser cierto hay un aviso en su sitio
+> —§2 y §3 lo tienen— en vez de borrarlo: saber qué se creyó y por qué cambió
+> es justo lo que hace falta la próxima vez que algo no cuadre.
 
 ---
 
@@ -53,22 +60,24 @@ subdominio. Con el cuerpo del manual contesta 400 sin decir qué falta.
 La clave única `(empleado_id, fecha)` ya existe, así que sincronizar dos veces
 el mismo día actualiza en vez de duplicar. Eso está resuelto de nacimiento.
 
-## 3. La tardanza no sale de ninguna parte
+## 3. La tardanza — *resuelto en Nexo, no en BioTime*
 
-Nexo no tiene tabla de horarios, y **BioTime tampoco tiene turnos configurados**:
+> Una versión anterior de este documento decía que la tardanza no se podía
+> calcular. **Ya no es cierto.** Lo que sigue siendo verdad es que no sale del
+> reloj: BioTime **no tiene turnos configurados** y sus endpoints de turno
+> contestan 404.
+>
+> ```
+> /att/api/shift/   ·  /att/api/timeInterval/
+> /att/api/schedule/ · /att/api/employeeSchedule/     los cuatro, 404
+> ```
+>
+> Configurarlos allí era una de las dos salidas. Se tomó la otra: **el horario
+> vive en Nexo** (P38), que además es donde están las vacaciones, las licencias
+> y los feriados con los que hay que cruzarlo.
 
-```
-/att/api/shift/             404
-/att/api/timeInterval/      404
-/att/api/schedule/          404
-/att/api/employeeSchedule/  404
-```
-
-`firstLastReport` da la hora de llegada, no si esa hora es tarde. `asistencias`
-tiene el estado `tardanza`, pero nadie lo puede rellenar: haría falta configurar
-los turnos en BioTime —donde es su función— o crear en Nexo una tabla de
-jornadas que hoy no existe. **Mientras tanto, lo que se puede traer es hora de
-entrada, hora de salida y horas trabajadas. Nada más.**
+`firstLastReport` da la hora de llegada; `jorEvaluarDia()` decide si esa hora es
+tarde. Ver **§9**.
 
 ## 4. `punch_state` viene en 255
 
@@ -134,7 +143,10 @@ aquí no es un dato feo, es el ponche de una persona cargado a la nómina de otr
    operaciones, no de programación.
 2. **Que su padrón se ponga al día**: dar de alta a los 24 que faltan, quitar a
    los 5 que ya no están, y escribir los nombres bien.
-3. **Turnos**, si se quiere tardanza. En BioTime, que es su trabajo.
+3. ~~**Turnos**, si se quiere tardanza. En BioTime, que es su trabajo.~~
+   **Resuelto de otra manera:** el horario vive en Nexo (§9), que es donde están
+   también las vacaciones, las licencias y los feriados con los que hay que
+   cruzarlo. En BioTime habría quedado la mitad de la respuesta.
 4. **Una columna de equivalencia** (`empleados.biotime_emp_code`) confirmada
    persona por persona por alguien que las conozca. Nunca automática.
 
@@ -433,3 +445,111 @@ Las credenciales están en `config/config.local.php`, que no se versiona.
 Conviene que la integración use **una cuenta propia**, no la de una persona: si
 esa persona se va y le desactivan el usuario, el ponche deja de entrar y nadie
 sabe por qué.
+
+---
+
+## 9. El horario, los feriados y el día completo (P38)
+
+Hasta aquí el reloj decía **a qué hora** llegó cada quien. Con qué compararlo
+faltaba, y por eso `asistencias.estado` tenía «tardanza» desde el primer día
+sin que nadie pudiera rellenarlo nunca.
+
+### Las cuatro piezas
+
+| | Para qué |
+|---|---|
+| `jornadas` + `jornada_dias` | El horario. **Una fila por día de la semana**: en RD el sábado casi nunca es igual —8-12 es lo común— y cambiar un día no debe costar un `ALTER` |
+| `feriados` | Un feriado no es una falta ni una tardanza. Sin calendario, el 27 de febrero sale como que no vino toda la empresa |
+| `empleados.jornada_id` | A quién se le aplica. **NULL permitido a propósito** |
+| `asistencias`: `jornada_id`, `tardanza_min`, `salida_temprana_min`, `horas_esperadas` | El resultado, y **con qué horario se juzgó** |
+
+Se guarda el horario aplicado, no solo el resultado: si mañana alguien mueve la
+hora de entrada, el día de ayer conserva con qué se le juzgó. Sin eso el
+histórico cambiaría de significado por debajo y una amonestación por tardanza
+dejaría de cuadrar con su propio expediente.
+
+### `jorEvaluarDia()` es la única que decide
+
+La usan **las dos puntas** —la sincronización al guardar y la pantalla al
+pintar—. Tener dos criterios para lo mismo termina en una pantalla que dice
+«presente» sobre una fila guardada como «tardanza», y entonces ya no se sabe
+cuál de las dos miente. `pruebas/jornadas.php` comprueba que la sincronización
+la siga llamando.
+
+El orden de las preguntas no es casual:
+
+1. **¿Ponchó?** Si hay marcas, la persona **vino**, y eso manda sobre todo lo
+   demás. Si además era feriado o estaba de vacaciones se dice —son situaciones
+   con dinero dentro, art. 205 y art. 177— pero no se borra que trabajó.
+2. Sin marcas: **¿tenía permiso aprobado?** → vacaciones / licencia.
+3. **¿Era feriado?** → feriado.
+4. **¿Su horario dice que no se trabaja?** → descanso.
+5. Solo entonces cabe hablar de ausencia.
+
+### Cuándo se puede decir «ausente», y cuándo no
+
+Esta es la regla que más veces evita un disparate. Se afirma la falta **solo si
+se cumplen las cuatro**:
+
+- la persona tiene **código del reloj** emparejado,
+- el día **ya pasó** —hoy todavía puede ponchar—,
+- su horario dice que **le tocaba trabajar**, y
+- ese día **el reloj registró marcas de alguien**.
+
+Si falta una, el estado es **«sin marcas»** y se explica por qué. Con seis
+personas ponchando de cuarenta y ocho, dar por ausente a quien no marcó llenaría
+la nómina de faltas falsas, y una falta inventada acaba en un descuento que
+nadie puede defender.
+
+Por la misma razón, **a quien no tiene horario no se le calcula tardanza**.
+Inventarle una jornada de oficina a quien trabaja por turnos es peor que callar.
+
+### Detalles que parecen arbitrarios y no lo son
+
+| Regla | El fallo que evita |
+|---|---|
+| La tolerancia decide **si** cuenta, no **cuánto** | Diez minutos tarde son diez, no cinco. La tolerancia tapa el tráfico de un martes, no rebaja el retraso |
+| El almuerzo solo se resta de jornadas de **6 h o más** | Restar una hora a un sábado de cuatro deja tres, y se pagan cuatro |
+| Hora extra **a partir de N minutos** | Quedarse cinco minutos recogiendo no es una hora extra |
+| Trabajar un feriado o el día de descanso → **todo cuenta como extra** | Art. 205: se paga con recargo. Contarlo como un día normal lo paga de menos |
+| Ponchar estando de vacaciones **se avisa** | Si se paga el permiso y el día, se paga dos veces |
+| Un día marcado laborable **sin horas** se guarda como no laborable | Si no, daría tardanzas contra `NULL` |
+| Sembrar el año **tira la caché de feriados** | Sembrar y recalcular ocurren en la MISMA petición. Sin tirarla, el recálculo veía el año vacío de antes y daba por ausente a toda la plantilla el 27 de febrero. Sin error y sin aviso: el número salía mal |
+
+### Los feriados se calculan, no se escriben
+
+La Ley 139-97 mueve algunos al lunes: martes y miércoles **al lunes anterior**,
+jueves y viernes **al siguiente**. Viernes Santo y Corpus Christi salen de la
+Pascua. Una lista escrita a mano caduca el 31 de diciembre y el año siguiente el
+sistema daría por laborable el 27 de febrero sin que nadie lo note hasta ver la
+nómina.
+
+Lo que **declara el Gobierno sobre la marcha** —un duelo nacional, una jornada
+electoral— se añade a mano y queda con `automatico = 0`: regenerar el año no lo
+borra, porque es lo único de esa tabla que no se puede recalcular.
+
+> **Pendiente de confirmar con el contador:** el 16 de agosto va como
+> trasladable, que es la lectura más extendida de la 139-97. Si en la empresa se
+> celebra en su fecha fija, se corrige en la pantalla y la corrección sobrevive.
+
+### Recalcular hacia atrás
+
+El horario se asigna **después** de que el reloj lleva semanas trayendo marcas.
+Sin `jorRecalcular()` la tardanza solo existiría de hoy en adelante y todo lo
+anterior se quedaría en «presente» para siempre. Respeta `origen = 'manual'`
+igual que la sincronización.
+
+Está en **Recursos Humanos → Horarios de trabajo**, con un «ver qué cambiaría»
+que no escribe nada.
+
+### Dónde se toca
+
+- `includes/jornadas.php` — el motor entero.
+- `modules/rrhh/jornadas.php` — horarios, asignación y recálculo.
+- `modules/rrhh/feriados.php` — el calendario.
+- `pruebas/jornadas.php` — 58 comprobaciones, dentro de una transacción que se
+  deshace: no deja ni una fila.
+- `database/migracion_jornadas_p38.sql`.
+
+Permisos: `rrhh_jornadas.ver` / `.gestionar` y `rrhh_feriados.ver` / `.gestionar`,
+en la tabla **y** en `permission_catalog()`.

@@ -1,9 +1,10 @@
 <?php
 require_once dirname(__DIR__, 2) . '/app/bootstrap.php';
+require_once dirname(__DIR__, 2) . '/includes/jornadas.php';
 require_once dirname(__DIR__, 2) . '/includes/biotime.php';
 require_perm('rrhh_asistencia.ver');
 
-$estadosAsis = ['presente', 'ausente', 'tardanza', 'permiso', 'vacaciones', 'licencia'];
+$estadosAsis = ['presente', 'ausente', 'tardanza', 'permiso', 'vacaciones', 'licencia', 'feriado', 'descanso'];
 
 /** Calcula horas trabajadas y extra a partir de hora_entrada/hora_salida. */
 function calcularHoras(?string $entrada, ?string $salida): array
@@ -54,7 +55,7 @@ if (isPost()) {
         // El empleado debe existir, estar activo y dentro del alcance de sucursal.
         [$wScope, $pScope] = sucursalScope('sucursal_id');
         $emp = qOne(
-            "SELECT id, sucursal_id FROM empleados WHERE id = ? AND estado = 'activo' AND $wScope",
+            "SELECT id, sucursal_id, biotime_emp_code FROM empleados WHERE id = ? AND estado = 'activo' AND $wScope",
             array_merge([$empleadoId], $pScope)
         );
 
@@ -79,6 +80,16 @@ if (isPost()) {
             redirect('modules/rrhh/asistencia.php?fecha=' . $fechaPost);
         }
 
+        // Corregir la hora de entrada tiene que mover también la tardanza: si
+        // no, alguien arregla «entró a las 8:05, no a las 9:05» y el día se
+        // queda con los sesenta minutos de tarde de antes. El ESTADO sigue
+        // siendo el que eligió la persona —manda ella—, pero los minutos salen
+        // de las horas que acaba de escribir.
+        $evM = jorEvaluarDia(
+            ['id' => $empleadoId, 'biotime_emp_code' => $emp['biotime_emp_code'] ?? null],
+            $fechaPost, $entrada, $salida, true
+        );
+
         $datos = [
             'empleado_id'      => $empleadoId,
             'sucursal_id'      => $emp['sucursal_id'],
@@ -88,6 +99,10 @@ if (isPost()) {
             'horas_trabajadas' => $horas,
             'horas_extra'      => $extra,
             'estado'           => $estado,
+            'tardanza_min'        => $entrada !== null ? (int) $evM['tardanza_min'] : 0,
+            'salida_temprana_min' => $entrada !== null ? (int) $evM['salida_temprana_min'] : 0,
+            'horas_esperadas'     => $evM['horas_esperadas'],
+            'jornada_id'          => $evM['jornada_id'],
             'notas'            => $notas,
             // Lo escribe una persona, así que manda ella: la sincronización del
             // reloj respeta lo que tenga `origen = 'manual'`. Sin esta línea, una
@@ -127,15 +142,18 @@ $puedeRegistrar = can('rrhh_asistencia.registrar');
 
 [$wScope, $pScope] = sucursalScope('e.sucursal_id');
 $empleados = qAll(
-    "SELECT e.id, e.nombre, e.apellido, e.foto,
+    "SELECT e.id, e.nombre, e.apellido, e.foto, e.biotime_emp_code, e.jornada_id,
             p.nombre  AS puesto,
             d.nombre  AS departamento,
+            j.nombre  AS jornada,
             a.id      AS asistencia_id,
             a.hora_entrada, a.hora_salida, a.horas_trabajadas, a.horas_extra,
+            a.tardanza_min, a.salida_temprana_min, a.horas_esperadas,
             a.estado  AS estado_dia, a.notas, a.origen
        FROM empleados e
        LEFT JOIN puestos       p ON p.id = e.puesto_id
        LEFT JOIN departamentos d ON d.id = e.departamento_id
+       LEFT JOIN jornadas      j ON j.id = e.jornada_id
        LEFT JOIN asistencias   a ON a.empleado_id = e.id AND a.fecha = ?
       WHERE e.estado = 'activo' AND $wScope
       ORDER BY e.nombre, e.apellido",
@@ -235,12 +253,16 @@ $sinDuenoHoy = (int) qVal("SELECT COUNT(DISTINCT emp_code) FROM asistencia_marca
 // Antes contaban «falta marcar», que era una tarea pendiente de una persona.
 // Ya no hay nada que teclear: lo que importa es qué sabe el reloj y qué no.
 $totalEmpleados = count($empleados);
-$conMarcas = $incompletas = $conLicencia = $sinNada = 0;
+$conMarcas = $incompletas = $conLicencia = $sinNada = $tardes = 0;
+// Si ese día el reloj no registró nada de nadie, no se puede afirmar que
+// nadie viniera: se lo dice al evaluador para que no invente ausencias.
+$relojVivoHoy = (bool) qVal("SELECT 1 FROM asistencia_marcas WHERE fecha = ? LIMIT 1", [$fecha]);
 foreach ($empleados as $emp) {
     $ms = $marcasDelDia[(int) $emp['id']] ?? [];
     if ($ms || $emp['hora_entrada']) {
         $conMarcas++;
         if (!$emp['hora_salida']) $incompletas++;
+        if ((int) ($emp['tardanza_min'] ?? 0) > 0) $tardes++;
     } elseif (isset($deLicencia[(int) $emp['id']])) {
         $conLicencia++;
     } else {
@@ -258,7 +280,12 @@ foreach ($empleados as $emp) {
  */
 function grupoDelDia(array $emp, array $marcas, array $deLicencia): string
 {
-    if ($marcas || $emp['hora_entrada']) return $emp['hora_salida'] ? 'conmarcas' : 'incompleta';
+    if ($marcas || $emp['hora_entrada']) {
+        if (!$emp['hora_salida']) return 'incompleta';
+        // La tardanza es su propio grupo: es lo que se viene a mirar aquí
+        // cuando ya se sabe que casi todo el mundo ponchó.
+        return (int) ($emp['tardanza_min'] ?? 0) > 0 ? 'tarde' : 'conmarcas';
+    }
     return isset($deLicencia[(int) $emp['id']]) ? 'licencia' : 'sin';
 }
 
@@ -267,9 +294,18 @@ function badgeDelDia(string $grupo, array $emp, array $deLicencia): string
 {
     switch ($grupo) {
         case 'conmarcas':  return badge('Ponchó', 'emerald');
+        case 'tarde':      return badge('Tarde ' . (int) $emp['tardanza_min'] . ' min', 'amber');
         case 'incompleta': return badge('Sin salida', 'amber');
         case 'licencia':   return badge($deLicencia[(int) $emp['id']], 'indigo');
-        default:           return '<span class="badge badge-slate">Sin marcas</span>';
+        default:
+            // Sin marcas, pero el sistema puede saber POR QUÉ: un feriado y
+            // un domingo no son lo mismo que una ausencia, y llamarlos igual
+            // era lo único que esta pantalla no podía distinguir.
+            $ev = jorEvaluarDia(
+                ['id' => (int) $emp['id'], 'biotime_emp_code' => $emp['biotime_emp_code'] ?? null],
+                $GLOBALS['fecha'], null, null, !empty($GLOBALS['relojVivoHoy'])
+            );
+            return jorEstadoBadge($ev['estado'], $ev);
     }
 }
 
@@ -283,6 +319,8 @@ function colorEstadoDia(?string $estado): string
         'permiso'    => 'sky',
         'vacaciones' => 'indigo',
         'licencia'   => 'violet',
+        'feriado'    => 'cyan',
+        'descanso'   => 'slate',
     ][$estado] ?? 'slate';
 }
 
@@ -442,7 +480,7 @@ layout_start('Asistencia', 'Lo que registró el reloj biométrico, día a día',
   <?php /* Las tarjetas son además los filtros: la cifra que llama la atención
            es la que quieres aislar. Y ya no cuentan «lo que falta teclear»,
            porque no hay nada que teclear: cuentan lo que el reloj sabe. */ ?>
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
     <button type="button" @click="filtro = filtro === 'conmarcas' ? '' : 'conmarcas'"
             class="card px-4 py-3 text-left transition hover:border-emerald-300"
             :class="filtro === 'conmarcas' ? 'ring-2 ring-emerald-400 border-emerald-300' : ''">
@@ -456,6 +494,14 @@ layout_start('Asistencia', 'Lo que registró el reloj biométrico, día a día',
             title="Entraron pero no poncharon la salida: ese día no tiene horas">
       <div class="text-xs <?= $incompletas > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400 font-medium' ?>">Sin salida</div>
       <div class="text-2xl font-bold <?= $incompletas > 0 ? 'text-amber-600' : 'text-slate-300' ?>"><?= $incompletas ?></div>
+    </button>
+
+    <button type="button" @click="filtro = filtro === 'tarde' ? '' : 'tarde'"
+            class="card px-4 py-3 text-left transition hover:border-amber-300"
+            :class="filtro === 'tarde' ? 'ring-2 ring-amber-400 border-amber-300' : ''"
+            title="Llegaron pasada la tolerancia de su horario">
+      <div class="text-xs <?= $tardes > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400 font-medium' ?>">Llegaron tarde</div>
+      <div class="text-2xl font-bold <?= $tardes > 0 ? 'text-amber-600' : 'text-slate-300' ?>"><?= $tardes ?></div>
     </button>
 
     <button type="button" @click="filtro = filtro === 'licencia' ? '' : 'licencia'"

@@ -78,6 +78,17 @@ function permission_catalog(): array
             'rrhh_empleados'     => ['label' => 'Empleados', 'acciones' => $crud],
             'rrhh_departamentos' => ['label' => 'Departamentos y Puestos', 'acciones' => $crud],
             'rrhh_asistencia'    => ['label' => 'Asistencia', 'acciones' => ['ver' => 'Ver', 'registrar' => 'Registrar']],
+            // El horario decide quién llega tarde, así que cambiarlo NO es lo
+            // mismo que consultarlo: mover la hora de entrada media hora borra
+            // la tardanza de toda la plantilla hacia atrás.
+            'rrhh_jornadas'      => ['label' => 'Horarios de trabajo', 'acciones' => [
+                'ver'       => 'Ver los horarios y quién tiene cada uno',
+                'gestionar' => 'Crear horarios, asignarlos y recalcular la asistencia',
+            ]],
+            'rrhh_feriados'      => ['label' => 'Feriados', 'acciones' => [
+                'ver'       => 'Ver el calendario',
+                'gestionar' => 'Añadir, quitar y regenerar el año',
+            ]],
             'rrhh_nomina'        => ['label' => 'Nómina', 'acciones' => ['ver' => 'Ver', 'procesar' => 'Procesar', 'pagar' => 'Pagar']],
             'rrhh_vacaciones'    => ['label' => 'Vacaciones y Licencias', 'acciones' => ['ver' => 'Ver', 'crear' => 'Crear', 'aprobar' => 'Aprobar']],
             'tss'                => ['label' => 'TSS · Seguridad Social', 'acciones' => [

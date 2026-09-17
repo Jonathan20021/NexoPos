@@ -25,6 +25,11 @@
  * ---------------------------------------------------------------------------
  */
 
+// El día lo juzga `jorEvaluarDia()`, de jornadas.php, que tampoco se carga en
+// bootstrap. Se pide aquí para que la sincronización y la pantalla apliquen
+// exactamente el mismo criterio.
+require_once __DIR__ . '/jornadas.php';
+
 /**
  * Lo que hace falta para hablar con el reloj.
  *
@@ -589,6 +594,7 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
         'creadas' => 0, 'actualizadas' => 0, 'sin_cambio' => 0,
         'respetadas_manual' => [], 'sin_emparejar' => [], 'reloj_desajustado' => [],
         'incompletas' => [], 'fecha_mala' => 0, 'inactivos' => [],
+        'tardanzas' => [], 'sin_jornada' => [], 'con_recargo' => [],
         'desde' => $desde, 'hasta' => $hasta, 'simulado' => $simular, 'error' => null,
     ];
 
@@ -652,17 +658,37 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
             $parte['incompletas'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha;
         }
 
-        $horas = 0.0;
-        if ($salida !== null) {
-            $h = (strtotime($fecha . ' ' . $salida) - strtotime($fecha . ' ' . $entrada)) / 3600;
+        if ($salida !== null
+            && strtotime($fecha . ' ' . $salida) < strtotime($fecha . ' ' . $entrada)) {
             // Una jornada que cruza medianoche sale negativa. No se corrige
             // sola —«primera y última del día» ya la partió en dos— y se marca
             // como incompleta en vez de guardar horas absurdas.
-            if ($h < 0) { $salida = null; $parte['incompletas'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha . ' (cruza medianoche)'; }
-            else        { $horas = round($h, 2); }
+            $salida = null;
+            $parte['incompletas'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha . ' (cruza medianoche)';
         }
 
-        $ya = qOne("SELECT id, origen, hora_entrada, hora_salida FROM asistencias
+        // El día lo juzga `jorEvaluarDia()`, no este bucle: es la MISMA función
+        // que usa la pantalla al pintar. Tener dos criterios para lo mismo
+        // termina en una pantalla que dice «presente» sobre una fila guardada
+        // como «tardanza», y entonces ya no se sabe cuál de las dos miente.
+        $ev = jorEvaluarDia(
+            ['id' => (int) $emp['id'], 'biotime_emp_code' => $code],
+            $fecha, $entrada, $salida, true
+        );
+        if ($ev['tardanza_min'] > 0) {
+            $parte['tardanzas'][] = trim($emp['nombre'] . ' ' . $emp['apellido'])
+                                  . ' · ' . $fecha . ' · ' . $ev['tardanza_min'] . ' min';
+        }
+        if ($ev['sin_jornada']) $parte['sin_jornada'][(int) $emp['id']] = trim($emp['nombre'] . ' ' . $emp['apellido']);
+        foreach ($ev['avisos'] as $a) {
+            // Los avisos del evaluador que hablan de dinero —feriado trabajado,
+            // ponchar de vacaciones— no pueden quedarse dentro de la función.
+            if (str_contains($a, '205') || str_contains($a, 'dos veces')) {
+                $parte['con_recargo'][] = trim($emp['nombre'] . ' ' . $emp['apellido']) . ' · ' . $fecha . ' · ' . $a;
+            }
+        }
+
+        $ya = qOne("SELECT id, origen, hora_entrada, hora_salida, estado, tardanza_min FROM asistencias
                      WHERE empleado_id = ? AND fecha = ?", [(int) $emp['id'], $fecha]);
 
         if ($ya && $ya['origen'] === 'manual') {
@@ -685,18 +711,29 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
         }
 
         $datos = [
-            'hora_entrada'     => $entrada,
-            'hora_salida'      => $salida,
-            'horas_trabajadas' => $horas,
-            'horas_extra'      => 0,
-            'estado'           => 'presente',
-            'origen'           => 'biotime',
-            'biotime_sync_at'  => $ahora,
+            'hora_entrada'        => $entrada,
+            'hora_salida'         => $salida,
+            'horas_trabajadas'    => $ev['horas_trabajadas'],
+            'horas_extra'         => $ev['horas_extra'],
+            'horas_esperadas'     => $ev['horas_esperadas'],
+            'tardanza_min'        => (int) $ev['tardanza_min'],
+            'salida_temprana_min' => (int) $ev['salida_temprana_min'],
+            'jornada_id'          => $ev['jornada_id'],
+            // `sin_marcas` no cabe aquí: esta fila EXISTE porque hubo marcas.
+            'estado'              => $ev['estado'] === 'sin_marcas' ? 'presente' : $ev['estado'],
+            'origen'              => 'biotime',
+            'biotime_sync_at'     => $ahora,
         ];
 
         if ($ya) {
+            // Se comparan también el estado y la tardanza, no solo las horas:
+            // asignar un horario NO cambia las marcas, así que mirando solo la
+            // entrada y la salida el recálculo no vería nada que hacer y la
+            // tardanza no aparecería nunca sobre lo ya traído.
             if ((string) $ya['hora_entrada'] === (string) $entrada
-                && (string) $ya['hora_salida'] === (string) $salida) {
+                && (string) $ya['hora_salida'] === (string) $salida
+                && (string) $ya['estado'] === (string) $datos['estado']
+                && (int) $ya['tardanza_min'] === (int) $datos['tardanza_min']) {
                 $parte['sin_cambio']++;
                 continue;
             }
@@ -706,7 +743,12 @@ function bioSincronizar(string $desde, string $hasta, array $opciones = []): arr
             if (!$simular) {
                 dbInsert('asistencias', $datos + [
                     'empleado_id' => (int) $emp['id'],
-                    'sucursal_id' => (int) $emp['sucursal_id'],
+                    // NULL, no 0: `(int) null` daba 0, una sucursal que no
+                    // existe, y el aviso de «días sin salida» une con
+                    // `sucursales` — esas filas desaparecían del aviso sin
+                    // decir nada. La ficha permite no tener sucursal a
+                    // propósito, así que el caso es alcanzable.
+                    'sucursal_id' => $emp['sucursal_id'] !== null ? (int) $emp['sucursal_id'] : null,
                     'fecha'       => $fecha,
                 ]);
             }

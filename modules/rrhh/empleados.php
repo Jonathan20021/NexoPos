@@ -25,6 +25,7 @@ if (isPost()) {
         $sucursalId    = postInt('sucursal_id') ?: null;
         $departamentoId = postInt('departamento_id') ?: null;
         $puestoId      = postInt('puesto_id') ?: null;
+        $jornadaId     = postInt('jornada_id') ?: null;
         $fechaIngreso  = trim(post('fecha_ingreso'));
         $fechaSalida   = trim(post('fecha_salida'));
         $tipoContrato  = in_array(post('tipo_contrato'), $tiposContrato, true) ? post('tipo_contrato') : 'indefinido';
@@ -96,6 +97,7 @@ if (isPost()) {
                 'sucursal_id'      => $sucursalId,
                 'departamento_id'  => $departamentoId,
                 'puesto_id'        => $puestoId,
+                'jornada_id'       => $jornadaId,
                 'fecha_ingreso'    => $fechaIngreso,
                 'fecha_salida'     => $fechaSalida ?: null,
                 'tipo_contrato'    => $tipoContrato,
@@ -206,6 +208,7 @@ if (isPost()) {
 $sucursales    = sucursales_visibles();
 $departamentos = qAll("SELECT id, nombre FROM departamentos WHERE activo = 1 ORDER BY nombre");
 $puestos       = qAll("SELECT id, nombre, departamento_id, salario_base FROM puestos WHERE activo = 1 ORDER BY nombre");
+$jornadas      = qAll("SELECT id, nombre FROM jornadas WHERE activo = 1 ORDER BY nombre");
 $puestosSalario = [];
 foreach ($puestos as $p) $puestosSalario[(int) $p['id']] = (float) $p['salario_base'];
 
@@ -322,7 +325,7 @@ echo kpis([
                         'id' => $e['id'], 'nombre' => $e['nombre'], 'apellido' => $e['apellido'], 'cedula' => $e['cedula'],
                         'fecha_nacimiento' => $e['fecha_nacimiento'], 'genero' => $e['genero'] ?? '', 'telefono' => $e['telefono'], 'email' => $e['email'],
                         'direccion' => $e['direccion'], 'sucursal_id' => $e['sucursal_id'] ?? '', 'departamento_id' => $e['departamento_id'] ?? '',
-                        'puesto_id' => $e['puesto_id'] ?? '', 'fecha_ingreso' => $e['fecha_ingreso'],
+                        'puesto_id' => $e['puesto_id'] ?? '', 'jornada_id' => $e['jornada_id'] ?? '', 'fecha_ingreso' => $e['fecha_ingreso'],
                         'fecha_salida' => $e['fecha_salida'] ?? '', 'tipo_contrato' => $e['tipo_contrato'],
                         'salario' => $e['salario'], 'metodo_pago' => $e['metodo_pago'], 'banco' => $e['banco'], 'cuenta_bancaria' => $e['cuenta_bancaria'],
                         'estado' => $e['estado'],
@@ -350,10 +353,10 @@ echo kpis([
 <div x-data="{
         open:false,
         salarios: <?= e(json_encode($puestosSalario, JSON_UNESCAPED_UNICODE)) ?>,
-        form:{id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'},
+        form:{id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',jornada_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'},
         sugerirSalario(){ const s = this.salarios[this.form.puesto_id]; if (s && (!this.form.salario || parseFloat(this.form.salario) === 0)) this.form.salario = s; }
      }"
-     @emp:new.window="form={id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'}; open=true"
+     @emp:new.window="form={id:0,nombre:'',apellido:'',cedula:'',fecha_nacimiento:'',genero:'',telefono:'',email:'',direccion:'',sucursal_id:'',departamento_id:'',puesto_id:'',jornada_id:'',fecha_ingreso:'<?= date('Y-m-d') ?>',fecha_salida:'',tipo_contrato:'indefinido',salario:0,metodo_pago:'efectivo',banco:'',cuenta_bancaria:'',estado:'activo'}; open=true"
      @emp:edit.window="form=$event.detail; open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
@@ -430,6 +433,16 @@ echo kpis([
                 <option value="<?= (int) $p['id'] ?>"><?= e($p['nombre']) ?></option>
               <?php endforeach; ?>
             </select>
+          </div>
+          <div>
+            <label class="label">Horario de trabajo</label>
+            <select name="jornada_id" x-model="form.jornada_id" class="select">
+              <option value="">Sin horario</option>
+              <?php foreach ($jornadas as $j): ?>
+                <option value="<?= (int) $j['id'] ?>"><?= e($j['nombre']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <p class="text-xs text-slate-400 mt-1">Sin horario no se le calcula tardanza ni se le apunta nunca una falta.</p>
           </div>
           <div>
             <label class="label">Fecha de ingreso *</label>
