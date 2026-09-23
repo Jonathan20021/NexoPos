@@ -49,6 +49,8 @@ require_once dirname(__DIR__) . '/includes/campanas.php';   // puente al motor n
 require_once dirname(__DIR__) . '/includes/metas.php';
 require_once dirname(__DIR__) . '/includes/conciliacion.php';
 require_once dirname(__DIR__) . '/includes/promociones.php';
+require_once dirname(__DIR__) . '/includes/cockpit.php';        // Promotion Cockpit: rastro y análisis de descuentos
+require_once dirname(__DIR__) . '/includes/kpi_campanas.php';   // KPIs de campañas (usa cockpit.php)
 require_once dirname(__DIR__) . '/includes/ncf_reservas.php';
 require_once dirname(__DIR__) . '/includes/ecf.php';   // facturación electrónica (arrastra ecf_catalogos/trama/api)
 require_once dirname(__DIR__) . '/includes/monedas.php';

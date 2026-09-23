@@ -82,6 +82,8 @@ function nav_groups(): array
             ['Plantillas', 'file', url('modules/marketing/plantillas.php'), 'marketing.plantillas'],
             ['Diseño del correo', 'sun', url('modules/marketing/diseno.php'), 'marketing.diseno'],
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
+            ['Promotion Cockpit', 'pie', url('modules/marketing/cockpit.php'), 'cockpit.ver'],
+            ['KPIs de campañas', 'target', url('modules/marketing/kpi_campanas.php'), 'kpi_campanas.ver'],
         ]],
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],

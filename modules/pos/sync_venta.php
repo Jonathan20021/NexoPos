@@ -58,6 +58,7 @@ try {
     $r = registrarVentaPOS([
         'cart'           => $in['cart'] ?? [],
         'descuento'      => $in['descuento'] ?? 0,
+        'descuento_motivo' => $in['descuento_motivo'] ?? null,
         'cliente_id'     => $in['cliente_id'] ?? 1,
         'comprobante'    => $in['comprobante'] ?? 'consumidor',
         'metodo_pago_id' => $in['metodo_pago_id'] ?? 1,

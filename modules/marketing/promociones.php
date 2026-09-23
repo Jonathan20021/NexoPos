@@ -52,6 +52,13 @@ if (isPost()) {
                 'prioridad' => $prio, 'activo' => $activo,
             ];
 
+            // Código y familia para el Promotion Cockpit (migración P39).
+            if (cockpit_capturando()) {
+                $datos['codigo'] = mb_substr(trim(post('codigo')), 0, 40) ?: null;
+                $datos['tipo_descuento'] = array_key_exists(post('tipo_descuento'), cockpit_tipos_promocion())
+                    ? post('tipo_descuento') : null;
+            }
+
             // Material para el correo: existe solo con la migración de marketing
             // aplicada, así que se añade condicionalmente.
             if (mkt_disponible()) {
@@ -150,7 +157,10 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
           ?>
             <tr>
               <td>
-                <p class="font-semibold text-slate-700"><?= e($p['nombre']) ?></p>
+                <p class="font-semibold text-slate-700"><?= !empty($p['codigo']) ? '<span class="text-slate-400 font-mono text-xs">' . e($p['codigo']) . '</span> ' : '' ?><?= e($p['nombre']) ?></p>
+                <?php if (!empty($p['tipo_descuento'])): ?>
+                  <p class="text-xs text-slate-400"><?= e(cockpit_tipo_label($p['tipo_descuento'])) ?></p>
+                <?php endif; ?>
                 <?php if (!empty($p['descripcion'])): ?>
                   <p class="text-xs text-slate-400 max-w-[240px] truncate"><?= e($p['descripcion']) ?></p>
                 <?php endif; ?>
@@ -171,6 +181,7 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
                     <button onclick="<?= jsEvent('promo:edit', [
                         'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'tipo' => $p['tipo'],
                         'descripcion' => (string) ($p['descripcion'] ?? ''),
+                        'codigo' => (string) ($p['codigo'] ?? ''), 'tipo_descuento' => (string) ($p['tipo_descuento'] ?? ''),
                         'valor' => (float) $p['valor'], 'alcance' => $p['alcance'],
                         'objetivo_id' => $p['objetivo_id'] !== null ? (int) $p['objetivo_id'] : '',
                         'canal' => $p['canal'], 'fecha_inicio' => $p['fecha_inicio'], 'fecha_fin' => $p['fecha_fin'],
@@ -194,7 +205,7 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
 </div>
 
 <!-- Modal crear/editar -->
-<?php $promoVacia = ['id' => 0, 'nombre' => '', 'descripcion' => '', 'tipo' => 'porcentaje', 'valor' => 0,
+<?php $promoVacia = ['id' => 0, 'nombre' => '', 'descripcion' => '', 'codigo' => '', 'tipo_descuento' => '', 'tipo' => 'porcentaje', 'valor' => 0,
                     'alcance' => 'todos', 'objetivo_id' => '', 'canal' => 'ambos',
                     'fecha_inicio' => $hoy, 'fecha_fin' => $hoy, 'prioridad' => 0, 'activo' => 1]; ?>
 <div x-data="{open:false, f:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>, vacio:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>}"
@@ -216,6 +227,24 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
             <label class="label">Nombre *</label>
             <input type="text" name="nombre" x-model="f.nombre" required class="input" placeholder="Ej. Navidad 20%">
           </div>
+          <?php if (cockpit_capturando()): ?>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="label">Código interno</label>
+                <input type="text" name="codigo" x-model="f.codigo" maxlength="40" class="input" placeholder="Ej. 2025_HOLIDAY_SET">
+              </div>
+              <div>
+                <label class="label">Tipo de descuento</label>
+                <select name="tipo_descuento" x-model="f.tipo_descuento" class="select">
+                  <option value="">— Sin clasificar —</option>
+                  <?php foreach (cockpit_tipos_promocion() as $k => $lbl): ?>
+                    <option value="<?= e($k) ?>"><?= e($lbl) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+            <p class="text-xs text-slate-400 -mt-2">El tipo es la fila en la que esta promoción aparece en el Promotion Cockpit.</p>
+          <?php endif; ?>
           <?php if (mkt_disponible()): ?>
             <div>
               <label class="label">Descripción para el cliente</label>

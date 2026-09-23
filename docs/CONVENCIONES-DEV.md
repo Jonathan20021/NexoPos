@@ -209,10 +209,23 @@ arreglo de `rep_catalogo()`: el hub y los permisos salen de ahí.
   (que es inventario, no gasto) y las devoluciones (que ya restan del ingreso).
 - Otros ingresos: `rep_where_otros_ingresos()` (excluye ventas y cobros de abonos).
 
+## Promotion Cockpit (`includes/cockpit.php`, `includes/kpi_campanas.php`) — ver `docs/PROMOTION-COCKPIT.md`
+- **Toda venta nueva guarda `venta_detalles.precio_lista` y `promocion_id`.** Si creas otro camino
+  que inserte líneas de venta sin pasar por `registrarVentaPOS()`, guárdalos también, o esa
+  venta aparecerá en el cockpit como «sin promoción» aunque la tuviera.
+- Comprueba `cockpit_capturando()` antes de escribir esas columnas: el código puede llegar antes
+  que la migración P39.
+- Un tipo de descuento nuevo se añade en `cockpit_tipos()`; un motivo de caja, en
+  `cockpit_motivos_caja()` con una clave que exista en `cockpit_tipos()` (la prueba lo vigila).
+- El mapeo de canales de la marca vive solo en `cockpit_canal_sql()`.
+- Si tocas `cockpit_efectos()`, corre `php pruebas/cockpit.php`: los efectos tienen que sumar
+  exactamente la variación del margen.
+
 ## Gráficos (`includes/charts.php`, SVG puro, sin librerías)
 `sparkline()`, `barChart()`, `barChartComparado()`, `lineChart($series,$labels,$opts)`,
 `donutMulti($items,$centroTitulo,$centroValor)`, `barraApilada()`, `donut()`, `numAbrev($n)`.
 
+`lineChart()` acepta `formato` 'money' (por defecto), 'num', 'pct' (tasas con un decimal) y 'dec'.
 `lineChart()` calcula el margen izquierdo a partir de la etiqueta más ancha del eje y
 abrevia los valores (`200K`, `1.25M`); la cifra exacta va en el tooltip de cada punto.
 No fijes márgenes a ojo: con cifras grandes el eje se recorta contra el borde.
@@ -525,6 +538,7 @@ La toma de inventario. Flujo: **abrir → capturar → aplicar** (o cancelar).
 php pruebas/nomina.php
 php pruebas/ecf.php
 php pruebas/documentos.php
+php pruebas/cockpit.php
 ```
 
 `pruebas/nomina.php` cubre el cálculo de nómina dominicana (`includes/nomina.php`):

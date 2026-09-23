@@ -111,6 +111,10 @@ function rep_catalogo(): array
                 ['horarios.php', 'Horarios y tráfico', 'A qué hora y qué día se vende, para ajustar turnos e inventario.', 'clock'],
                 // Lo abre quien mueve la mercancía, no solo quien analiza ventas.
                 ['transferencias.php', 'Movimiento entre tiendas', 'Qué salió de dónde y a dónde, con su motivo y quién autorizó la salida.', 'transfer', 'transferencias.ver'],
+                // Viven en Marketing (tienen su propio permiso), pero se listan
+                // aquí porque es donde se buscan las ventas y los descuentos.
+                ['marketing/cockpit.php', 'Promotion Cockpit', 'Venta bruta, descuento, venta neta y margen por tipo de promoción, este año contra el anterior.', 'pie', 'cockpit.ver'],
+                ['marketing/kpi_campanas.php', 'KPIs de campañas', 'Holiday, Black Friday y cada activación: canal, días, SKUs foco, inversión y retorno.', 'target', 'kpi_campanas.ver'],
             ],
         ],
     ];

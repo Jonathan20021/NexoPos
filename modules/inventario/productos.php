@@ -61,6 +61,13 @@ if (isPost()) {
             ];
             if (tiendas_disponible()) $data['tienda_id'] = $tiendaId;
 
+            // Clasificación de la marca para el Promotion Cockpit (migración P39).
+            if (cockpit_capturando()) {
+                $data['segmento'] = mb_substr(trim(post('segmento')), 0, 60) ?: null;
+                $data['linea']    = mb_substr(trim(post('linea')), 0, 60) ?: null;
+                $data['es_heroe'] = postInt('es_heroe', 0) ? 1 : 0;
+            }
+
             // Ficha sanitaria. Solo la escribe quien tiene el permiso: el catálogo
             // lo mantiene mucha gente, pero el dato que se le enseña a un inspector
             // no debería poder cambiarlo cualquiera.
@@ -395,7 +402,8 @@ ob_start(); ?>
                              'descripcion'=>$p['descripcion'],'tienda_id'=>$p['tienda_id'] ?? '','categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],
                              'unidad_id'=>$p['unidad_id'],'tipo'=>$p['tipo'],'precio_compra'=>$p['precio_compra'],
                              'precio_venta'=>$p['precio_venta'],'itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],
-                             'imagen'=>$p['imagen'],'activo'=>$p['activo']];
+                             'imagen'=>$p['imagen'],'activo'=>$p['activo'],
+                             'segmento'=>$p['segmento'] ?? '','linea'=>$p['linea'] ?? '','es_heroe'=>(int) ($p['es_heroe'] ?? 0)];
                     if (san_disponible()) {
                         $edit += [
                             'regulado' => (int) ($p['regulado'] ?? 0), 'controla_lote' => (int) ($p['controla_lote'] ?? 0),
@@ -479,6 +487,25 @@ ob_start(); ?>
           <?php endif; ?>
           <div><label class="label">Categoría</label><select name="categoria_id" x-model="form.categoria_id" class="select"><option value="">— Sin categoría —</option><?php foreach ($categorias as $c): ?><option value="<?= (int) $c['id'] ?>"><?= e($c['nombre']) ?></option><?php endforeach; ?></select></div>
           <div><label class="label">Marca</label><select name="marca_id" x-model="form.marca_id" class="select"><option value="">— Sin marca —</option><?php foreach ($marcas as $m): ?><option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?></option><?php endforeach; ?></select></div>
+          <?php if (cockpit_capturando()):
+            $sugSeg = qCol("SELECT DISTINCT segmento FROM productos WHERE segmento IS NOT NULL AND segmento <> '' ORDER BY segmento");
+            $sugLin = qCol("SELECT DISTINCT linea FROM productos WHERE linea IS NOT NULL AND linea <> '' ORDER BY linea"); ?>
+          <div>
+            <label class="label" for="prod_segmento">Segmento</label>
+            <input id="prod_segmento" name="segmento" x-model="form.segmento" list="lista_segmentos" maxlength="60" class="input" placeholder="Body, Face, Hand…">
+            <datalist id="lista_segmentos"><?php foreach ($sugSeg as $v): ?><option value="<?= e($v) ?>"><?php endforeach; ?></datalist>
+          </div>
+          <div>
+            <label class="label" for="prod_linea">Línea</label>
+            <input id="prod_linea" name="linea" x-model="form.linea" list="lista_lineas" maxlength="60" class="input" placeholder="Almond, Shea, Immortelle…">
+            <datalist id="lista_lineas"><?php foreach ($sugLin as $v): ?><option value="<?= e($v) ?>"><?php endforeach; ?></datalist>
+          </div>
+          <label class="sm:col-span-2 flex items-center gap-2 text-sm text-slate-600 -mt-1">
+            <input type="hidden" name="es_heroe" value="0">
+            <input type="checkbox" name="es_heroe" value="1" :checked="form.es_heroe==1" class="rounded border-slate-300 text-blue-600">
+            Producto héroe <span class="text-slate-400">(se sigue aparte en el Promotion Cockpit)</span>
+          </label>
+          <?php endif; ?>
           <div><label class="label">Unidad</label><select name="unidad_id" x-model="form.unidad_id" class="select"><option value="">— Unidad —</option><?php foreach ($unidades as $u): ?><option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option><?php endforeach; ?></select></div>
           <div><label class="label">Tipo</label><select name="tipo" x-model="form.tipo" class="select"><option value="producto">Producto (controla stock)</option><option value="servicio">Servicio</option></select></div>
           <div><label class="label">Precio de compra</label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input"></div>
@@ -609,6 +636,7 @@ function prodModal() {
         tienda_id: <?= json_encode($tieFiltro > 0 ? (string) $tieFiltro : '') ?>,
         categoria_id: '', marca_id: '', unidad_id: '', tipo: 'producto',
         precio_compra: 0, precio_venta: 0, itbis_aplica: 1, stock_minimo: 0, imagen: '', activo: 1,
+        segmento: '', linea: '', es_heroe: 0,
         // Ficha sanitaria: un producto nace NO regulado; se marca a conciencia.
         regulado: 0, controla_lote: 0, registro_sanitario: '', registro_entidad: '',
         registro_categoria: '', registro_emision: '', registro_vencimiento: '',

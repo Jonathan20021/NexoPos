@@ -29,6 +29,10 @@ function registrarVentaPOS(array $in, array $ctx): array
 
     $cart        = is_array($in['cart'] ?? null) ? $in['cart'] : [];
     $descuento   = max(0.0, (float) ($in['descuento'] ?? 0));
+    // Por qué el cajero hizo el descuento manual. Alimenta el Promotion Cockpit;
+    // un valor que no está en el catálogo cae en «manual» en vez de romper la venta.
+    $descMotivo  = array_key_exists((string) ($in['descuento_motivo'] ?? ''), cockpit_motivos_caja())
+        ? (string) $in['descuento_motivo'] : 'manual';
     $clienteId   = (int) ($in['cliente_id'] ?? 1) ?: 1;
     // Se valida contra los comprobantes REALMENTE disponibles: si alguien manda
     // «gubernamental» sin secuencia E45 viva, cae a consumidor en vez de romper
@@ -68,7 +72,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     // abortar una transacción por interbloqueo o espera de bloqueo. Eso no es un
     // problema del negocio y no debe llegarle al cajero como «error»: se reintenta
     // y la venta entra. Los errores reales (stock, crédito, NCF) suben igual.
-    $resultado = txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados, $tiendaId) {
+    $resultado = txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados, $tiendaId, $descMotivo) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -105,8 +109,12 @@ function registrarVentaPOS(array $in, array $ctx): array
             }
             // Precio con promoción vigente (se calcula en el servidor). Una muestra
             // ignora la promoción: su precio es 0 de todos modos.
-            $precioReal = aplicarPromocion((float) $p['precio_venta'], $p, 'pos')['precio'];
+            $promo = aplicarPromocion((float) $p['precio_venta'], $p, 'pos');
+            $precioReal = $promo['precio'];
             $precio = $esMuestra ? 0.0 : $precioReal;
+            // Rastro para el Promotion Cockpit: qué promoción ganó. Una muestra
+            // no «usa» la promoción: su descuento es el regalo entero.
+            $promocionId = (!$esMuestra && $promo['promo']) ? (int) $promo['promo']['id'] : null;
 
             // Precio pactado en una cotización aceptada.
             //
@@ -119,6 +127,8 @@ function registrarVentaPOS(array $in, array $ctx): array
             // propia cotización guardada en la base.
             if (!$esMuestra && $preciosPactados && isset($item['precio']) && (float) $item['precio'] >= 0) {
                 $precio = round((float) $item['precio'], 2);
+                // El precio lo decidió la negociación, no la promoción.
+                $promocionId = null;
             }
             $base   = round($precio * $cant, 2);
 
@@ -158,6 +168,9 @@ function registrarVentaPOS(array $in, array $ctx): array
                 'pid' => $pid, 'nombre' => $nombreLinea, 'tipo' => $p['tipo'], 'cant' => $cant,
                 'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis,
                 'es_muestra' => $esMuestra ? 1 : 0, 'precio_original' => $esMuestra ? $precioReal : 0.0,
+                // Precio de catálogo en el momento de vender: la diferencia contra
+                // `precio` es lo que costó la promoción (o la negociación).
+                'precio_lista' => round((float) $p['precio_venta'], 2), 'promocion_id' => $promocionId,
                 // Datos fiscales CONGELADOS. Si mañana el producto cambia de tasa
                 // o de unidad, el comprobante ya emitido debe seguir declarando lo
                 // que se declaró ese día; derivarlo por JOIN reescribiría el pasado.
@@ -267,6 +280,7 @@ function registrarVentaPOS(array $in, array $ctx): array
             'tienda_id' => $tienda,
             'cliente_id' => $clienteId, 'usuario_id' => $uid, 'fecha' => $fecha,
             'subtotal' => $subtotal, 'descuento' => $descuento, 'itbis' => $itbisTotal, 'total' => $total,
+        ] + (cockpit_capturando() ? ['descuento_motivo' => $descuento > 0 ? $descMotivo : null] : []) + [
             'costo_total' => $costoTotal, 'tipo_comprobante' => $comprobante, 'ncf' => $ncf, 'estado' => 'completada',
             'canal_venta' => $canal, 'uuid' => $uuid,
             // Vacío cuando el comprobante es preimpreso; '31'/'32' cuando es electrónico.
@@ -288,7 +302,8 @@ function registrarVentaPOS(array $in, array $ctx): array
                 'ecf_unidad_medida'         => $l['ecf_unidad'],
                 'ecf_bien_servicio'         => $l['ecf_bien'],
                 'ecf_impuesto_adicional'    => $l['ecf_impuesto'],
-            ]);
+            // Solo si la migración P39 ya corrió: el código puede llegar antes.
+            ] + (cockpit_capturando() ? ['precio_lista' => $l['precio_lista'], 'promocion_id' => $l['promocion_id']] : []));
         }
 
         // 5) Descuento de stock SIEMPRE en orden de producto_id.

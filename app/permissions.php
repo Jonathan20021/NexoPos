@@ -172,6 +172,12 @@ function permission_catalog(): array
         ],
         'Marketing' => [
             'promociones' => ['label' => 'Promociones', 'acciones' => $crud],
+            // Análisis de solo lectura: venta bruta, descuento y margen por tipo de
+            // promoción. No se deduce de promociones.ver porque enseña márgenes.
+            'cockpit'      => ['label' => 'Promotion Cockpit', 'acciones' => [
+                'ver' => 'Ver el análisis de descuentos, stacking y margen',
+            ]],
+            'kpi_campanas' => ['label' => 'KPIs de campañas (Holiday, Black Friday…)', 'acciones' => $crud],
             'campanas'    => ['label' => 'Campañas (correo y WhatsApp)', 'acciones' => [
                 'ver'      => 'Ver',
                 'crear'    => 'Crear',

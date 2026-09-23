@@ -260,6 +260,15 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
         <span>Descuento</span>
         <input type="number" step="0.01" min="0" x-model.number="descuento" class="w-24 text-right input py-1 px-2 text-sm">
       </div>
+      <?php // El motivo alimenta el Promotion Cockpit: sin él, todo descuento manual es igual. ?>
+      <div x-show="descuento > 0" x-cloak class="flex justify-between text-sm text-slate-500 items-center gap-3">
+        <label for="pos_desc_motivo" class="shrink-0">Motivo</label>
+        <select id="pos_desc_motivo" x-model="descuento_motivo" class="select py-1 px-2 text-sm max-w-[13rem]">
+          <?php foreach (cockpit_motivos_caja() as $k => $lbl): ?>
+            <option value="<?= e($k) ?>"><?= e($lbl) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <div class="flex justify-between text-sm text-slate-500"><span>ITBIS (<?= rtrim(rtrim(number_format($tasa, 2), '0'), '.') ?>%)</span><span x-text="fmt(itbis)"></span></div>
       <div class="flex justify-between text-lg font-extrabold text-slate-800 pt-2 border-t border-slate-100"><span>Total</span><span x-text="fmt(total)"></span></div>
       <button @click="openPay()" :disabled="cart.length===0" class="btn btn-primary w-full py-3 text-base mt-1 disabled:opacity-50"><?= icon('cash', 'w-5 h-5') ?> Cobrar</button>
@@ -410,7 +419,7 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
 function pos() {
   return {
     productos: <?= json_encode($prodJs, JSON_UNESCAPED_UNICODE) ?>,
-    search: '', cat: 0, cart: [], descuento: 0,
+    search: '', cat: 0, cart: [], descuento: 0, descuento_motivo: 'manual',
     pay: false, comprobante: 'consumidor', cliente_id: 1,
     metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
     canal_venta: 'Mostrador',
@@ -457,6 +466,7 @@ function pos() {
       var payload = {
         cart: this.cart.map(function (i) { return { id: i.id, cant: i.cant, muestra: i.muestra ? 1 : 0 }; }),
         descuento: this.descuento || 0,
+        descuento_motivo: this.descuento_motivo,
         cliente_id: this.cliente_id,
         comprobante: this.comprobante,
         metodo_pago_id: this.metodo_pago_id,
@@ -486,7 +496,7 @@ function pos() {
         snap.ncf = r.ncf || null;   // NCF fiscal tomado de la reserva del terminal (offline)
         this.prov = snap;
         this.provisional = true;
-        this.cart = []; this.descuento = 0; this.recibido = 0;
+        this.cart = []; this.descuento = 0; this.descuento_motivo = 'manual'; this.recibido = 0;
         return;
       }
       // Error de negocio: se queda en el modal para corregir.

@@ -19,6 +19,7 @@ try {
     $r = registrarVentaPOS([
         'cart'           => $cart,
         'descuento'      => postNum('descuento'),
+        'descuento_motivo' => post('descuento_motivo'),
         'cliente_id'     => postInt('cliente_id'),
         'comprobante'    => post('comprobante'),
         'metodo_pago_id' => postInt('metodo_pago_id'),

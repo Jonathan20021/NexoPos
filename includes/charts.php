@@ -66,17 +66,27 @@ function numAbrev($v): string
  *
  * @param array $series [['nombre'=>'Ventas','color'=>marca_app(),'valores'=>[1,2,3],'area'=>true], ...]
  * @param array $labels etiquetas del eje X (misma longitud que los valores)
- * @param array $opts   alto (px del viewBox), formato ('money'|'num'), leyenda (bool)
+ * @param array $opts   alto (px del viewBox), formato ('money'|'num'|'pct'|'dec'), leyenda (bool)
  */
 function lineChart(array $series, array $labels, array $opts = []): string
 {
     $W = 760;
     $H = (int) ($opts['alto'] ?? 260);
     $padT = 16; $padB = 32;
-    $esMoneda = ($opts['formato'] ?? 'money') === 'money';
-    // El eje se abrevia (200K) y el tooltip lleva la cifra exacta.
-    $fmtEje  = fn($v) => numAbrev($v);
-    $fmtReal = $esMoneda ? fn($v) => money($v) : fn($v) => number_format((float) $v, 0);
+    $formato  = $opts['formato'] ?? 'money';
+    // El eje se abrevia (200K) y el tooltip lleva la cifra exacta. Las tasas
+    // ('pct') van con un decimal: 15.5% y 16% no son lo mismo en un descuento.
+    $fmtEje  = match ($formato) {
+        'pct'   => fn($v) => rtrim(rtrim(number_format((float) $v, 1), '0'), '.') . '%',
+        'dec'   => fn($v) => number_format((float) $v, 1),
+        default => fn($v) => numAbrev($v),
+    };
+    $fmtReal = match ($formato) {
+        'money' => fn($v) => money($v),
+        'pct'   => fn($v) => number_format((float) $v, 1) . '%',
+        'dec'   => fn($v) => number_format((float) $v, 2),
+        default => fn($v) => number_format((float) $v, 0),
+    };
 
     $n = count($labels);
     if ($n === 0 || !$series) return '<p class="text-sm text-slate-400 py-10 text-center">Sin datos para graficar.</p>';

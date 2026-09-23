@@ -244,6 +244,9 @@ CREATE TABLE productos (
   descripcion VARCHAR(255) NULL,
   categoria_id INT UNSIGNED NULL,
   marca_id INT UNSIGNED NULL,
+  segmento VARCHAR(60) NULL,               -- clasificación de la marca: Body, Face, Hand… (NULL = se usa la categoría)
+  linea VARCHAR(60) NULL,                  -- línea: Almond, Shea, Immortelle…
+  es_heroe TINYINT(1) NOT NULL DEFAULT 0,  -- producto héroe (foco del Promotion Cockpit)
   unidad_id INT UNSIGNED NULL,
   tienda_id INT UNSIGNED NULL,             -- marca comercial (NULL = sin marca asignada)
   tipo ENUM('producto','servicio') NOT NULL DEFAULT 'producto',
@@ -615,6 +618,7 @@ CREATE TABLE ventas (
   fecha_retencion DATE NULL,            -- DGII 607 col.7
   subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
+  descuento_motivo VARCHAR(40) NULL,                         -- por qué se hizo el descuento manual (ver cockpit_motivos_caja())
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,                    -- col.9
   itbis_retenido_terceros DECIMAL(12,2) NOT NULL DEFAULT 0,  -- col.10
   itbis_percibido DECIMAL(12,2) NOT NULL DEFAULT 0,          -- col.11
@@ -662,6 +666,8 @@ CREATE TABLE venta_detalles (
   descripcion VARCHAR(180) NOT NULL,
   cantidad DECIMAL(12,3) NOT NULL,
   precio_unitario DECIMAL(12,2) NOT NULL,
+  precio_lista DECIMAL(12,2) NULL,                   -- precio de catálogo al vender (antes de la promoción). NULL = venta anterior a P39
+  promocion_id INT UNSIGNED NULL,                    -- promoción que ganó en esta línea (sin FK: borrar una promo vieja no debe fallar)
   costo_unitario DECIMAL(12,2) NOT NULL DEFAULT 0,
   descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -672,6 +678,7 @@ CREATE TABLE venta_detalles (
   KEY idx_vd_venta (venta_id),
   KEY idx_vd_producto (producto_id),
   KEY idx_vd_producto_venta (producto_id, venta_id),
+  KEY idx_vd_promocion (promocion_id),
   -- Cobertura: los reportes entran por `ventas` filtrando fecha y saltan aquí por
   -- venta_id. Con estas columnas dentro del índice la unión no toca la tabla.
   -- Sin él, el top de productos del dashboard pasa de 318 ms a 3 segundos con
@@ -1112,6 +1119,8 @@ DROP TABLE IF EXISTS promociones;
 CREATE TABLE promociones (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   nombre       VARCHAR(120) NOT NULL,
+  codigo       VARCHAR(40) NULL,                       -- código interno de la promo (Promotion Cockpit)
+  tipo_descuento VARCHAR(40) NULL,                     -- familia: clave de cockpit_tipos()
   descripcion  VARCHAR(255) NULL,
   imagen       VARCHAR(255) NULL,
   tipo         ENUM('porcentaje','monto') NOT NULL DEFAULT 'porcentaje',
@@ -1129,6 +1138,80 @@ CREATE TABLE promociones (
   KEY idx_promo_vigencia (activo, fecha_inicio, fecha_fin),
   KEY idx_promo_alcance (alcance, objetivo_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- KPIs de campañas (Holiday, Black Friday…). Ver docs/PROMOTION-COCKPIT.md
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS kpi_campanas;
+CREATE TABLE kpi_campanas (
+  id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  nombre        VARCHAR(120) NOT NULL,
+  descripcion   VARCHAR(255) NULL,
+  fecha_inicio  DATE NOT NULL,
+  fecha_fin     DATE NOT NULL,
+  -- Periodo comparable del año anterior. Se guarda y no se deduce: el Black
+  -- Friday no cae el mismo día del calendario dos años seguidos.
+  ly_inicio     DATE NOT NULL,
+  ly_fin        DATE NOT NULL,
+  sucursal_id   INT UNSIGNED NULL,          -- NULL = todas
+  tienda_id     INT UNSIGNED NULL,          -- NULL = todas las marcas
+  meta_ventas   DECIMAL(14,2) NOT NULL DEFAULT 0,
+  -- Pesos por euro para reportar la inversión a la casa matriz. Opcional.
+  tasa_eur      DECIMAL(12,4) NULL,
+  notas         TEXT NULL,
+  created_by    INT UNSIGNED NULL,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_kc_fechas (fecha_inicio, fecha_fin)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS kpi_campana_productos;
+CREATE TABLE kpi_campana_productos (
+  campana_id  INT UNSIGNED NOT NULL,
+  producto_id INT UNSIGNED NOT NULL,
+  orden       INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (campana_id, producto_id),
+  CONSTRAINT fk_kcp_campana  FOREIGN KEY (campana_id)  REFERENCES kpi_campanas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_kcp_producto FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+DROP TABLE IF EXISTS kpi_campana_inversiones;
+CREATE TABLE kpi_campana_inversiones (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  campana_id  INT UNSIGNED NOT NULL,
+  rubro       VARCHAR(40) NOT NULL,         -- clave de kpi_rubros_inversion()
+  detalle     VARCHAR(160) NULL,
+  monto       DECIMAL(14,2) NOT NULL DEFAULT 0,  -- RD$
+  resultado   VARCHAR(255) NULL,            -- KPI logrado o comentario
+  PRIMARY KEY (id),
+  KEY idx_kci_campana (campana_id),
+  CONSTRAINT fk_kci_campana FOREIGN KEY (campana_id) REFERENCES kpi_campanas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- KPIs que no salen del sistema: se capturan a mano.
+DROP TABLE IF EXISTS kpi_campana_metricas;
+CREATE TABLE kpi_campana_metricas (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  campana_id  INT UNSIGNED NOT NULL,
+  metrica     VARCHAR(40) NOT NULL,         -- clave de kpi_metricas_manuales()
+  valor       DECIMAL(16,2) NULL,
+  valor_ly    DECIMAL(16,2) NULL,
+  nota        VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kcm (campana_id, metrica),
+  CONSTRAINT fk_kcm_campana FOREIGN KEY (campana_id) REFERENCES kpi_campanas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Meta de venta neta por canal (Retail, Mayoreo, Web, Social selling).
+DROP TABLE IF EXISTS kpi_campana_metas;
+CREATE TABLE kpi_campana_metas (
+  campana_id  INT UNSIGNED NOT NULL,
+  canal       VARCHAR(20) NOT NULL,
+  meta        DECIMAL(14,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (campana_id, canal),
+  CONSTRAINT fk_kcmeta_campana FOREIGN KEY (campana_id) REFERENCES kpi_campanas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ===================== MONEDAS · CxP · COTIZACIONES ==========================
 -- La contabilidad vive en pesos: todos los importes de `transacciones`,
