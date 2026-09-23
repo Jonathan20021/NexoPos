@@ -67,7 +67,7 @@ if (isPost()) {
     if ($accion === 'inversion_agregar') {
         $rubro = (string) post('rubro');
         $monto = round(postNum('monto'), 2);
-        if (!array_key_exists($rubro, kpi_rubros_inversion()) || $monto <= 0) {
+        if (!array_key_exists($rubro, kpi_rubros_inversion(true)) || $monto <= 0) {
             flash('error', 'Elige el rubro y un monto mayor que cero.');
         } else {
             dbInsert('kpi_campana_inversiones', [
@@ -129,7 +129,7 @@ $foco = qAll("SELECT p.id, p.codigo, p.nombre FROM kpi_campana_productos kp JOIN
               WHERE kp.campana_id = ? ORDER BY kp.orden, p.nombre", [$id]);
 $esTop = !$foco;
 if ($esTop) {
-    $top = kpi_skus($c, $c['fecha_inicio'], $c['fecha_fin'], null, 20);
+    $top = kpi_skus($c, $c['fecha_inicio'], $c['fecha_fin'], null, cockpit_param_int('top_skus'));
     $foco = $top ? qAll("SELECT id, codigo, nombre FROM productos WHERE id IN (" . implode(',', array_keys($top)) . ")") : [];
     usort($foco, fn($a, $b) => ($top[$b['id']]['ns'] ?? 0) <=> ($top[$a['id']]['ns'] ?? 0));
 }
@@ -144,8 +144,10 @@ $tasaEur = (float) ($c['tasa_eur'] ?? 0);
 // KPIs derivados.
 $atv  = fn(array $r) => kpi_div($r['ns'], $r['tickets']);
 $upt  = fn(array $r) => kpi_div($r['unidades'], $r['tickets']);
-$trafico = $mval('trafico'); $traficoLY = $mval('trafico', 'valor_ly');
-$sesiones = $mval('sesiones_web'); $sesionesLY = $mval('sesiones_web', 'valor_ly');
+// Qué KPI capturado hace de tráfico y cuál de sesiones web lo decide la configuración.
+$kTrafico = kpi_metrica_rol('trafico'); $kSesiones = kpi_metrica_rol('sesiones_web');
+$trafico = $kTrafico ? $mval($kTrafico) : null; $traficoLY = $kTrafico ? $mval($kTrafico, 'valor_ly') : null;
+$sesiones = $kSesiones ? $mval($kSesiones) : null; $sesionesLY = $kSesiones ? $mval($kSesiones, 'valor_ly') : null;
 $kpi = [
     'ns'         => [$T['ns'], $L['ns']],
     'tickets'    => [$T['tickets'], $L['tickets']],
@@ -213,7 +215,7 @@ if (quiere_excel()) {
     $sh->fromArray(['Channel', 'Net Sales TY', 'Net Sales LY', 'Growth vs.LY (%)', 'Net Sales TY vs. Target', 'Target', 'Ticket count TY', 'Ticket count LY',
                     'Growth vs.LY (%)', 'ATV TY', 'ATV LY', 'Growth vs.LY (%)', 'New customers TY', 'New customers LY', 'Growth vs.LY (%)'], null, 'A1');
     $cab($sh, 'A1:O1', $azul);
-    $nombresEn = ['retail' => 'Retail', 'mayoreo' => 'Wholesale', 'web' => 'Web', 'social' => 'Social Selling'];
+    $nombresEn = cockpit_canales_en();
     $f = 2;
     foreach (array_merge(array_keys($canales), ['total']) as $k) {
         $a = $ty[$k]; $b = $ly[$k];
@@ -295,9 +297,9 @@ if (quiere_excel()) {
         ['E-COMMERCE ON-SITE', 'Returning customer rate (%)', $kpi['recurr_web'][0], null],
         ['E-COMMERCE ON-SITE', 'Net Sales', $ty['web']['ns'], $ly['web']['ns']],
     ];
-    foreach (kpi_metricas_manuales() as $k => [$grupo, $lbl]) {
+    foreach (kpi_metricas_def() as $k => $d) {
         if (!isset($met[$k])) continue;
-        $filasK[] = [mb_strtoupper($grupo), $lbl, $mval($k), $mval($k, 'valor_ly'), null, $met[$k]['nota'] ?? ''];
+        $filasK[] = [mb_strtoupper($d['grupo']), $d['nombre_en'], $mval($k), $mval($k, 'valor_ly'), null, $met[$k]['nota'] ?? ''];
     }
     $f = 2;
     foreach ($filasK as $r) {
@@ -377,6 +379,27 @@ echo rep_kpis([
       <button class="btn btn-primary"><?= icon('save', 'w-4 h-4') ?> Guardar metas</button>
     </form>
   <?php endif; ?>
+  <?php
+  $catC = []; $cTy = []; $cLy = []; $cMeta = [];
+  foreach ($canales as $k => $lbl) {
+      $catC[] = $lbl;
+      $cTy[] = round($ty[$k]['ns']); $cLy[] = round($ly[$k]['ns']);
+      $cMeta[] = ($R['metas'][$k] ?? 0) > 0 ? round($R['metas'][$k]) : null;
+  }
+  ?>
+  <div class="px-4 pt-4">
+    <?= grafico([
+        'legend' => ['data' => ['Este año', 'Año anterior', 'Meta']],
+        'xAxis' => ['type' => 'category', 'data' => $catC],
+        'yAxis' => ['type' => 'value'],
+        'series' => [
+            ['name' => 'Este año', 'type' => 'bar', 'data' => $cTy, 'barMaxWidth' => 34, 'itemStyle' => ['color' => GRAF_TY, 'borderRadius' => [4, 4, 0, 0]]],
+            ['name' => 'Año anterior', 'type' => 'bar', 'data' => $cLy, 'barMaxWidth' => 34, 'itemStyle' => ['color' => GRAF_LY, 'borderRadius' => [4, 4, 0, 0]]],
+            // La meta es una marca, no una barra: un trazo horizontal sobre cada canal.
+            ['name' => 'Meta', 'type' => 'scatter', 'data' => $cMeta, 'symbol' => 'rect', 'symbolSize' => [56, 3], 'itemStyle' => ['color' => '#0f172a'], 'z' => 5],
+        ],
+    ], ['formato' => 'money0', 'titulo' => 'Venta por canal contra meta'], '260px') ?>
+  </div>
   <div class="overflow-x-auto">
     <table class="data-table text-[13px] whitespace-nowrap">
       <thead><tr>
@@ -419,19 +442,29 @@ echo rep_kpis([
 
 <!-- Día por día -->
 <?php
-$labels = []; $sa = []; $sb = []; $i = 0;
-foreach ($diasTY as $d => $a) { $labels[] = date('d/m', strtotime($d)); $sa[] = $a['ns']; $sb[] = $diasLY[$i++]['ns'] ?? 0; }
+$labels = []; $sa = []; $sb = []; $ta = []; $tb = []; $i = 0;
+foreach ($diasTY as $d => $a) {
+    $labels[] = ['', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'][(int) date('N', strtotime($d))] . ' ' . date('d/m', strtotime($d));
+    $sa[] = round($a['ns']); $sb[] = round($diasLY[$i]['ns'] ?? 0);
+    $ta[] = (int) $a['tickets']; $tb[] = (int) ($diasLY[$i]['tickets'] ?? 0);
+    $i++;
+}
 ?>
 <section class="card overflow-hidden mb-5">
   <div class="p-4 border-b border-slate-100">
     <h3 class="font-bold text-slate-800">Día por día</h3>
-    <p class="text-sm text-slate-400">Cada día de la campaña contra el mismo día del periodo comparable (la hoja «Black Friday»)<?= count($diasTY) >= 93 ? ' · se muestran los primeros 93 días' : '' ?></p>
+    <p class="text-sm text-slate-400">Cada día de la campaña contra el mismo día del periodo comparable (la hoja «Black Friday»)<?= count($diasTY) >= cockpit_param_int('dias_max') ? ' · se muestran los primeros ' . cockpit_param_int('dias_max') . ' días' : '' ?></p>
   </div>
-  <div class="p-4">
-    <?= lineChart([
-        ['nombre' => 'Este año', 'color' => marca_app(), 'valores' => $sa, 'area' => true],
-        ['nombre' => 'Año anterior', 'color' => '#cbd5e1', 'valores' => $sb, 'punteada' => true],
-    ], $labels, ['alto' => 240]) ?>
+  <div class="p-4 grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <div class="xl:col-span-2">
+      <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Venta neta por día</p>
+      <?= grafico_lineas_ty_ly($labels, $sa, $sb, ['formato' => 'money0', 'titulo' => 'Venta neta por día'], '300px', count($labels) > 14) ?>
+    </div>
+    <div>
+      <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">Facturas por día</p>
+      <?= grafico_ty_ly($labels, $ta, $tb, ['formato' => 'num', 'titulo' => 'Facturas por día', 'tipos' => ['line', 'bar']], '300px',
+          count($labels) > 14 ? ['dataZoom' => [['type' => 'inside'], ['type' => 'slider', 'height' => 22, 'bottom' => 4]]] : []) ?>
+    </div>
   </div>
   <details class="border-t border-slate-100" <?= count($diasTY) <= 10 ? 'open' : '' ?>>
     <summary class="px-4 py-3 cursor-pointer text-sm font-semibold text-slate-600 hover:bg-slate-50">Ver la tabla diaria</summary>
@@ -482,6 +515,22 @@ foreach ($diasTY as $d => $a) { $labels[] = date('d/m', strtotime($d)); $sa[] = 
   <?php if (!$foco): ?>
     <div class="p-6"><?= empty_state('Sin ventas de productos', 'No hubo ventas en las fechas de la campaña.', 'package') ?></div>
   <?php else: ?>
+  <?php
+  $skuCat = []; $skuA = []; $skuB = [];
+  foreach (array_slice($foco, 0, 25) as $p) {
+      $skuCat[] = $p['codigo'] . ' · ' . $p['nombre'];
+      $a = $skuTY[$p['id']]['ns'] ?? 0; $b = $skuLY[$p['id']]['ns'] ?? 0; $d = kpi_crec($a, $b);
+      $tip = '<b>' . e($p['nombre']) . '</b><br>' . e($p['codigo']) . '<br>Este año: <b>' . ck_money_kpi($a) . '</b> · ' . qty($skuTY[$p['id']]['qty'] ?? 0) . ' u.'
+          . '<br>Año anterior: ' . ck_money_kpi($b) . ' · ' . qty($skuLY[$p['id']]['qty'] ?? 0) . ' u.<br>Crecimiento: <b>' . ($d === null ? 'nuevo' : (($d >= 0 ? '+' : '−') . number_format(abs($d), 1) . '%')) . '</b>';
+      $skuA[] = ['value' => round($a), 'tip' => $tip]; $skuB[] = ['value' => round($b), 'tip' => $tip];
+  }
+  ?>
+  <?php if ($skuCat): ?>
+    <div class="px-4 pt-4">
+      <?= grafico_ty_ly($skuCat, $skuA, $skuB, ['formato' => 'money0', 'titulo' => 'SKUs foco', 'horizontal' => true],
+          max(220, 34 * count($skuCat) + 60) . 'px', ['tooltip' => ['trigger' => 'item']]) ?>
+    </div>
+  <?php endif; ?>
   <div class="overflow-x-auto">
     <table class="data-table text-[13px] whitespace-nowrap">
       <thead><tr>
@@ -533,6 +582,21 @@ foreach ($diasTY as $d => $a) { $labels[] = date('d/m', strtotime($d)); $sa[] = 
     <?php if (!$inversiones): ?>
       <div class="p-6"><?= empty_state('Sin inversión registrada', 'Anota lo invertido por rubro (medios pagados, PR, activaciones…) para calcular MER, CPA y retorno.', 'megaphone') ?></div>
     <?php else: ?>
+      <?php
+      $porRubro = [];
+      foreach ($inversiones as $iv) $porRubro[$iv['rubro']] = ($porRubro[$iv['rubro']] ?? 0) + (float) $iv['monto'];
+      arsort($porRubro);
+      ?>
+      <div class="px-4 pt-3">
+        <?= grafico([
+            'xAxis' => ['type' => 'value'],
+            'yAxis' => ['type' => 'category', 'inverse' => true, 'data' => array_map(fn($k) => $rubros[$k][0] ?? $k, array_keys($porRubro)),
+                        'axisLabel' => ['width' => 170, 'overflow' => 'truncate', 'interval' => 0]],
+            'series' => [['name' => 'Inversión', 'type' => 'bar', 'barMaxWidth' => 20, 'itemStyle' => ['color' => GRAF_TY, 'borderRadius' => [0, 4, 4, 0]],
+                'data' => array_map(fn($v) => round($v), array_values($porRubro)),
+                'label' => ['show' => true, 'position' => 'right', 'fontSize' => 11, 'color' => '#52514e', 'formato' => 'money0']]],
+        ], ['formato' => 'money0', 'titulo' => 'Inversión por rubro', 'herramientas' => false], max(140, 34 * count($porRubro) + 30) . 'px') ?>
+      </div>
       <div class="overflow-x-auto">
         <table class="data-table text-[13px]">
           <thead><tr><th>Rubro</th><th class="text-right"><?= e(setting('moneda', 'RD$')) ?></th><?= $tasaEur > 0 ? '<th class="text-right">€</th>' : '' ?><th class="text-right">Peso</th><th>Resultado</th><?= $puedeEditar ? '<th></th>' : '' ?></tr></thead>
@@ -568,7 +632,7 @@ foreach ($diasTY as $d => $a) { $labels[] = date('d/m', strtotime($d)); $sa[] = 
         <?= csrf_field() ?><input type="hidden" name="accion" value="inversion_agregar">
         <div><label class="label" for="inv_rubro">Rubro</label>
           <select id="inv_rubro" name="rubro" class="select" required><option value="">— Elige —</option>
-            <?php foreach ($rubros as $k => [$es]): ?><option value="<?= e($k) ?>"><?= e($es) ?></option><?php endforeach; ?></select></div>
+            <?php foreach (kpi_rubros_inversion(true) as $k => [$es]): ?><option value="<?= e($k) ?>"><?= e($es) ?></option><?php endforeach; ?></select></div>
         <div><label class="label" for="inv_monto">Monto (<?= e(setting('moneda', 'RD$')) ?>)</label><input id="inv_monto" type="number" step="0.01" min="0.01" name="monto" required class="input"></div>
         <div><label class="label" for="inv_det">Detalle</label><input id="inv_det" name="detalle" maxlength="160" class="input" placeholder="Ej. Meta Ads 15-30 nov"></div>
         <div><label class="label" for="inv_res">Resultado (KPI o comentario)</label><input id="inv_res" name="resultado" maxlength="255" class="input" placeholder="Ej. 1.2M impresiones, 3.4% CTR"></div>
@@ -633,12 +697,12 @@ foreach ($diasTY as $d => $a) { $labels[] = date('d/m', strtotime($d)); $sa[] = 
             <?php if ($puedeEditar): ?>
               <td class="text-right"><input type="text" inputmode="decimal" name="valor[<?= e($k) ?>]" value="<?= $v === null ? '' : e(rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.')) ?>" class="input py-1.5 text-right w-32 ml-auto" aria-label="<?= e($lbl) ?> este año"></td>
               <td class="text-right"><input type="text" inputmode="decimal" name="valor_ly[<?= e($k) ?>]" value="<?= $vl === null ? '' : e(rtrim(rtrim(number_format($vl, 2, '.', ''), '0'), '.')) ?>" class="input py-1.5 text-right w-32 ml-auto" aria-label="<?= e($lbl) ?> año anterior"></td>
-              <td class="text-right"><?= $v !== null && $vl ? $fmtCrec(kpi_crec($v, $vl), $k === 'rotacion') : '<span class="text-slate-300">—</span>' ?></td>
+              <td class="text-right"><?= $v !== null && $vl ? $fmtCrec(kpi_crec($v, $vl), !empty(kpi_metricas_def()[$k]['menor_es_mejor'])) : '<span class="text-slate-300">—</span>' ?></td>
               <td><input type="text" name="nota[<?= e($k) ?>]" value="<?= e($met[$k]['nota'] ?? '') ?>" maxlength="255" class="input py-1.5 min-w-[200px]" aria-label="Nota de <?= e($lbl) ?>"></td>
             <?php else: ?>
               <td class="text-right tabular-nums"><?= $v === null ? '—' : e(number_format($v, 2)) ?></td>
               <td class="text-right tabular-nums text-slate-500"><?= $vl === null ? '—' : e(number_format($vl, 2)) ?></td>
-              <td class="text-right"><?= $v !== null && $vl ? $fmtCrec(kpi_crec($v, $vl), $k === 'rotacion') : '—' ?></td>
+              <td class="text-right"><?= $v !== null && $vl ? $fmtCrec(kpi_crec($v, $vl), !empty(kpi_metricas_def()[$k]['menor_es_mejor'])) : '—' ?></td>
               <td class="text-slate-500"><?= e($met[$k]['nota'] ?? '') ?></td>
             <?php endif; ?>
           </tr>

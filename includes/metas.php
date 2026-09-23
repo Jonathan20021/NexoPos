@@ -75,5 +75,10 @@ function metaColor(float $pct): string
  */
 function canalesVenta(): array
 {
-    return ['Mostrador', 'Instagram', 'WhatsApp', 'Facebook', 'Referido', 'Otro'];
+    // Editables en Marketing → Configuración del cockpit (uno por línea). El
+    // primero es el que el POS trae marcado y el que se usa si llega otro valor.
+    $lista = function_exists('cockpit_param')
+        ? array_values(array_unique(array_filter(array_map('trim', preg_split('/\R/', (string) cockpit_param('canales_captacion', ''))), fn($c) => $c !== '')))
+        : [];
+    return $lista ?: ['Mostrador', 'Instagram', 'WhatsApp', 'Facebook', 'Referido', 'Otro'];
 }

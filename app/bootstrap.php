@@ -68,6 +68,7 @@ require_once dirname(__DIR__) . '/includes/entrenamiento.php';  // academia (arr
 require_once dirname(__DIR__) . '/includes/reportes.php';
 require_once dirname(__DIR__) . '/includes/direccion.php';  // consultas del área de Dirección (usa reportes.php)
 require_once dirname(__DIR__) . '/includes/charts.php';
+require_once dirname(__DIR__) . '/includes/graficos.php';     // gráficos interactivos (ECharts)
 require_once dirname(__DIR__) . '/includes/export.php';
 require_once dirname(__DIR__) . '/includes/uploads.php';
 require_once dirname(__DIR__) . '/includes/backup.php';

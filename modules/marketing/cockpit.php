@@ -173,10 +173,14 @@ if ($tab === 'detalle') {
     $vista = get('vista') === 'menos' ? 'menos' : 'todas';
     $mec = cockpit_mecanismos($f, $TY, $vista === 'menos');
     foreach ($mec as $k => $r) $mec[$k] = cockpit_metricas($r, $gsTY) + $r;
+    // Llegar desde un gráfico del resumen deja la tabla filtrada por ese tipo.
+    $tipoFiltro = array_key_exists((string) get('tipo'), cockpit_tipos()) ? (string) get('tipo') : null;
+    $mecTodos = $mec;
+    if ($tipoFiltro) $mec = array_filter($mec, fn($r) => $r['tipo'] === $tipoFiltro);
     $descTot = max(0.01, $gsTY - (float) $totTY['ns']);
     if ($vista === 'menos') {
         uasort($mec, fn($a, $b) => [$a['act'], $a['gs']] <=> [$b['act'], $b['gs']]);
-        $mec = array_slice($mec, 0, 30, true);
+        $mec = array_slice($mec, 0, cockpit_param_int('menos_activadas'), true);
     } else {
         uasort($mec, fn($a, $b) => [$a['tipo'], -$a['gs']] <=> [$b['tipo'], -$b['gs']]);
     }
@@ -231,6 +235,10 @@ if ($tab === 'sellout') {
         $sell[$k] = $filas;
     }
     $canalesNombre = cockpit_canales();
+    $segLin = array_map(fn($r) => (float) $r['ns'], cockpit_por($f, $TY,
+        "CONCAT(COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id), 'Sin segmento'), '|', COALESCE(NULLIF(pr.linea,''), 'Sin línea'))"));
+    $menTY = cockpit_mensual($f, $TY);
+    $menLY = cockpit_mensual($f, $LY);
 }
 
 /* ============================================================
@@ -296,7 +304,8 @@ if (export_solicitado()) {
 /* ============================================================
  *  Pantalla
  * ============================================================ */
-$acciones = rep_barra_titulo();
+$acciones = rep_barra_titulo(can('cockpit.configurar')
+    ? '<a href="' . e(url('modules/marketing/cockpit_config.php')) . '" class="btn btn-ghost no-print">' . icon('settings', 'w-4 h-4') . ' Configurar</a>' : '');
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
 ?>
@@ -318,13 +327,7 @@ echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' =>
 <?php
 $marcas = qAll("SELECT id, nombre FROM marcas ORDER BY nombre");
 $segmentos = cockpit_segmentos();
-$presets = [
-    'Año a la fecha'   => [date('Y-01-01'), date('Y-m-d')],
-    'Este mes'         => [date('Y-m-01'), date('Y-m-d')],
-    'Mes pasado'       => [date('Y-m-01', strtotime('first day of last month')), date('Y-m-t', strtotime('last day of last month'))],
-    // El año fiscal de la marca va de abril a marzo.
-    'Año fiscal (abr–mar)' => [(date('n') >= 4 ? date('Y') : date('Y') - 1) . '-04-01', date('Y-m-d')],
-];
+$presets = array_map(fn($p) => $p[1], array_column(cockpit_presets(), null, 0));
 ?>
 <div class="card p-4 mb-5 no-print">
   <form method="get" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 items-end">
@@ -350,6 +353,13 @@ $presets = [
       <select id="ck_seg" name="segmento" class="select">
         <option value="">Todos</option>
         <?php foreach ($segmentos as $sg): ?><option value="<?= e($sg) ?>" <?= $f['segmento'] === $sg ? 'selected' : '' ?>><?= e($sg) ?></option><?php endforeach; ?>
+      </select>
+    </div>
+    <div class="col-span-2 md:col-span-1">
+      <label class="label" for="ck_lin">Línea</label>
+      <select id="ck_lin" name="linea" class="select">
+        <option value="">Todas</option>
+        <?php foreach (qCol("SELECT DISTINCT COALESCE(NULLIF(linea,''), 'Sin línea') l FROM productos WHERE activo = 1 ORDER BY l") as $ln): ?><option value="<?= e($ln) ?>" <?= ($f['linea'] ?? null) === $ln ? 'selected' : '' ?>><?= e($ln) ?></option><?php endforeach; ?>
       </select>
     </div>
     <div>
@@ -429,19 +439,17 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
           <div class="sm:col-span-2"><?= ck_tile('Tasa de descuento', cockpit_pct($totTY['desc_pct']), cockpit_pct($totLY['desc_pct']), ck_var($totTY['desc_pct'], $totLY['desc_pct'], true, true)) ?></div>
           <div class="sm:col-span-3">
-            <?= lineChart([
-                ['nombre' => 'Este año', 'color' => '#334155', 'valores' => $serie($menTY, $meses, 'desc')],
-                ['nombre' => 'Año anterior', 'color' => '#cbd5e1', 'valores' => array_slice(array_pad($serie($menLY, $mesesLY, 'desc'), count($meses), 0), 0, count($meses))],
-            ], $etqMeses, ['alto' => 300, 'formato' => 'pct', 'leyenda' => false]) ?>
+            <?= grafico_lineas_ty_ly($etqMeses, $serie($menTY, $meses, 'desc'),
+                array_slice(array_pad($serie($menLY, $mesesLY, 'desc'), count($meses), 0), 0, count($meses)),
+                ['formato' => 'pct', 'titulo' => 'Tasa de descuento mes a mes', 'escala' => true, 'herramientas' => false], '190px') ?>
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
           <div class="sm:col-span-2"><?= ck_tile('% Venta en promoción', cockpit_pct($pPromoTY), cockpit_pct($pPromoLY), ck_var($pPromoTY, $pPromoLY, true, true)) ?></div>
           <div class="sm:col-span-3">
-            <?= lineChart([
-                ['nombre' => 'Este año', 'color' => '#334155', 'valores' => $serie($menTY, $meses, 'promo')],
-                ['nombre' => 'Año anterior', 'color' => '#cbd5e1', 'valores' => array_slice(array_pad($serie($menLY, $mesesLY, 'promo'), count($meses), 0), 0, count($meses))],
-            ], $etqMeses, ['alto' => 300, 'formato' => 'pct']) ?>
+            <?= grafico_lineas_ty_ly($etqMeses, $serie($menTY, $meses, 'promo'),
+                array_slice(array_pad($serie($menLY, $mesesLY, 'promo'), count($meses), 0), 0, count($meses)),
+                ['formato' => 'pct', 'titulo' => 'Venta en promoción mes a mes', 'escala' => true, 'herramientas' => false], '190px') ?>
           </div>
         </div>
       </div>
@@ -455,6 +463,73 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         <?= ck_tile('% Regalos y muestras', cockpit_pct($regTY), cockpit_pct($regLY), ck_var($regTY, $regLY, true, true),
             '<span class="text-slate-300" title="Valor a precio de lista de lo entregado a RD$0, sobre la venta bruta">' . icon('tag', 'w-4 h-4') . '</span>') ?>
       </div>
+    </section>
+  </div>
+
+  <?php
+  // ---------- Gráficos interactivos ----------
+  $mTY = $filaTotal['ty']['margen']; $mLY = $filaTotal['ly']['margen']; $ef = $filaTotal['ef'];
+  $tiposGraf = array_filter($filasTipo, fn($r, $k) => $k !== 'sin' && ($r['ty']['desc'] > 0 || $r['ly']['desc'] > 0), ARRAY_FILTER_USE_BOTH);
+  uasort($tiposGraf, fn($a, $b) => $b['ty']['desc'] <=> $a['ty']['desc']);
+  $drill = fn(string $k) => ck_url(['tab' => 'detalle', 'tipo' => $k, 'ver' => null]);
+  $gsMes = array_map(fn($ym) => round($menTY[$ym]['gs'] ?? 0), $meses);
+  $gsMesLY = array_slice(array_pad(array_map(fn($ym) => round($menLY[$ym]['gs'] ?? 0), $mesesLY), count($meses), 0), 0, count($meses));
+  ?>
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Puente del margen</h3>
+      <p class="text-sm text-slate-400 mb-2">De margen del año anterior a margen de este año: qué sumó y qué restó</p>
+      <?= grafico_cascada('Margen año ant.', $mLY, [
+          ['Volumen', $ef['volumen']], ['Mezcla', $ef['mezcla']], ['Tasa de descuento', $ef['tasa']], ['Mezcla de producto', $ef['producto']],
+      ], 'Margen este año', $mTY, ['formato' => 'money0', 'titulo' => 'Puente del margen'], '320px') ?>
+    </section>
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Venta bruta mes a mes</h3>
+      <p class="text-sm text-slate-400 mb-2">Arrastra para acercar un tramo · cambia a líneas con la caja de herramientas</p>
+      <?= grafico_ty_ly($etqMeses, $gsMes, $gsMesLY, ['formato' => 'money0', 'titulo' => 'Venta bruta mes a mes', 'tipos' => ['line', 'bar']], '320px',
+          count($meses) > 12 ? ['dataZoom' => [['type' => 'inside'], ['type' => 'slider', 'height' => 22, 'bottom' => 4]]] : []) ?>
+    </section>
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Cuánto cuesta cada tipo de descuento</h3>
+      <p class="text-sm text-slate-400 mb-2">Descuento en <?= e(setting('moneda', 'RD$')) ?> · toca una barra para ver sus promociones</p>
+      <?php
+      $cats = array_map(fn($k) => cockpit_tipo_label($k), array_keys($tiposGraf));
+      $dTy = []; $dLy = [];
+      foreach ($tiposGraf as $k => $r) {
+          $dTy[] = ['value' => round($r['ty']['desc']), 'url' => $drill($k), 'itemStyle' => ['color' => cockpit_tipo_color($k)]];
+          $dLy[] = ['value' => round($r['ly']['desc']), 'url' => $drill($k)];
+      }
+      echo $tiposGraf
+          ? grafico_ty_ly($cats, $dTy, $dLy, ['formato' => 'money0', 'titulo' => 'Descuento por tipo', 'horizontal' => true], max(260, 38 * count($cats) + 60) . 'px')
+          : empty_state('Sin descuentos', 'No hubo descuentos en estos periodos.', 'percent');
+      ?>
+    </section>
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Profundidad contra rentabilidad</h3>
+      <p class="text-sm text-slate-400 mb-2">Cada burbuja es un tipo (sin las muestras): a la derecha descuenta más hondo, arriba deja más margen; el tamaño es su venta bruta</p>
+      <?php
+      $maxGs = max(1, max(array_map(fn($r) => $r['ty']['gs'], $tiposGraf ?: [['ty' => ['gs' => 1]]])));
+      $puntos = [];
+      foreach ($tiposGraf as $k => $r) {
+          $t = $r['ty'];
+          // Una muestra es siempre 100% de descuento: en la burbuja solo aplasta al resto.
+          if ($t['gs'] <= 0 || $k === 'muestra') continue;
+          $puntos[] = [
+              'name' => cockpit_tipo_label($k), 'value' => [round($t['desc_pct'], 1), round($t['margen_ns'], 1), round($t['gs'])],
+              'symbolSize' => round(14 + 46 * sqrt($t['gs'] / $maxGs)), 'url' => $drill($k),
+              'itemStyle' => ['color' => cockpit_tipo_color($k), 'opacity' => 0.85, 'borderColor' => '#ffffff', 'borderWidth' => 2],
+              'tip' => '<b>' . e(cockpit_tipo_label($k)) . '</b><br>Descuento: <b>' . cockpit_pct($t['desc_pct']) . '</b><br>Margen s/ venta neta: <b>'
+                  . cockpit_pct($t['margen_ns']) . '</b><br>Venta bruta: <b>' . ck_money($t['gs']) . '</b><br><span style="color:#94a3b8">Toca para ver el detalle</span>',
+          ];
+      }
+      echo $puntos ? grafico([
+          'xAxis' => ['type' => 'value', 'name' => 'Desc %', 'nameLocation' => 'middle', 'nameGap' => 26, 'formato' => 'pct', 'scale' => true],
+          'yAxis' => ['type' => 'value', 'name' => 'Margen % VN', 'formato' => 'pct', 'scale' => true],
+          'series' => [['type' => 'scatter', 'data' => $puntos,
+              'label' => ['show' => true, 'position' => 'right', 'formatter' => '{b}', 'fontSize' => 11, 'color' => '#52514e'],
+              'labelLayout' => ['hideOverlap' => true], 'emphasis' => ['focus' => 'self', 'scale' => 1.1]]],
+      ], ['formato' => 'pct', 'titulo' => 'Profundidad contra rentabilidad'], '320px') : empty_state('Sin datos', '', 'chart');
+      ?>
     </section>
   </div>
 
@@ -569,10 +644,9 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
       <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
         <div class="sm:col-span-2"><?= ck_tile('Promedio por factura', number_format($avgTY, 2), number_format($avgLY, 2), ck_var($avgTY, $avgLY, false, true)) ?></div>
         <div class="sm:col-span-3">
-          <?= lineChart([
-              ['nombre' => 'Este año', 'color' => '#334155', 'valores' => $serieAvg($stTY, $meses)],
-              ['nombre' => 'Año anterior', 'color' => '#cbd5e1', 'valores' => array_slice(array_pad($serieAvg($stLY, $mesesLY), count($meses), 0), 0, count($meses))],
-          ], $etqMeses, ['alto' => 300, 'formato' => 'dec']) ?>
+          <?= grafico_lineas_ty_ly($etqMeses, $serieAvg($stTY, $meses),
+              array_slice(array_pad($serieAvg($stLY, $mesesLY), count($meses), 0), 0, count($meses)),
+              ['formato' => 'dec', 'titulo' => 'Descuentos por factura', 'escala' => true, 'herramientas' => false], '200px') ?>
         </div>
       </div>
       <p class="text-xs text-slate-400 mt-2">Entre las facturas con al menos un descuento: cada promoción distinta, las muestras, un precio negociado y el descuento en caja cuentan uno.</p>
@@ -580,39 +654,86 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
     <section class="card p-4 xl:col-span-3">
       <p class="text-xs font-bold uppercase tracking-wider text-amber-600 mb-3">Distribución (% venta bruta)</p>
       <?php
-      $maxD = 1.0;
       $dTY = []; $dLY = [];
       foreach ([1, 2, 3, 4, 5] as $n) {
-          $dTY[$n] = $stTY['gs'] > 0 ? $stTY['dist'][$n] / $stTY['gs'] * 100 : 0;
-          $dLY[$n] = $stLY['gs'] > 0 ? $stLY['dist'][$n] / $stLY['gs'] * 100 : 0;
-          $maxD = max($maxD, $dTY[$n], $dLY[$n]);
+          $dTY[] = round($stTY['gs'] > 0 ? $stTY['dist'][$n] / $stTY['gs'] * 100 : 0, 1);
+          $dLY[] = round($stLY['gs'] > 0 ? $stLY['dist'][$n] / $stLY['gs'] * 100 : 0, 1);
       }
+      echo grafico_ty_ly(['1', '2', '3', '4', '5+'], $dTY, $dLY, ['formato' => 'pct', 'titulo' => 'Distribución por número de descuentos', 'herramientas' => false], '210px');
       ?>
-      <div class="flex items-end gap-2 h-44" role="img" aria-label="Distribución de la venta bruta por número de descuentos">
-        <?php foreach ([1, 2, 3, 4, 5] as $n): ?>
-          <div class="flex-1 flex flex-col items-center gap-1 h-full">
-            <span class="text-[10.5px] font-semibold <?= $dTY[$n] - $dLY[$n] >= 0 ? 'text-slate-600' : 'text-rose-600' ?>"><?= e(cockpit_pts($dTY[$n] - $dLY[$n])) ?></span>
-            <div class="flex-1 w-full flex items-end justify-center gap-0.5">
-              <div class="w-1/2 max-w-[18px] rounded-t bg-slate-700" style="height:<?= max(1, $dTY[$n] / $maxD * 100) ?>%" title="Este año: <?= number_format($dTY[$n], 1) ?>%"></div>
-              <div class="w-1/2 max-w-[18px] rounded-t bg-slate-300" style="height:<?= max(1, $dLY[$n] / $maxD * 100) ?>%" title="Año anterior: <?= number_format($dLY[$n], 1) ?>%"></div>
-            </div>
-            <span class="text-xs text-slate-500 font-semibold"><?= $n === 5 ? '5+' : $n ?></span>
-          </div>
-        <?php endforeach; ?>
-      </div>
-      <p class="text-xs text-slate-400 mt-2">Descuentos por factura · oscuro: este año; claro: año anterior.</p>
+      <p class="text-xs text-slate-400 mt-1">Descuentos por factura, en % de la venta bruta con descuento.</p>
+    </section>
+  </div>
+
+  <?php
+  // Pareto: las promociones que más descuento regalaron, con su % acumulado.
+  $pareto = array_filter($mecTodos, fn($r) => $r['desc'] > 0);
+  uasort($pareto, fn($a, $b) => $b['desc'] <=> $a['desc']);
+  $totDesc = array_sum(array_column($pareto, 'desc')) ?: 1; $acum = 0;
+  $pCats = []; $pData = [];
+  foreach (array_slice($pareto, 0, 15, true) as $r) {
+      $acum += $r['desc'];
+      $pCats[] = $r['nombre'];
+      $pData[] = ['value' => round($r['desc']), 'itemStyle' => ['color' => cockpit_tipo_color($r['tipo']), 'borderRadius' => [0, 4, 4, 0]],
+          'url' => ck_url(['tipo' => $r['tipo']]),
+          'tip' => '<b>' . e($r['nombre']) . '</b><br>' . e(cockpit_tipo_label($r['tipo'])) . '<br>Descuento: <b>' . ck_money($r['desc']) . '</b> (' . cockpit_pct($r['desc'] / $totDesc * 100) . ')'
+              . '<br>Acumulado: <b>' . cockpit_pct($acum / $totDesc * 100) . '</b><br>Activaciones: <b>' . number_format($r['act']) . '</b>',
+          'acum' => round($acum / $totDesc * 100, 1)];
+  }
+  $burbujas = []; $maxGsM = max(1, max(array_merge([1], array_column($mecTodos, 'gs'))));
+  foreach ($mecTodos as $r) {
+      if ($r['act'] <= 0 || $r['tipo'] === 'muestra') continue;
+      $burbujas[] = ['name' => $r['nombre'], 'value' => [(int) $r['act'], round($r['desc_pct'], 1), round($r['gs'])],
+          'symbolSize' => round(10 + 40 * sqrt($r['gs'] / $maxGsM)), 'url' => ck_url(['tipo' => $r['tipo']]),
+          'itemStyle' => ['color' => cockpit_tipo_color($r['tipo']), 'opacity' => 0.8, 'borderColor' => '#fff', 'borderWidth' => 1.5],
+          'tip' => '<b>' . e($r['nombre']) . '</b><br>' . e(cockpit_tipo_label($r['tipo'])) . '<br>Activaciones: <b>' . number_format($r['act'])
+              . '</b><br>Desc %: <b>' . cockpit_pct($r['desc_pct']) . '</b><br>Venta bruta: <b>' . ck_money($r['gs']) . '</b><br>Ticket medio: <b>' . ck_money($r['atv_ticket']) . '</b>'];
+  }
+  ?>
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Dónde se va el descuento</h3>
+      <p class="text-sm text-slate-400 mb-2">Las 15 promociones o motivos que más descuento dieron · el tooltip trae el % acumulado</p>
+      <?= $pData ? grafico([
+          'xAxis' => ['type' => 'value'],
+          'yAxis' => ['type' => 'category', 'inverse' => true, 'data' => $pCats, 'axisLabel' => ['width' => 190, 'overflow' => 'truncate', 'interval' => 0]],
+          'series' => [['name' => 'Descuento', 'type' => 'bar', 'data' => $pData, 'barMaxWidth' => 18]],
+      ], ['formato' => 'money0', 'titulo' => 'Pareto de descuentos'], max(280, 26 * count($pCats) + 40) . 'px') : empty_state('Sin descuentos', '', 'percent') ?>
+    </section>
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Uso contra profundidad</h3>
+      <p class="text-sm text-slate-400 mb-2">A la derecha las más usadas, arriba las que más descuentan; el tamaño es su venta bruta. Arrastra para acercar.</p>
+      <?= $burbujas ? grafico([
+          'xAxis' => ['type' => 'value', 'name' => 'Activaciones', 'nameLocation' => 'middle', 'nameGap' => 26, 'formato' => 'num', 'scale' => true],
+          'yAxis' => ['type' => 'value', 'name' => 'Desc %', 'formato' => 'pct', 'scale' => true],
+          'dataZoom' => [['type' => 'inside', 'xAxisIndex' => 0], ['type' => 'inside', 'yAxisIndex' => 0]],
+          'series' => [['type' => 'scatter', 'data' => $burbujas, 'emphasis' => ['focus' => 'self', 'label' => ['show' => true, 'formatter' => '{b}', 'position' => 'top']]]],
+      ], ['formato' => 'num', 'titulo' => 'Uso contra profundidad'], '340px') : empty_state('Sin activaciones', '', 'chart') ?>
     </section>
   </div>
 
   <section class="card overflow-hidden mb-5">
     <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
       <div>
-        <h3 class="font-bold text-slate-800">Detalle por descuento</h3>
+        <h3 class="font-bold text-slate-800">Detalle por descuento
+          <?php if ($tipoFiltro): ?>
+            <a href="<?= e(ck_url(['tipo' => null])) ?>" class="ml-2 inline-flex items-center gap-1 align-middle text-xs font-semibold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100" title="Quitar el filtro">
+              <?= e(cockpit_tipo_label($tipoFiltro)) ?> <?= icon('x', 'w-3 h-3') ?></a>
+          <?php endif; ?>
+        </h3>
         <p class="text-sm text-slate-400">Cada promoción por su código, cada motivo de descuento en caja, las muestras y los precios negociados</p>
       </div>
-      <div class="flex items-center gap-1 p-1 bg-slate-100 rounded-xl no-print">
+      <div class="flex flex-wrap items-center gap-2 no-print">
+      <select aria-label="Filtrar por tipo" class="select w-auto py-1.5 text-sm" onchange="location.href=this.value">
+        <option value="<?= e(ck_url(['tipo' => null])) ?>">Todos los tipos</option>
+        <?php foreach (array_unique(array_column($mecTodos, 'tipo')) as $tk): ?>
+          <option value="<?= e(ck_url(['tipo' => $tk])) ?>" <?= $tipoFiltro === $tk ? 'selected' : '' ?>><?= e(cockpit_tipo_label($tk)) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <div class="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
         <a href="<?= e(ck_url(['vista' => null])) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold <?= $vista === 'todas' ? 'bg-slate-700 text-white' : 'text-slate-500' ?>">Tabla completa</a>
-        <a href="<?= e(ck_url(['vista' => 'menos'])) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold <?= $vista === 'menos' ? 'bg-slate-700 text-white' : 'text-slate-500' ?>">30 menos activadas</a>
+        <a href="<?= e(ck_url(['vista' => 'menos'])) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold <?= $vista === 'menos' ? 'bg-slate-700 text-white' : 'text-slate-500' ?>"><?= cockpit_param_int('menos_activadas') ?> menos activadas</a>
+      </div>
       </div>
     </div>
     <?php if (!$mec): ?>
@@ -690,6 +811,72 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
       <?php endif; ?>
     </section>
 
+    <?php
+    // Mapa de árbol: tipo → promoción → producto, por venta bruta. Clic = acercar.
+    $hojas = [];
+    foreach ($arbol as $t => $nodo) {
+        $hijosM = [];
+        foreach ($nodo['mec'] as $m => $mn) {
+            $prods = [];
+            foreach (array_slice($mn['prod'], 0, 40) as $pr) {
+                $d = $pr['gs'] > 0 ? ($pr['gs'] - $pr['ns']) / $pr['gs'] * 100 : 0;
+                $prods[] = ['name' => ($pr['codigo'] ? $pr['codigo'] . ' ' : '') . $pr['nombre'], 'value' => round($pr['gs']),
+                    'tip' => '<b>' . e($pr['nombre']) . '</b><br>' . e($nombreMec($m)) . '<br>Venta bruta: <b>' . ck_money($pr['gs']) . '</b><br>Descuento: <b>'
+                        . cockpit_pct($d) . '</b><br>Venta neta: <b>' . ck_money($pr['ns']) . '</b><br>Cantidad: <b>' . qty($pr['qty']) . '</b>'];
+            }
+            $hijosM[] = ['name' => $nombreMec($m), 'value' => round($mn['tot']['gs']), 'children' => $prods,
+                'tip' => '<b>' . e($nombreMec($m)) . '</b><br>Venta bruta: <b>' . ck_money($mn['tot']['gs']) . '</b><br>Descuento: <b>'
+                    . cockpit_pct($mn['tot']['gs'] > 0 ? ($mn['tot']['gs'] - $mn['tot']['ns']) / $mn['tot']['gs'] * 100 : 0) . '</b>'];
+        }
+        $hojas[] = ['name' => cockpit_tipo_label($t), 'value' => round($nodo['tot']['gs']), 'children' => $hijosM,
+            'itemStyle' => ['color' => cockpit_tipo_color($t)],
+            'tip' => '<b>' . e(cockpit_tipo_label($t)) . '</b><br>Venta bruta: <b>' . ck_money($nodo['tot']['gs']) . '</b><br>Descuento: <b>'
+                . cockpit_pct($nodo['tot']['gs'] > 0 ? ($nodo['tot']['gs'] - $nodo['tot']['ns']) / $nodo['tot']['gs'] * 100 : 0) . '</b>'];
+    }
+    ?>
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      <section class="card p-4 xl:col-span-2">
+        <h3 class="font-bold text-slate-800">Mapa de la venta con descuento</h3>
+        <p class="text-sm text-slate-400 mb-2">Tipo → promoción → producto, por venta bruta. Toca un bloque para entrar; la barra de abajo te devuelve.</p>
+        <?= $hojas ? grafico([
+            'tooltip' => ['trigger' => 'item'],
+            'series' => [[
+                'type' => 'treemap', 'name' => 'Venta bruta', 'data' => $hojas, 'leafDepth' => 1, 'roam' => false,
+                'breadcrumb' => ['show' => true, 'bottom' => 4, 'itemStyle' => ['color' => '#f1f5f9', 'borderColor' => '#e2e8f0', 'textStyle' => ['color' => '#334155']]],
+                'top' => 8, 'left' => 0, 'right' => 0, 'bottom' => 36,
+                'upperLabel' => ['show' => true, 'height' => 22, 'color' => '#fff', 'fontWeight' => 'bold'],
+                'levels' => [
+                    ['itemStyle' => ['borderColor' => '#fff', 'borderWidth' => 2, 'gapWidth' => 2]],
+                    ['colorSaturation' => [0.35, 0.6], 'itemStyle' => ['borderColorSaturation' => 0.6, 'gapWidth' => 1, 'borderWidth' => 2]],
+                    ['colorSaturation' => [0.3, 0.55], 'itemStyle' => ['borderColorSaturation' => 0.5, 'gapWidth' => 1]],
+                ],
+            ]],
+        ], ['formato' => 'money0', 'titulo' => 'Mapa de la venta con descuento'], '420px') : empty_state('Sin datos', '', 'package') ?>
+      </section>
+      <section class="card p-4">
+        <h3 class="font-bold text-slate-800">Héroes contra el resto</h3>
+        <p class="text-sm text-slate-400 mb-2">Qué parte de cada total ponen los héroes</p>
+        <?php
+        $gsT = max(0.01, $h['gs'] + $o['gs']); $nsT = max(0.01, $h['ns'] + $o['ns']);
+        $filasH = ['Venta bruta' => [$h['gs'] / $gsT * 100, $o['gs'] / $gsT * 100], 'Descuentos' => [$h['desc'] / $descTot * 100, $o['desc'] / $descTot * 100],
+                   'Venta neta' => [$h['ns'] / $nsT * 100, $o['ns'] / $nsT * 100]];
+        echo grafico([
+            'legend' => ['data' => ['Héroes', 'Otros']],
+            'xAxis' => ['type' => 'value', 'max' => 100, 'formato' => 'pct'],
+            'yAxis' => ['type' => 'category', 'inverse' => true, 'data' => array_keys($filasH)],
+            'series' => [
+                ['name' => 'Héroes', 'type' => 'bar', 'stack' => 'h', 'barMaxWidth' => 28, 'data' => array_map(fn($v) => round($v[0], 1), array_values($filasH)),
+                 'itemStyle' => ['color' => GRAF_TY, 'borderColor' => '#fff', 'borderWidth' => 2],
+                 // Fuera de la barra: un 10% no deja sitio para «10.1%» dentro y se recortaba.
+                 'label' => ['show' => true, 'position' => 'right', 'color' => '#0f172a', 'fontWeight' => 'bold', 'fontSize' => 11, 'formato' => 'pct']],
+                ['name' => 'Otros', 'type' => 'bar', 'stack' => 'h', 'barMaxWidth' => 28, 'data' => array_map(fn($v) => round($v[1], 1), array_values($filasH)),
+                 'itemStyle' => ['color' => GRAF_LY, 'borderColor' => '#fff', 'borderWidth' => 2], 'label' => ['show' => true, 'position' => 'insideRight', 'color' => '#334155', 'fontSize' => 11, 'formato' => 'pct']],
+            ],
+        ], ['formato' => 'pct', 'titulo' => 'Héroes contra el resto'], '220px');
+        ?>
+      </section>
+    </div>
+
     <section class="card overflow-hidden">
       <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
         <div>
@@ -757,39 +944,87 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         <div class="px-5 pb-5 flex-1 flex flex-col justify-center">
           <?php if (!$dim || $tot <= 0): ?>
             <?= empty_state('Sin ventas', 'No hay venta en este periodo con los filtros elegidos.', 'chart') ?>
-          <?php elseif ($k === 'sucursal' || $k === 'canal' || $k === 'tienda'): ?>
-            <?php $items = []; $i = 0;
-            foreach ($dim as $g => $v) $items[] = ['label' => $k === 'canal' ? ($canalesNombre[$g] ?? $g) : $g, 'value' => $v['ty'], 'color' => rep_color($i++)];
-            echo donutMulti($items, 'Venta neta', numAbrev($tot)); ?>
-            <div class="flex flex-wrap gap-2 mt-4">
-              <?php foreach ($dim as $g => $v): $d = rep_delta($v['ty'], $v['ly']); ?>
-                <span class="inline-flex items-center gap-1.5 text-xs bg-slate-50 rounded-lg px-2 py-1">
-                  <span class="text-slate-500"><?= e($k === 'canal' ? ($canalesNombre[$g] ?? $g) : $g) ?></span>
-                  <span class="font-semibold <?= $d === null ? 'text-slate-400' : ($d >= 0 ? 'text-emerald-600' : 'text-rose-600') ?>"><?= $d === null ? 'nuevo' : (($d >= 0 ? '+' : '−') . number_format(abs($d), 0) . '%') ?></span>
-                </span>
-              <?php endforeach; ?>
-            </div>
-          <?php else: ?>
-            <?php $i = 0; foreach ($dim as $g => $v): $d = rep_delta($v['ty'], $v['ly']); $pct = $v['ty'] / $tot * 100; ?>
-              <div class="flex items-center gap-3 mb-2.5">
-                <span class="w-28 sm:w-36 shrink-0 text-sm text-slate-600 truncate text-right" title="<?= e($g) ?>"><?= e($g) ?></span>
-                <div class="flex-1 h-6 bg-slate-50 rounded overflow-hidden">
-                  <div class="h-full rounded" style="width:<?= max(0.8, $pct) ?>%;background:<?= e(rep_color($i++)) ?>"></div>
-                </div>
-                <span class="w-12 text-sm font-semibold text-slate-700 tabular-nums text-right"><?= number_format($pct, 0) ?>%</span>
-                <span class="w-14 text-xs font-semibold text-center rounded px-1.5 py-0.5 <?= $d === null ? 'bg-slate-100 text-slate-400' : ($d >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700') ?>">
-                  <?= $d === null ? 'nuevo' : (($d >= 0 ? '+' : '−') . number_format(abs($d), 0) . '%') ?>
-                </span>
-              </div>
-            <?php endforeach; ?>
+          <?php elseif ($k === 'sucursal' || $k === 'canal' || $k === 'tienda'):
+            // Anillo: parte de un todo, como mucho 6 porciones; el resto se agrupa en «Otras».
+            $items = []; $i = 0; $resto = 0.0; $restoLy = 0.0;
+            foreach ($dim as $g => $v) {
+                $nombreG = $k === 'canal' ? ($canalesNombre[$g] ?? $g) : $g;
+                if ($i >= 6) { $resto += $v['ty']; $restoLy += $v['ly']; continue; }
+                $d = rep_delta($v['ty'], $v['ly']);
+                $items[] = ['name' => $nombreG, 'value' => round($v['ty']), 'itemStyle' => ['color' => rep_color($i++)],
+                    'url' => $k === 'canal' ? ck_url(['canal' => $g, 'tab' => 'resumen']) : null,
+                    'tip' => '<b>' . e($nombreG) . '</b><br>Venta neta: <b>' . ck_money($v['ty']) . '</b> (' . cockpit_pct($tot > 0 ? $v['ty'] / $tot * 100 : 0) . ')'
+                        . '<br>Año anterior: ' . ck_money($v['ly']) . '<br>Crecimiento: <b>' . ($d === null ? 'nuevo' : (($d >= 0 ? '+' : '−') . number_format(abs($d), 1) . '%')) . '</b>'
+                        . ($k === 'canal' ? '<br><span style="color:#94a3b8">Toca para filtrar el cockpit</span>' : '')];
+            }
+            if ($resto > 0) $items[] = ['name' => 'Otras', 'value' => round($resto), 'itemStyle' => ['color' => '#94a3b8']];
+            echo grafico([
+                'tooltip' => ['trigger' => 'item'],
+                'legend' => ['type' => 'scroll', 'orient' => 'vertical', 'right' => 4, 'top' => 'middle', 'left' => null,
+                    'textStyle' => ['width' => 150, 'overflow' => 'truncate']],
+                'series' => [['type' => 'pie', 'name' => 'Venta neta', 'radius' => ['52%', '78%'], 'center' => ['35%', '50%'], 'data' => $items,
+                    'itemStyle' => ['borderColor' => '#fff', 'borderWidth' => 2], 'avoidLabelOverlap' => true,
+                    'label' => ['show' => true, 'position' => 'center', 'formatter' => ck_money($tot), 'fontSize' => 15, 'fontWeight' => 'bold', 'color' => '#0f172a'],
+                    'emphasis' => ['scale' => true, 'scaleSize' => 6, 'label' => ['show' => true, 'formatter' => "{b}\n{d}%", 'fontSize' => 14]],
+                    'labelLine' => ['show' => false]]],
+            ], ['formato' => 'money0', 'titulo' => 'Sell-out por ' . mb_strtolower($dims[$k][0])], '280px'); ?>
+          <?php else:
+            $filtroDim = $k === 'segmento' ? 'segmento' : 'linea';
+            $cats = []; $dTy = []; $dLy = [];
+            foreach ($dim as $g => $v) {
+                $d = rep_delta($v['ty'], $v['ly']);
+                $tip = '<b>' . e($g) . '</b><br>Venta neta: <b>' . ck_money($v['ty']) . '</b> (' . cockpit_pct($tot > 0 ? $v['ty'] / $tot * 100 : 0) . ' del total)'
+                    . '<br>Año anterior: ' . ck_money($v['ly']) . ' (' . cockpit_pct($totL > 0 ? $v['ly'] / $totL * 100 : 0) . ')'
+                    . '<br>Crecimiento: <b>' . ($d === null ? 'nuevo' : (($d >= 0 ? '+' : '−') . number_format(abs($d), 1) . '%')) . '</b>'
+                    . '<br><span style="color:#94a3b8">Toca para filtrar el cockpit</span>';
+                $url = ck_url([$filtroDim => $g, 'tab' => 'resumen']);
+                $cats[] = $g;
+                $dTy[] = ['value' => round($v['ty']), 'url' => $url, 'tip' => $tip];
+                $dLy[] = ['value' => round($v['ly']), 'url' => $url, 'tip' => $tip];
+            }
+            echo grafico_ty_ly($cats, $dTy, $dLy, ['formato' => 'money0', 'titulo' => 'Sell-out por ' . mb_strtolower($dims[$k][0]), 'horizontal' => true],
+                max(240, 34 * count($cats) + 60) . 'px', ['tooltip' => ['trigger' => 'item']]); ?>
             <?php if (isset($dim['Sin segmento']) || isset($dim['Sin línea'])): ?>
-              <p class="text-xs text-slate-400 mt-2">Los productos sin segmento o sin línea se clasifican en su ficha o con «Clasificar» en la pestaña Producto.</p>
+              <p class="text-xs text-slate-400 mt-2">Los productos sin segmento o sin línea se clasifican en Configuración del cockpit → Productos.</p>
             <?php endif; ?>
           <?php endif; ?>
         </div>
       <?= rep_fin() ?>
       </div>
     <?php endforeach; ?>
+  </div>
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-5">
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Segmento → línea</h3>
+      <p class="text-sm text-slate-400 mb-2">Venta neta de este año. Toca un segmento para abrirlo.</p>
+      <?php
+      $sol = [];
+      foreach ($segLin as $clave => $v) {
+          [$sg, $ln] = explode('|', $clave, 2) + [1 => ''];
+          $sol[$sg]['value'] = ($sol[$sg]['value'] ?? 0) + $v;
+          $sol[$sg]['children'][] = ['name' => $ln, 'value' => round($v)];
+      }
+      uasort($sol, fn($a, $b) => $b['value'] <=> $a['value']);
+      $solData = []; $i = 0;
+      foreach ($sol as $sg => $n) {
+          $solData[] = ['name' => $sg, 'value' => round($n['value']), 'children' => $n['children'], 'itemStyle' => ['color' => rep_color($i++)]];
+      }
+      echo $solData ? grafico([
+          'tooltip' => ['trigger' => 'item'],
+          'series' => [['type' => 'sunburst', 'data' => $solData, 'radius' => ['12%', '95%'], 'sort' => 'desc',
+              'itemStyle' => ['borderColor' => '#fff', 'borderWidth' => 2],
+              'label' => ['rotate' => 'radial', 'minAngle' => 8, 'fontSize' => 11],
+              'levels' => [[], ['r0' => '12%', 'r' => '55%'], ['r0' => '55%', 'r' => '95%', 'itemStyle' => ['opacity' => 0.75]]]]],
+      ], ['formato' => 'money0', 'titulo' => 'Segmento y línea'], '380px') : empty_state('Sin ventas', '', 'layers');
+      ?>
+    </section>
+    <section class="card p-4">
+      <h3 class="font-bold text-slate-800">Sell-out mes a mes</h3>
+      <p class="text-sm text-slate-400 mb-2">Venta neta este año contra el anterior</p>
+      <?= grafico_lineas_ty_ly($etqMeses, array_map(fn($ym) => round($menTY[$ym]['ns'] ?? 0), $meses),
+          array_slice(array_pad(array_map(fn($ym) => round($menLY[$ym]['ns'] ?? 0), $mesesLY), count($meses), 0), 0, count($meses)),
+          ['formato' => 'money0', 'titulo' => 'Sell-out mes a mes'], '380px', count($meses) > 12) ?>
+    </section>
   </div>
 <?php endif; ?>
 

@@ -84,6 +84,7 @@ function nav_groups(): array
             ['Promociones', 'percent', url('modules/marketing/promociones.php'), 'promociones.ver'],
             ['Promotion Cockpit', 'pie', url('modules/marketing/cockpit.php'), 'cockpit.ver'],
             ['KPIs de campañas', 'target', url('modules/marketing/kpi_campanas.php'), 'kpi_campanas.ver'],
+            ['Configuración del cockpit', 'settings', url('modules/marketing/cockpit_config.php'), 'cockpit.configurar'],
         ]],
         ['Finanzas', [
             ['Ingresos y Gastos', 'dollar', url('modules/finanzas/index.php'), 'finanzas.ver'],

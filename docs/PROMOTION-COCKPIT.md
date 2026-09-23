@@ -7,18 +7,66 @@ casa matriz, pero con los datos del POS y sin copiar nada a mano en Excel.
 |---|---|---|
 | Promotion Cockpit | Marketing → Promotion Cockpit (`modules/marketing/cockpit.php`) | `cockpit.ver` |
 | KPIs de campañas | Marketing → KPIs de campañas (`modules/marketing/kpi_campanas.php`) | `kpi_campanas.*` |
+| Configuración del cockpit | Marketing → Configuración del cockpit (`modules/marketing/cockpit_config.php`) | `cockpit.configurar` |
 
 Las dos aparecen también en el Centro de Reportes (grupo Operación y Ventas).
 
 ## Instalación
 
-1. Ejecutar `database/migracion_cockpit_promociones_p39.sql` (idempotente; reversión al final).
+1. Ejecutar `database/migracion_cockpit_promociones_p39.sql` y después
+   `database/migracion_cockpit_config_p40.sql` (las dos idempotentes; reversión al final).
 2. Clasificar las promociones: en **Marketing → Promociones**, cada una lleva ahora un
    **código** y un **tipo de descuento** (sets de regalo, calendario, GWP, CRM, operación
    especial, temporada, lanzamiento, empleados, outlet). El tipo es la fila del cockpit.
 3. Clasificar los productos: **segmento** (Body, Face, Hand…), **línea** (Almond, Shea,
    Immortelle…) y **producto héroe**. Uno a uno en la ficha del producto, o todos de golpe en
-   el cockpit → pestaña Producto → **Clasificar** (pegar desde Excel: `SKU; segmento; línea; héroe`).
+   el cockpit → pestaña Producto → **Clasificar** (pegar desde Excel: `SKU; segmento; línea; héroe`),
+   o en Configuración del cockpit → Productos (tabla editable, filtro «sin clasificar» y
+   renombrar/unir un segmento o una línea en todos los productos).
+
+## Todo se configura desde la pantalla (P40)
+
+Nada de lo que clasifica o reporta el cockpit está fijo en el código. En **Marketing →
+Configuración del cockpit**:
+
+| Pestaña | Qué se cambia |
+|---|---|
+| Tipos de descuento | nombre, **color** en los gráficos, orden, si es familia de promoción, si es **motivo del POS** (etiqueta en caja), activo. Crear y borrar (solo si nunca se usó). |
+| Canales | canales de la marca (nombre y nombre en inglés para el Excel) y las **reglas** que mandan cada venta a su canal: por canal de captación o por tipo de comprobante; gana la primera. Vista previa con las ventas reales de 24 meses. |
+| Rubros de inversión | las filas de la hoja INVESTMENT, en español y en inglés. |
+| KPIs de campañas | los KPIs capturados a mano: grupo, nombre, inglés, unidad, **rol** (tráfico → conversión en tienda; sesiones web → conversión online) y «menor es mejor». |
+| Parámetros | periodo al abrir el cockpit, mes de inicio del año fiscal, canal por defecto, cuántas «menos activadas», SKUs del top, días del detalle diario y **los canales de captación que ofrece el POS**. |
+| Productos | segmento, línea y héroe de cada producto. |
+
+Las **claves** no se renombran nunca (las guardan las ventas y las promociones): se cambia
+el nombre o se desactiva, y lo histórico conserva su nombre. Los tipos marcados «lo usa el
+cálculo» (sin promoción, muestra, negociado, promoción sin clasificar, descuento manual) se
+renombran y se recolorean, pero no se borran ni se desactivan.
+
+Sin la P40 todo sigue funcionando con los valores de siempre (los de la siembra).
+
+## Gráficos interactivos
+
+Los gráficos del cockpit y de las campañas son **Apache ECharts** (licencia Apache 2.0),
+guardado en `assets/js/vendor/echarts.min.js`: no depende de ningún CDN. Todos tienen tooltip
+con la cifra exacta, **Guardar imagen**, **Ver datos** (la tabla, accesible) y **Restaurar**;
+las series de tiempo permiten **acercar** (rueda, arrastre o la barra de abajo) y cambiar entre
+líneas y barras. Varios **profundizan al tocarlos**:
+
+- Resumen: el costo por tipo y las burbujas llevan al Detallado filtrado por ese tipo.
+- Detallado: el Pareto y el gráfico de uso contra profundidad filtran la tabla por tipo.
+- Producto: el mapa de árbol entra de tipo → promoción → producto y la barra de abajo vuelve.
+- Sell-out: tocar un canal, un segmento o una línea filtra todo el cockpit por él; el gráfico
+  solar abre cada segmento en sus líneas.
+
+Los gráficos nuevos: puente del margen (cascada volumen/mezcla/tasa/producto), venta bruta mes
+a mes, costo por tipo, profundidad contra rentabilidad, Pareto de descuentos, uso contra
+profundidad, mapa de la venta con descuento, héroes contra el resto, segmento → línea,
+sell-out mes a mes; y en cada campaña, venta por canal contra meta, venta y facturas por día,
+inversión por rubro y SKUs foco.
+
+En código: `grafico()`, `grafico_ty_ly()`, `grafico_lineas_ty_ly()` y `grafico_cascada()` en
+`includes/graficos.php`; el formato, los tooltips y el clic viven en `assets/js/nexo-graficos.js`.
 
 El código puede subir antes que la migración: el POS sigue vendiendo igual y las pantallas
 nuevas avisan que falta la actualización.

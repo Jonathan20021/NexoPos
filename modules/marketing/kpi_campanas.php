@@ -99,7 +99,8 @@ $campanas = qAll(
 );
 $hoy = date('Y-m-d');
 
-$acciones = can('kpi_campanas.crear') ? btn_nuevo('kc:new', 'Nueva campaña') : '';
+$acciones = (can('cockpit.configurar') ? '<a href="' . e(url('modules/marketing/cockpit_config.php?tab=kpis')) . '" class="btn btn-ghost">' . icon('settings', 'w-4 h-4') . ' Configurar KPIs y rubros</a>' : '')
+    . (can('kpi_campanas.crear') ? btn_nuevo('kc:new', 'Nueva campaña') : '');
 layout_start('KPIs de campañas', 'Holiday, Black Friday y cada activación: venta por canal y por día, SKUs foco, inversión y retorno', $acciones);
 ?>
 

@@ -215,11 +215,25 @@ arreglo de `rep_catalogo()`: el hub y los permisos salen de ahí.
   venta aparecerá en el cockpit como «sin promoción» aunque la tuviera.
 - Comprueba `cockpit_capturando()` antes de escribir esas columnas: el código puede llegar antes
   que la migración P39.
-- Un tipo de descuento nuevo se añade en `cockpit_tipos()`; un motivo de caja, en
-  `cockpit_motivos_caja()` con una clave que exista en `cockpit_tipos()` (la prueba lo vigila).
-- El mapeo de canales de la marca vive solo en `cockpit_canal_sql()`.
+- Tipos, motivos del POS, canales y sus reglas, rubros, KPIs y parámetros **se editan en
+  pantalla** (Configuración del cockpit, P40). No los fijes en el código: léelos con
+  `cockpit_tipos_def()`, `cockpit_canales()`, `cockpit_canal_sql()`, `kpi_rubros_inversion()`,
+  `kpi_metricas_def()` y `cockpit_param()`. Los valores de respaldo de esas funciones deben
+  coincidir con la siembra de la P40.
+- `canalesVenta()` (POS) sale del parámetro `canales_captacion`.
 - Si tocas `cockpit_efectos()`, corre `php pruebas/cockpit.php`: los efectos tienen que sumar
   exactamente la variación del margen.
+
+## Gráficos interactivos (`includes/graficos.php` + Apache ECharts)
+Para tableros de análisis (Promotion Cockpit, campañas). ECharts va **dentro del repo**
+(`assets/js/vendor/echarts.min.js`), no por CDN: es la única excepción a «sin dependencias
+nuevas», y por eso mismo no se carga en páginas que no la usan (`graficos_script()` la mete
+la primera vez que se pinta un gráfico).
+- `grafico($option, $cfg, $alto)` · `grafico_ty_ly()` · `grafico_lineas_ty_ly()` · `grafico_cascada()`.
+- **Nunca dos ejes de valores** en un gráfico: dos medidas son dos gráficos.
+- Este año `GRAF_TY`, año anterior `GRAF_LY` (gris). Los colores por tipo salen de la configuración.
+- Un punto con `url` navega al tocarlo; con `tip` usa ese HTML en el tooltip — **escápalo con `e()`**.
+  El resto de nombres los escapa `nexo-graficos.js`.
 
 ## Gráficos (`includes/charts.php`, SVG puro, sin librerías)
 `sparkline()`, `barChart()`, `barChartComparado()`, `lineChart($series,$labels,$opts)`,

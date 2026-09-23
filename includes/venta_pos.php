@@ -40,7 +40,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     $comprobante = array_key_exists((string) ($in['comprobante'] ?? ''), ncfComprobantesDisponibles())
         ? (string) $in['comprobante'] : 'consumidor';
     $metodoId    = (int) ($in['metodo_pago_id'] ?? 1) ?: 1;
-    $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : 'Mostrador';
+    $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : canalesVenta()[0];
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
     $tasaItbis   = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 

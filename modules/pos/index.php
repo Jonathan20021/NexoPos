@@ -422,7 +422,7 @@ function pos() {
     search: '', cat: 0, cart: [], descuento: 0, descuento_motivo: 'manual',
     pay: false, comprobante: 'consumidor', cliente_id: 1,
     metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
-    canal_venta: 'Mostrador',
+    canal_venta: <?= json_encode(canalesVenta()[0]) ?>,
     tienda_id: <?= json_encode($tiendaId) ?>,
     tasa: <?= $tasa ?>,
     puedeMuestra: <?= $puedeMuestra ? 'true' : 'false' ?>,

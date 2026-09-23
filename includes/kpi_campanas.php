@@ -13,45 +13,88 @@
  * devoluciones. Los canales son los de la marca: cockpit_canal_sql().
  */
 
-/** Rubros de inversión, en el orden de la hoja INVESTMENT. clave => [español, inglés] */
-function kpi_rubros_inversion(): array
+/**
+ * Rubros de inversión, en el orden de la hoja INVESTMENT. clave => [español, inglés].
+ * Salen de `kpi_rubros` (Configuración del cockpit); esto es el respaldo.
+ */
+function kpi_rubros_inversion(bool $soloActivos = false): array
 {
-    return [
-        'entrenamiento' => ['Entrenamiento retail', 'RETAIL TRAINING'],
-        'merchandising' => ['Merchandising / animación en tienda (dummies)', 'MERCHANDISING/IN-STORE ANIMATION(DUMMIES)'],
-        'lanzamiento'   => ['Evento de lanzamiento', 'LAUNCH EVENT'],
-        'pr'            => ['PR (seeding, artículos…)', 'PR (seeding, articles, etc…)'],
-        'alianzas'      => ['Alianzas (marcas, influencers…)', 'PARTNERSHIPS (Brands, Influencers etc…)'],
-        'mall'          => ['Activaciones en mall, podios, pop-ups', 'MALL ANIMATIONS,PODIUMS, POP UPS'],
-        'paid_media'    => ['Medios pagados (Google Ads, Meta Ads)', 'PAID MEDIA (Google Ads, Meta Ads)'],
-        'ecommerce'     => ['E-commerce (incl. medios pagados)', 'ECOMMERCE (INCL. PAID MEDIA)'],
-        'ooh'           => ['Publicidad tradicional (vallas, mall, OOH)', 'ADVERTISING TRADITIONAL MEDIA (BILLBOARDS/MALL TAKE OVER/OOH)'],
-        'otros'         => ['Otras inversiones (regalos a top clientes…)', 'OTHER MARKETING INVESTMENTS'],
-    ];
+    $filas = cockpit_config_filas('kpi_rubros');
+    if ($filas === null) {
+        return [
+            'entrenamiento' => ['Entrenamiento retail', 'RETAIL TRAINING'],
+            'merchandising' => ['Merchandising / animación en tienda (dummies)', 'MERCHANDISING/IN-STORE ANIMATION(DUMMIES)'],
+            'lanzamiento'   => ['Evento de lanzamiento', 'LAUNCH EVENT'],
+            'pr'            => ['PR (seeding, artículos…)', 'PR (seeding, articles, etc…)'],
+            'alianzas'      => ['Alianzas (marcas, influencers…)', 'PARTNERSHIPS (Brands, Influencers etc…)'],
+            'mall'          => ['Activaciones en mall, podios, pop-ups', 'MALL ANIMATIONS,PODIUMS, POP UPS'],
+            'paid_media'    => ['Medios pagados (Google Ads, Meta Ads)', 'PAID MEDIA (Google Ads, Meta Ads)'],
+            'ecommerce'     => ['E-commerce (incl. medios pagados)', 'ECOMMERCE (INCL. PAID MEDIA)'],
+            'ooh'           => ['Publicidad tradicional (vallas, mall, OOH)', 'ADVERTISING TRADITIONAL MEDIA (BILLBOARDS/MALL TAKE OVER/OOH)'],
+            'otros'         => ['Otras inversiones (regalos a top clientes…)', 'OTHER MARKETING INVESTMENTS'],
+        ];
+    }
+    $out = [];
+    foreach ($filas as $r) {
+        if ($soloActivos && !$r['activo']) continue;
+        $out[$r['clave']] = [$r['nombre'], $r['nombre_en'] ?: mb_strtoupper($r['nombre'])];
+    }
+    return $out;
 }
 
 /**
  * KPIs que no salen del POS, agrupados como en la lámina «Examples of KPIs to share».
- * clave => [grupo, etiqueta, unidad: num|pct|money]
+ * @return array<string,array{grupo:string,nombre:string,nombre_en:string,unidad:string,rol:?string,menor_es_mejor:int,activo:int}>
  */
+function kpi_metricas_def(): array
+{
+    static $def = null;
+    if ($def !== null) return $def;
+    $filas = cockpit_config_filas('kpi_metricas_def');
+    if ($filas === null) {
+        $base = [
+            'trafico' => ['Generales', 'Visitantes en tienda (tráfico)', 'Store traffic', 'num', 'trafico', 0],
+            'nps' => ['Generales', 'NPS', 'NPS results', 'num', null, 0],
+            'emv' => ['Influencer / PR', 'EMV (valor mediático ganado)', 'EMV', 'money', null, 0],
+            'impresiones_pr' => ['Influencer / PR', 'Impresiones', 'Impressions', 'num', null, 0],
+            'alcance_pr' => ['Influencer / PR', 'Alcance (reach)', 'Reach', 'num', null, 0],
+            'engagement_pr' => ['Influencer / PR', 'Tasa de interacción (engagement)', 'Engagement Rate', 'pct', null, 0],
+            'impresiones_medios' => ['OOH / Campañas en medios', 'Impresiones', 'Impressions', 'num', null, 0],
+            'sesiones_web' => ['E-commerce', 'Sesiones en la tienda online', 'Online store sessions', 'num', 'sesiones_web', 0],
+            'asistentes' => ['Entrenamiento', 'Beauty hosts que asistieron', 'Beauty Hosts who attended', 'num', null, 0],
+            'encuesta' => ['Entrenamiento', 'Satisfacción de la encuesta', 'Attendees Survey Feedbacks', 'pct', null, 0],
+            'completitud' => ['Entrenamiento', 'Tasa de completitud (MTS, talleres, tareas)', 'Completion rate', 'pct', null, 0],
+            'productividad' => ['Entrenamiento', 'Crecimiento de productividad (antes/después)', 'Attendees productivity growth', 'pct', null, 0],
+            'rotacion' => ['Incentivos retail', 'Rotación del equipo', 'Team turnover rate', 'pct', null, 1],
+            'nps_experiencia' => ['Experiencia a la medida', 'NPS de la experiencia', 'NPS results', 'num', null, 0],
+        ];
+        $def = [];
+        foreach ($base as $k => [$g, $n, $en, $u, $rol, $menor]) {
+            $def[$k] = ['grupo' => $g, 'nombre' => $n, 'nombre_en' => $en, 'unidad' => $u, 'rol' => $rol, 'menor_es_mejor' => $menor, 'activo' => 1];
+        }
+        return $def;
+    }
+    $def = [];
+    foreach ($filas as $r) {
+        $def[$r['clave']] = ['grupo' => $r['grupo'], 'nombre' => $r['nombre'], 'nombre_en' => $r['nombre_en'] ?: $r['nombre'],
+                             'unidad' => $r['unidad'], 'rol' => $r['rol'] ?: null, 'menor_es_mejor' => (int) $r['menor_es_mejor'], 'activo' => (int) $r['activo']];
+    }
+    return $def;
+}
+
+/** KPIs activos para capturar: clave => [grupo, etiqueta, unidad]. */
 function kpi_metricas_manuales(): array
 {
-    return [
-        'trafico'            => ['Generales', 'Visitantes en tienda (tráfico)', 'num'],
-        'nps'                => ['Generales', 'NPS', 'num'],
-        'emv'                => ['Influencer / PR', 'EMV (valor mediático ganado)', 'money'],
-        'impresiones_pr'     => ['Influencer / PR', 'Impresiones', 'num'],
-        'alcance_pr'         => ['Influencer / PR', 'Alcance (reach)', 'num'],
-        'engagement_pr'      => ['Influencer / PR', 'Tasa de interacción (engagement)', 'pct'],
-        'impresiones_medios' => ['OOH / Campañas en medios', 'Impresiones', 'num'],
-        'sesiones_web'       => ['E-commerce', 'Sesiones en la tienda online', 'num'],
-        'asistentes'         => ['Entrenamiento', 'Beauty hosts que asistieron', 'num'],
-        'encuesta'           => ['Entrenamiento', 'Satisfacción de la encuesta', 'pct'],
-        'completitud'        => ['Entrenamiento', 'Tasa de completitud (MTS, talleres, tareas)', 'pct'],
-        'productividad'      => ['Entrenamiento', 'Crecimiento de productividad (antes/después)', 'pct'],
-        'rotacion'           => ['Incentivos retail', 'Rotación del equipo', 'pct'],
-        'nps_experiencia'    => ['Experiencia a la medida', 'NPS de la experiencia', 'num'],
-    ];
+    $out = [];
+    foreach (kpi_metricas_def() as $k => $d) if ($d['activo']) $out[$k] = [$d['grupo'], $d['nombre'], $d['unidad']];
+    return $out;
+}
+
+/** La métrica que cumple un rol (tráfico, sesiones web), o null. */
+function kpi_metrica_rol(string $rol): ?string
+{
+    foreach (kpi_metricas_def() as $k => $d) if ($d['rol'] === $rol && $d['activo']) return $k;
+    return null;
 }
 
 function kpi_campana(int $id): ?array
@@ -126,7 +169,7 @@ function kpi_por_dia(array $c, string $ini, string $fin): array
 {
     [$w, $p] = kpi_where($c, $ini, $fin);
     $out = [];
-    for ($d = $ini; $d <= $fin && count($out) < 93; $d = date('Y-m-d', strtotime($d . ' +1 day'))) {
+    for ($d = $ini; $d <= $fin && count($out) < cockpit_param_int('dias_max'); $d = date('Y-m-d', strtotime($d . ' +1 day'))) {
         $out[$d] = ['ns' => 0.0, 'tickets' => 0.0, 'nuevos' => 0.0];
     }
     foreach (qAll("SELECT DATE(v.fecha) d, SUM(v.subtotal - v.descuento) ns, COUNT(*) t FROM ventas v WHERE $w GROUP BY d", $p) as $r) {

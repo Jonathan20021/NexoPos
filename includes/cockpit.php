@@ -61,105 +61,215 @@ function cockpit_disponible(): bool
 }
 
 /* ============================================================
- *  Catálogos
+ *  Configuración (P40): todo sale de tablas editables desde
+ *  Marketing → Configuración del cockpit. Los valores de abajo son
+ *  el respaldo mientras la P40 no esté aplicada, y los de la siembra.
  * ============================================================ */
 
+/** ¿Existe la configuración editable (P40)? */
+function cockpit_config_disponible(): bool
+{
+    static $ok = null;
+    if ($ok === null) {
+        if (!function_exists('qVal')) return $ok = false;   // pruebas sin base
+        try {
+            $ok = (bool) qVal("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_parametros'");
+        } catch (Throwable $e) {
+            $ok = false;
+        }
+    }
+    return $ok;
+}
+
+/** Lee una tabla de configuración, o null si no existe todavía. Cacheado por petición. */
+function cockpit_config_filas(string $tabla, string $orden = 'orden, clave'): ?array
+{
+    static $cache = [];
+    if (!cockpit_config_disponible()) return null;
+    return $cache[$tabla] ??= qAll("SELECT * FROM $tabla ORDER BY $orden");
+}
+
+/** Parámetros generales. */
+function cockpit_param(string $clave, $defecto = null)
+{
+    static $p = null;
+    if ($p === null) {
+        $p = [];
+        foreach (cockpit_config_filas('cockpit_parametros', 'clave') ?? [] as $r) $p[$r['clave']] = $r['valor'];
+    }
+    return ($p[$clave] ?? '') !== '' ? $p[$clave] : $defecto;
+}
+
+/** Definición de los parámetros que se editan en pantalla: clave => [etiqueta, tipo, ayuda, defecto]. */
+function cockpit_parametros_def(): array
+{
+    return [
+        'periodo_defecto'   => ['Periodo al abrir el cockpit', 'select', 'Lo que se ve sin tocar filtros.', 'ytd'],
+        'mes_inicio_fiscal' => ['Mes en que empieza el año fiscal', 'mes', 'La marca cierra de abril a marzo.', '4'],
+        'canal_defecto'     => ['Canal de la marca cuando ninguna regla aplica', 'canal', '', 'retail'],
+        'menos_activadas'   => ['Cuántas promociones mostrar en «menos activadas»', 'int', '', '30'],
+        'top_skus'          => ['SKUs a mostrar cuando la campaña no tiene SKUs foco', 'int', '', '20'],
+        'dias_max'          => ['Máximo de días en el detalle diario de una campaña', 'int', '', '93'],
+        'canales_captacion' => ['Canales de captación del POS (uno por línea)', 'lineas', 'Las opciones que el cajero elige al vender. Lo que quites no se borra de las ventas viejas.', "Mostrador\nInstagram\nWhatsApp\nFacebook\nReferido\nOtro"],
+    ];
+}
+
+function cockpit_param_int(string $clave): int
+{
+    return max(1, (int) cockpit_param($clave, cockpit_parametros_def()[$clave][3] ?? 1));
+}
+
+/** Respaldo de los tipos (igual que la siembra de la P40). */
+function cockpit_tipos_defecto(): array
+{
+    // clave => [nombre, color, es_promocion, etiqueta_caja, sistema]
+    return [
+        'set_regalo'  => ['Sets de regalo (Gift sets)', '#2a78d6', 1, null, 0],
+        'calendario'  => ['Calendario de adviento', '#eb6834', 1, null, 0],
+        'gwp'         => ['Regalo con compra (GWP / PWP)', '#1baf7a', 1, null, 0],
+        'crm'         => ['Clientes y fidelidad (CRM)', '#eda100', 1, 'Cliente frecuente / fidelidad', 0],
+        'operacion'   => ['Operación especial (Black Friday, aniversario…)', '#e87ba4', 1, null, 0],
+        'temporada'   => ['Temporada / rebajas (Sales)', '#008300', 1, null, 0],
+        'lanzamiento' => ['Lanzamiento', '#4a3aa7', 1, null, 0],
+        'empleados'   => ['Descuento de empleados', '#e34948', 1, 'Empleado', 0],
+        'outlet'      => ['Outlet / liquidación', '#78716c', 1, 'Producto con defecto / liquidación', 0],
+        'otro'        => ['Otro descuento', '#a8a29e', 1, 'Otro', 0],
+        'cortesia'    => ['Cortesía / servicio al cliente', '#57534e', 0, 'Cortesía / servicio', 0],
+        'manual'      => ['Descuento manual en caja', '#475569', 0, 'Descuento manual', 1],
+        'promocion'   => ['Promoción sin clasificar', '#94a3b8', 0, null, 1],
+        'muestra'     => ['Muestras y regalos (RD$0)', '#64748b', 0, null, 1],
+        'negociado'   => ['Precio negociado (cotización)', '#334155', 0, null, 1],
+        'sin'         => ['Sin promoción', '#cbd5e1', 0, null, 1],
+    ];
+}
+
 /**
- * Tipos de descuento: la fila del cockpit.
+ * Todos los tipos, activos e inactivos (para poner nombre a lo histórico).
+ * @return array<string,array{nombre:string,color:string,es_promocion:int,etiqueta_caja:?string,sistema:int,activo:int}>
+ */
+function cockpit_tipos_def(): array
+{
+    static $t = null;
+    if ($t !== null) return $t;
+    $filas = cockpit_config_filas('cockpit_tipos');
+    $t = [];
+    if ($filas === null) {
+        foreach (cockpit_tipos_defecto() as $k => [$n, $c, $p, $caja, $sis]) {
+            $t[$k] = ['nombre' => $n, 'color' => $c, 'es_promocion' => $p, 'etiqueta_caja' => $caja, 'sistema' => $sis, 'activo' => 1];
+        }
+        return $t;
+    }
+    foreach ($filas as $r) {
+        $t[$r['clave']] = ['nombre' => $r['nombre'], 'color' => $r['color'], 'es_promocion' => (int) $r['es_promocion'],
+                           'etiqueta_caja' => $r['etiqueta_caja'], 'sistema' => (int) $r['sistema'], 'activo' => (int) $r['activo']];
+    }
+    // El cálculo usa estas claves aunque alguien borre la fila a mano en la base.
+    foreach (cockpit_tipos_defecto() as $k => [$n, $c, $p, $caja, $sis]) {
+        if ($sis && !isset($t[$k])) $t[$k] = ['nombre' => $n, 'color' => $c, 'es_promocion' => 0, 'etiqueta_caja' => $caja, 'sistema' => 1, 'activo' => 1];
+    }
+    return $t;
+}
+
+/**
+ * Tipos de descuento: la fila del cockpit. clave => [nombre, color].
  *
  * Las familias de promoción y los motivos de descuento en caja comparten
  * catálogo a propósito: un descuento de empleado es «Descuento de empleados»
  * lo haya hecho una promoción o el cajero a mano.
- *
- * @return array<string,array{0:string,1:string}> clave => [etiqueta, color hex]
  */
 function cockpit_tipos(): array
 {
-    return [
-        'set_regalo'  => ['Sets de regalo (Gift sets)', '#b45309'],
-        'calendario'  => ['Calendario de adviento', '#7c3aed'],
-        'gwp'         => ['Regalo con compra (GWP / PWP)', '#db2777'],
-        'crm'         => ['Clientes y fidelidad (CRM)', '#0891b2'],
-        'operacion'   => ['Operación especial (Black Friday, aniversario…)', '#dc2626'],
-        'temporada'   => ['Temporada / rebajas (Sales)', '#ea580c'],
-        'lanzamiento' => ['Lanzamiento', '#16a34a'],
-        'empleados'   => ['Descuento de empleados', '#4f46e5'],
-        'outlet'      => ['Outlet / liquidación', '#64748b'],
-        'promocion'   => ['Promoción sin clasificar', '#a16207'],
-        'muestra'     => ['Muestras y regalos (RD$0)', '#be185d'],
-        'negociado'   => ['Precio negociado (cotización)', '#0f766e'],
-        'manual'      => ['Descuento manual en caja', '#475569'],
-        'cortesia'    => ['Cortesía / servicio al cliente', '#0284c7'],
-        'otro'        => ['Otro descuento', '#94a3b8'],
-        'sin'         => ['Sin promoción', '#cbd5e1'],
-    ];
+    return array_map(fn($r) => [$r['nombre'], $r['color']], cockpit_tipos_def());
 }
 
-/** Familias que se pueden asignar a una promoción (formulario de promociones). */
+/** Familias que se pueden asignar a una promoción (activas). */
 function cockpit_tipos_promocion(): array
 {
-    $t = cockpit_tipos();
     $out = [];
-    foreach (['set_regalo', 'calendario', 'gwp', 'crm', 'operacion', 'temporada', 'lanzamiento', 'empleados', 'outlet', 'otro'] as $k) {
-        $out[$k] = $t[$k][0];
-    }
+    foreach (cockpit_tipos_def() as $k => $r) if ($r['es_promocion'] && $r['activo']) $out[$k] = $r['nombre'];
     return $out;
 }
 
-/** Motivos del descuento manual en caja (selector del POS). */
+/** Motivos del descuento manual en caja (selector del POS). «manual» siempre existe. */
 function cockpit_motivos_caja(): array
 {
-    return [
-        'manual'    => 'Descuento manual',
-        'empleados' => 'Empleado',
-        'crm'       => 'Cliente frecuente / fidelidad',
-        'cortesia'  => 'Cortesía / servicio',
-        'outlet'    => 'Producto con defecto / liquidación',
-        'otro'      => 'Otro',
-    ];
+    $out = [];
+    foreach (cockpit_tipos_def() as $k => $r) {
+        if ($r['etiqueta_caja'] !== null && $r['etiqueta_caja'] !== '' && ($r['activo'] || $k === 'manual')) $out[$k] = $r['etiqueta_caja'];
+    }
+    if (!isset($out['manual'])) $out = ['manual' => 'Descuento manual'] + $out;
+    return $out;
 }
 
 function cockpit_tipo_label(string $k): string
 {
-    return cockpit_tipos()[$k][0] ?? ucfirst($k);
+    return cockpit_tipos_def()[$k]['nombre'] ?? ucfirst(str_replace('_', ' ', $k));
 }
 
 function cockpit_tipo_color(string $k): string
 {
-    return cockpit_tipos()[$k][1] ?? '#94a3b8';
+    return cockpit_tipos_def()[$k]['color'] ?? '#94a3b8';
 }
 
-/**
- * Canales en los que la marca reporta (Retail, Wholesale, Web, Social selling).
- * Se derivan del canal de captación y del comprobante: ver cockpit_canal_sql().
- */
+/** Canales en los que reporta la marca (activos). clave => nombre */
 function cockpit_canales(): array
 {
+    $filas = cockpit_config_filas('cockpit_canales');
+    if ($filas === null) {
+        return ['retail' => 'Retail (tiendas)', 'mayoreo' => 'Mayoreo / corporativo', 'web' => 'Web (tienda online)', 'social' => 'Social selling'];
+    }
+    $out = [];
+    foreach ($filas as $r) if ($r['activo']) $out[$r['clave']] = $r['nombre'];
+    return $out ?: ['retail' => 'Retail'];
+}
+
+/** Nombre en inglés de cada canal (encabezados del Excel de la marca). */
+function cockpit_canales_en(): array
+{
+    $out = ['retail' => 'Retail', 'mayoreo' => 'Wholesale', 'web' => 'Web', 'social' => 'Social Selling'];
+    foreach (cockpit_config_filas('cockpit_canales') ?? [] as $r) $out[$r['clave']] = $r['nombre_en'] ?: $r['nombre'];
+    return $out;
+}
+
+/** Reglas de canal, en orden. @return array<int,array{tipo:string,valor:string,canal:string}> */
+function cockpit_canal_reglas(): array
+{
+    $filas = cockpit_config_filas('cockpit_canal_reglas', 'orden, id');
+    if ($filas !== null) return $filas;
     return [
-        'retail'  => 'Retail (tiendas)',
-        'mayoreo' => 'Mayoreo / corporativo',
-        'web'     => 'Web (tienda online)',
-        'social'  => 'Social selling',
+        ['tipo' => 'canal_venta', 'valor' => 'Tienda online', 'canal' => 'web'],
+        ['tipo' => 'canal_venta', 'valor' => 'Instagram', 'canal' => 'social'],
+        ['tipo' => 'canal_venta', 'valor' => 'WhatsApp', 'canal' => 'social'],
+        ['tipo' => 'canal_venta', 'valor' => 'Facebook', 'canal' => 'social'],
+        ['tipo' => 'canal_venta', 'valor' => 'TikTok', 'canal' => 'social'],
+        ['tipo' => 'comprobante', 'valor' => 'no_consumidor', 'canal' => 'mayoreo'],
     ];
 }
 
 /**
- * Canal de la marca para una venta.
+ * Canal de la marca para una venta, como expresión SQL.
  *
- *   · Web            lo que entró por la tienda online.
- *   · Social selling Instagram, WhatsApp, Facebook, TikTok.
- *   · Mayoreo        factura con crédito fiscal (B01/E31) o gubernamental: una
- *                    empresa comprando, no un consumidor.
- *   · Retail         todo lo demás (mostrador, referido, sin especificar).
- *
- * Es la ÚNICA regla del mapeo: si la marca lo define distinto, se cambia aquí.
+ * Se arma con las reglas configuradas: la primera que se cumple gana y el
+ * resto cae en el canal por defecto. Es la ÚNICA regla del mapeo.
  */
 function cockpit_canal_sql(string $v = 'v'): string
 {
-    return "(CASE WHEN $v.canal_venta = 'Tienda online' THEN 'web'
-                  WHEN $v.canal_venta IN ('Instagram','WhatsApp','Facebook','TikTok') THEN 'social'
-                  WHEN $v.tipo_comprobante <> 'consumidor' THEN 'mayoreo'
-                  ELSE 'retail' END)";
+    static $cache = [];
+    if (isset($cache[$v])) return $cache[$v];
+    // Los valores los escribe la marca en pantalla: se citan con el propio
+    // driver, que sabe si el servidor usa NO_BACKSLASH_ESCAPES.
+    $txt = fn(string $s) => db()->quote($s);
+    $casos = [];
+    foreach (cockpit_canal_reglas() as $r) {
+        if ($r['tipo'] === 'comprobante') {
+            $cond = $r['valor'] === 'no_consumidor' ? "$v.tipo_comprobante <> 'consumidor'" : "$v.tipo_comprobante = " . $txt($r['valor']);
+        } else {
+            $cond = "$v.canal_venta = " . $txt($r['valor']);
+        }
+        $casos[] = "WHEN $cond THEN " . $txt($r['canal']);
+    }
+    $defecto = (string) cockpit_param('canal_defecto', 'retail');
+    return $cache[$v] = $casos ? '(CASE ' . implode(' ', $casos) . ' ELSE ' . $txt($defecto) . ' END)' : $txt($defecto);
 }
 
 /* ============================================================
@@ -228,7 +338,8 @@ function cockpit_sumas_sql(): string
 /**
  * Lee los filtros de la URL.
  *
- * TY por defecto: el año en curso hasta hoy. LY por defecto: el mismo rango un
+ * TY por defecto: el periodo configurado (año a la fecha, salvo que la marca
+ * elija otro). LY por defecto: el mismo rango un
  * año antes (la comparación justa: no se comparan nueve meses contra doce).
  *
  * @return array{ty:array{0:string,1:string},ly:array{0:string,1:string},canal:?string,marca:?int,samestore:bool,segmento:?string}
@@ -239,8 +350,9 @@ function cockpit_filtros(): array
         $v = trim((string) get($k));
         return ($v !== '' && ($t = strtotime($v))) ? date('Y-m-d', $t) : $def;
     };
-    $tyD = $fecha('ty_desde', date('Y-01-01'));
-    $tyH = $fecha('ty_hasta', date('Y-m-d'));
+    [$defD, $defH] = cockpit_presets()[(string) cockpit_param('periodo_defecto', 'ytd')][1] ?? cockpit_presets()['ytd'][1];
+    $tyD = $fecha('ty_desde', $defD);
+    $tyH = $fecha('ty_hasta', $defH);
     if ($tyD > $tyH) [$tyD, $tyH] = [$tyH, $tyD];
     $lyD = $fecha('ly_desde', cockpit_un_anio_antes($tyD));
     $lyH = $fecha('ly_hasta', cockpit_un_anio_antes($tyH));
@@ -253,7 +365,25 @@ function cockpit_filtros(): array
         'canal'     => array_key_exists($canal, cockpit_canales()) ? $canal : null,
         'marca'     => (int) get('marca_id') ?: null,
         'segmento'  => trim((string) get('segmento')) ?: null,
+        'linea'     => trim((string) get('linea')) ?: null,
         'samestore' => get('samestore') === '1',
+    ];
+}
+
+/** Periodos rápidos: clave => [etiqueta, [desde, hasta]]. El año fiscal usa el mes configurado. */
+function cockpit_presets(): array
+{
+    $mesF = min(12, max(1, (int) cockpit_param('mes_inicio_fiscal', 4)));
+    $anioF = (int) date('n') >= $mesF ? (int) date('Y') : (int) date('Y') - 1;
+    $iniF = sprintf('%04d-%02d-01', $anioF, $mesF);
+    $nombreMes = function_exists('mesNombre') ? mb_strtolower(mesNombre($mesF, true)) : (string) $mesF;
+    return [
+        'ytd'        => ['Año a la fecha', [date('Y-01-01'), date('Y-m-d')]],
+        'fiscal'     => ['Año fiscal (desde ' . $nombreMes . ')', [$iniF, date('Y-m-d')]],
+        'trimestre'  => ['Trimestre', [date('Y-m-01', mktime(0, 0, 0, (int) (ceil(date('n') / 3) - 1) * 3 + 1, 1)), date('Y-m-d')]],
+        'mes'        => ['Este mes', [date('Y-m-01'), date('Y-m-d')]],
+        'mes_pasado' => ['Mes pasado', [date('Y-m-01', strtotime('first day of last month')), date('Y-m-t', strtotime('last day of last month'))]],
+        'u12'        => ['Últimos 12 meses', [date('Y-m-d', strtotime('-1 year +1 day')), date('Y-m-d')]],
     ];
 }
 
@@ -310,6 +440,10 @@ function cockpit_where(array $f, array $rango, bool $porLinea = true): array
     if ($porLinea && $f['marca']) {
         $w[] = 'pr.marca_id = ?';
         $p[] = $f['marca'];
+    }
+    if ($porLinea && !empty($f['linea'])) {
+        $w[] = "COALESCE(NULLIF(pr.linea,''), 'Sin línea') = ?";
+        $p[] = $f['linea'];
     }
     if ($porLinea && $f['segmento']) {
         $w[] = "COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id)) = ?";
