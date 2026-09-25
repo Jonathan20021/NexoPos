@@ -223,8 +223,27 @@ $nDepartamentos = (int) qVal("SELECT COUNT(*) FROM departamentos WHERE activo = 
 // ---------- Listado ----------
 $q      = trim(get('q'));
 $depId  = (int) get('departamento_id');
+
+// Filtro de estado. Por defecto, SOLO ACTIVOS.
+//
+// La pantalla nació sin este filtro y listaba a todo el mundo, incluida la gente
+// que ya salió. Con un padrón recién depurado eso se ve enseguida: la tarjeta de
+// arriba decía 49 activos y la tabla —y el PDF que sale de ella— traía 62. Quien
+// exporta la plantilla para el contador o para la TSS no quiere a los que se
+// fueron, y no tenía forma de quitarlos.
+//
+// `todos` sigue disponible para cuando hace falta el histórico completo.
+$estadosFiltro = ['activo' => 'Solo activos', 'inactivo' => 'Solo inactivos',
+                  'vacaciones' => 'De vacaciones', 'licencia' => 'De licencia',
+                  'todos' => 'Todos (incluye salidas)'];
+$estadoF = array_key_exists((string) get('estado'), $estadosFiltro) ? (string) get('estado') : 'activo';
+
 $conds  = [$scopeW];
 $params = $scopeP;
+if ($estadoF !== 'todos') {
+    $conds[] = "e.estado = ?";
+    $params[] = $estadoF;
+}
 if ($q !== '') {
     $conds[] = "(e.nombre LIKE ? OR e.apellido LIKE ? OR e.cedula LIKE ?)";
     array_push($params, '%' . $q . '%', '%' . $q . '%', '%' . $q . '%');
@@ -243,10 +262,20 @@ $consultaBase =
      $where ORDER BY e.nombre, e.apellido";
 
 // La exportación ignora la paginación: se lleva todo lo que coincide con el filtro.
+//
+// El título dice qué filtro se aplicó. Un PDF de personal acaba en manos del
+// contador o de la TSS, y «Empleados» a secas no distingue una plantilla de un
+// histórico con las salidas dentro.
 if (export_solicitado()) {
     $todos = qAll($consultaBase, $params);
+    $titulo = 'Empleados · ' . $estadosFiltro[$estadoF];
+    if ($depId > 0) {
+        foreach ($departamentos as $d) if ((int) $d['id'] === $depId) $titulo .= ' · ' . $d['nombre'];
+    }
+    if ($q !== '') $titulo .= ' · búsqueda «' . $q . '»';
     export_tabla('empleados', ['Código', 'Nombre', 'Apellido', 'Cédula', 'Puesto', 'Departamento', 'Sucursal', 'Fecha ingreso', 'Salario', 'Estado'],
-        array_map(fn($e) => [$e['codigo'], $e['nombre'], $e['apellido'], $e['cedula'], $e['puesto'], $e['departamento'], $e['sucursal'], $e['fecha_ingreso'], $e['salario'], $e['estado']], $todos));
+        array_map(fn($e) => [$e['codigo'], $e['nombre'], $e['apellido'], $e['cedula'], $e['puesto'], $e['departamento'], $e['sucursal'], $e['fecha_ingreso'], $e['salario'], $e['estado']], $todos),
+        $titulo);
 }
 
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM empleados e $where", $params), 25);
@@ -277,16 +306,28 @@ echo kpis([
 
 <div class="card overflow-hidden">
   <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-    <?= search_box('Buscar por nombre, apellido o cédula...', $depId > 0 ? ['departamento_id' => $depId] : []) ?>
-    <form method="get" class="flex items-center gap-2">
+    <?php
+      // Los filtros viajan entre sí: buscar no debe perder el estado ni el
+      // departamento, ni al revés.
+      $ocultos = [];
+      if ($depId > 0)         $ocultos['departamento_id'] = $depId;
+      if ($estadoF !== 'activo') $ocultos['estado'] = $estadoF;
+    ?>
+    <?= search_box('Buscar por nombre, apellido o cédula...', $ocultos) ?>
+    <form method="get" class="flex items-center gap-2 flex-wrap">
       <?php if ($q !== ''): ?><input type="hidden" name="q" value="<?= e($q) ?>"><?php endif; ?>
+      <select name="estado" class="select" onchange="this.form.submit()">
+        <?php foreach ($estadosFiltro as $k => $etiqueta): ?>
+          <option value="<?= e($k) ?>" <?= $estadoF === $k ? 'selected' : '' ?>><?= e($etiqueta) ?></option>
+        <?php endforeach; ?>
+      </select>
       <select name="departamento_id" class="select" onchange="this.form.submit()">
         <option value="">Todos los departamentos</option>
         <?php foreach ($departamentos as $d): ?>
           <option value="<?= (int) $d['id'] ?>" <?= $depId === (int) $d['id'] ? 'selected' : '' ?>><?= e($d['nombre']) ?></option>
         <?php endforeach; ?>
       </select>
-      <span class="text-sm text-slate-400 whitespace-nowrap"><?= number_format($pg['total']) ?> empleados</span>
+      <span class="text-sm text-slate-400 whitespace-nowrap"><?= number_format($pg['total']) ?> empleado<?= $pg['total'] === 1 ? '' : 's' ?></span>
     </form>
   </div>
 
