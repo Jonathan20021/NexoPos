@@ -99,6 +99,14 @@ function grafico_lineas_ty_ly(array $etiquetas, array $ty, array $ly, array $cfg
     ];
     // Una meta (p. ej. la tasa de descuento objetivo) como línea horizontal.
     if (isset($cfg['objetivo']) && $cfg['objetivo'] !== null) {
+        // Con la escala ajustada a los datos, ECharts no cuenta la marca al
+        // calcular el eje: una meta lejos de los datos (justo el caso sano) no
+        // se dibujaba. El eje se abre para que la meta siempre quepa.
+        $vals = array_merge(array_filter(array_map('floatval', array_values($ty)), fn($v) => $v != 0.0),
+                            array_filter(array_map('floatval', array_values($ly)), fn($v) => $v != 0.0), [(float) $cfg['objetivo']]);
+        $min = min($vals); $max = max($vals); $aire = max(0.5, ($max - $min) * 0.1);
+        $opt['yAxis']['min'] = max(0, floor($min - $aire));
+        $opt['yAxis']['max'] = ceil($max + $aire);
         $opt['series'][0]['markLine'] = ['silent' => true, 'symbol' => 'none',
             'lineStyle' => ['color' => '#d97706', 'type' => 'dashed', 'width' => 1.5],
             'label' => ['formatter' => $cfg['objetivo_etq'] ?? 'Objetivo', 'position' => 'insideEndTop', 'color' => '#b45309', 'fontSize' => 11],

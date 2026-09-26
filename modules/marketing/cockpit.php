@@ -116,7 +116,11 @@ $tipos = cockpit_tipos();
 $x = cockpit_expr();
 
 // «Excel completo»: todas las pestañas en un libro, con los mismos filtros.
-$libro = quiere_excel() && get('libro') === '1';
+// Sin PhpSpreadsheet no hay libro: sale el Excel (o CSV) de la pestaña.
+$libro = quiere_excel() && get('libro') === '1' && function_exists('exportExcelLibro');
+// El estado de UNA pestaña (menos activadas, un tipo, incluir «sin promoción»)
+// no puede recortar a escondidas las hojas de un libro que se dice completo.
+if ($libro) unset($_GET['vista'], $_GET['tipo'], $_GET['sin']);
 
 // En el resumen los totales son la suma de los tipos, que ya se consultan:
 // dos barridos del periodo menos (≈0,4 s con 60.000 ventas).
@@ -194,8 +198,9 @@ $filasTipo = [];
 if ($tab === 'resumen' || $libro) {
     ['filas' => $filasTipo, 'total' => $filaTotal, 'sin' => $filaSin, 'promo' => $filaPromo] = $res;
 
-    $menTY = cockpit_mensual($f, $TY);
-    $menLY = cockpit_mensual($f, $LY);
+    // Los meses solo los pinta la pantalla; el libro no los lleva.
+    $menTY = $libro ? [] : cockpit_mensual($f, $TY);
+    $menLY = $libro ? [] : cockpit_mensual($f, $LY);
     $serie = function (array $men, array $ms, string $que) {
         $out = [];
         foreach ($ms as $ym) {
@@ -213,8 +218,9 @@ if ($tab === 'resumen' || $libro) {
 }
 
 if ($tab === 'detalle' || $libro) {
-    $stTY = cockpit_stacking($f, $TY);
-    $stLY = cockpit_stacking($f, $LY);
+    $vacioSt = ['por_mes' => [], 'dist' => [], 'gs' => 0.0, 'tickets' => 0.0, 'n' => 0.0, 'gs_promo' => 0.0, 'ns_promo' => 0.0];
+    $stTY = $libro ? $vacioSt : cockpit_stacking($f, $TY);   // solo pantalla
+    $stLY = $libro ? $vacioSt : cockpit_stacking($f, $LY);
     $vista = get('vista') === 'menos' ? 'menos' : 'todas';
     $mec = cockpit_mecanismos($f, $TY, $vista === 'menos');
     foreach ($mec as $k => $r) $mec[$k] = cockpit_metricas($r, $gsTY) + $r;
@@ -236,7 +242,7 @@ if ($tab === 'detalle' || $libro) {
 }
 
 if ($tab === 'producto' || $libro) {
-    $heroes = cockpit_por($f, $TY, 'COALESCE(pr.es_heroe,0)');
+    $heroes = $libro ? [] : cockpit_por($f, $TY, 'COALESCE(pr.es_heroe,0)');   // solo pantalla
     $incluirSin = get('sin') === '1';
     [$w, $p] = cockpit_where($f, $TY);
     $rows = qAll(
@@ -250,7 +256,8 @@ if ($tab === 'producto' || $libro) {
         $p
     );
     $rows = array_map(fn($r) => ['tipo' => $r['k_tipo'], 'mec' => $r['k_mec'], 'pid' => $r['k_pid']] + $r, $rows);
-    $mecInfo = cockpit_mecanismos($f, $TY);
+    // En el libro el Detallado ya los trajo todos: no se vuelven a consultar.
+    $mecInfo = $libro && isset($mecTodos) ? $mecTodos : cockpit_mecanismos($f, $TY);
     $arbol = [];
     foreach ($rows as $r) {
         $t = $r['tipo']; $m = $r['mec'];
@@ -297,7 +304,7 @@ if ($tab === 'efectividad' || $libro) {
     $efec = cockpit_efectividad($f, $TY);
     // Primero las que se pueden juzgar; dentro de cada grupo, las que más descuento regalaron.
     usort($efec, fn($a, $b) => [$a['margen_incremental'] === null, -$a['costo_desc']] <=> [$b['margen_incremental'] === null, -$b['costo_desc']]);
-    $cliPromo = cockpit_clientes_promo($f, $TY);
+    $cliPromo = $libro ? null : cockpit_clientes_promo($f, $TY);   // solo pantalla
 }
 
 if ($tab === 'simulador') {
@@ -354,11 +361,9 @@ if (export_solicitado()) {
     // Una pestaña: su tabla y listo. El libro: se juntan las hojas y se
     // escriben al final, con una portada que dice qué se está mirando.
     $hojas = [];
-    $salida = function (string $nombre, array $headers, array $filas, string $titulo) use (&$hojas, $libro) {
+    $salida = function (string $hoja, string $nombre, array $headers, array $filas, string $titulo) use (&$hojas, $libro) {
         if (!$libro) export_tabla($nombre, $headers, $filas, $titulo);
-        $clave = preg_replace('/^cockpit_([a-z]+)_.*$/', '$1', $nombre);
-        $hojas[] = [['resumen' => 'Resumen', 'detalle' => 'Detallado', 'producto' => 'Producto', 'sellout' => 'Sell-out',
-                     'efectividad' => 'Efectividad'][$clave] ?? ucfirst($clave), $titulo, $headers, $filas];
+        $hojas[] = [$hoja, $titulo, $headers, $filas];
     };
     if ($tab === 'resumen' || $libro) {
         $filas = [];
@@ -373,7 +378,7 @@ if (export_solicitado()) {
         $emitir('SIN PROMOCIÓN', $filaSin);
         $emitir('EN PROMOCIÓN', $filaPromo);
         foreach ($filasTipo as $k => $r) if ($k !== 'sin') $emitir(cockpit_tipo_label($k), $r);
-        $salida('cockpit_resumen_' . $sufijo,
+        $salida('Resumen', 'cockpit_resumen_' . $sufijo,
             ['Tipo de descuento', 'Venta bruta', '% VB', 'Margen % VB', 'Descuentos', 'Desc %', 'Venta neta', 'Costo', 'Margen VN', 'Margen % VN', 'Pts perdidos',
              'VB año ant.', 'VN año ant.', 'Desc % año ant.', 'Efecto volumen', 'Efecto tasa desc.', 'Efecto mezcla', 'Efecto mezcla producto', 'Efecto total'],
             $filas, 'Promotion Cockpit — resumen por tipo de descuento');
@@ -385,7 +390,7 @@ if (export_solicitado()) {
                         $p1($r['peso_gs']), $n2($r['desc']), $p1($r['desc_pct']), $p1($r['desc'] / $descTot * 100), $n2($r['ns']), $n2($r['costo']),
                         $p1($r['margen_ns']), $p1($r['pts'])];
         }
-        $salida('cockpit_detalle_' . $sufijo,
+        $salida('Detallado', 'cockpit_detalle_' . $sufijo,
             ['Tipo', 'Descuento o promoción', 'Activaciones', 'Ticket medio', 'Venta bruta', 'Margen % VB', 'Peso VB', 'Descuentos', 'Desc %', 'Peso desc.', 'Venta neta', 'Costo', 'Margen % VN', 'Pts perdidos'],
             $filas, 'Promotion Cockpit — detalle por descuento');
     }
@@ -395,7 +400,7 @@ if (export_solicitado()) {
             $filas[] = [cockpit_tipo_label($r['tipo']), $nombreMec($r['mec']), $r['codigo'], $r['nombre'], qty($r['qty']), $n2($r['costo']),
                         $n2($r['gs']), $n2($r['gs'] - $r['ns']), $p1($r['gs'] > 0 ? ($r['gs'] - $r['ns']) / $r['gs'] * 100 : 0), $n2($r['ns'])];
         }
-        $salida('cockpit_producto_' . $sufijo,
+        $salida('Producto', 'cockpit_producto_' . $sufijo,
             ['Tipo', 'Descuento', 'SKU', 'Producto', 'Cantidad', 'Costo', 'Venta bruta', 'Descuentos', 'Desc %', 'Venta neta'],
             $filas, 'Promotion Cockpit — detalle por producto');
     }
@@ -407,7 +412,7 @@ if (export_solicitado()) {
                 $r['margen_incremental'] === null ? '—' : $n2($r['margen_incremental']), $n2($r['costo_desc']),
                 $r['retorno'] === null ? '—' : $n2($r['retorno']), $r['veredicto'][1] . ($r['motivo'] ? ' (' . $r['motivo'] . ')' : '')];
         }
-        $salida('cockpit_efectividad_' . $sufijo,
+        $salida('Efectividad', 'cockpit_efectividad_' . $sufijo,
             ['Promoción', 'Tipo', 'Vigencia analizada', 'Días', 'Productos', 'Unid./día antes', 'Unid./día durante', 'Aumento %',
              'Margen incremental', 'Costo del descuento', 'Retorno', 'Veredicto'],
             $filas, 'Promotion Cockpit — efectividad de cada promoción');
@@ -430,7 +435,7 @@ if (export_solicitado()) {
                         $n2($v['ly']), $p1($v['ly'] / $totL * 100), ($d = rep_delta($v['ty'], $v['ly'])) === null ? '—' : $p1($d)];
         }
     }
-    $salida('cockpit_sellout_' . $sufijo,
+    $salida('Sell-out', 'cockpit_sellout_' . $sufijo,
         ['Dimensión', 'Valor', 'Venta neta', 'Participación %', 'Venta neta año ant.', 'Participación año ant. %', 'Crecimiento %'],
         $filas, 'Promotion Cockpit — sell-out');
 
@@ -471,9 +476,9 @@ if (cockpit_vistas_disponible()) {
     $qActual = cockpit_vista_query($_GET);
     $conCorreo = cockpit_resumen_disponible();
     ob_start(); ?>
-    <div class="relative no-print" x-data="{open:false, guardar:false}" @keydown.escape.window="open=false" @click.outside="open=false">
-      <button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
-      <div x-show="open" x-transition x-cloak class="absolute left-0 sm:left-auto sm:right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
+    <div class="relative no-print" x-data="Object.assign(ckMenu(320), {guardar:false})" @keydown.escape.window="open=false" @click.outside="open=false">
+      <button type="button" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
+      <div x-show="open" x-transition x-cloak :class="lado" class="absolute mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
         <?php if (!$vistas): ?><p class="text-sm text-slate-400 px-2 py-3">Aún no hay vistas. Guarda esta combinación de pestaña y filtros para volver con un clic.</p><?php endif; ?>
         <ul class="max-h-72 overflow-y-auto">
           <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
@@ -518,7 +523,7 @@ if (cockpit_vistas_disponible()) {
     <?php $vistasBtn = ob_get_clean();
 }
 // Todo en un libro para la casa matriz: portada con los filtros + una hoja por pestaña.
-$libroBtn = '<a href="?' . e(http_build_query(array_merge($_GET, ['export' => 'excel', 'libro' => 1]))) . '" class="btn btn-ghost no-print"'
+$libroBtn = !function_exists('exportExcelLibro') ? '' : '<a href="?' . e(http_build_query(array_merge(array_diff_key($_GET, ['vista' => 1, 'tipo' => 1, 'sin' => 1]), ['export' => 'excel', 'libro' => 1]))) . '" class="btn btn-ghost no-print"'
     . ' title="Resumen, Detallado, Producto, Efectividad y Sell-out en un solo Excel, con una portada de filtros">' . icon('download', 'w-4 h-4') . ' Excel completo</a>';
 // Lo demás, en un menú: ocho botones sueltos partían la cabecera en dos filas.
 $item = fn(string $ico, string $txt, string $attrs) => '<a ' . $attrs . ' role="menuitem" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none">'
@@ -534,9 +539,14 @@ $masItems = '<button type="button" role="menuitem" @click="open=false; $dispatch
     . '<div class="my-1 border-t border-slate-100"></div>'
     . (can('cockpit.configurar') ? $item('settings', 'Configurar el cockpit', 'href="' . e(url('modules/marketing/cockpit_config.php')) . '"') : '')
     . $item('grid', 'Centro de reportes', 'href="' . e(url('modules/reportes/index.php')) . '"');
-$mas = '<div class="relative no-print" x-data="{open:false}" @keydown.escape.window="open=false" @click.outside="open=false">'
-    . '<button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()" aria-haspopup="menu">' . icon('menu', 'w-4 h-4') . ' Más</button>'
-    . '<div x-show="open" x-transition x-cloak role="menu" class="absolute left-0 sm:left-auto sm:right-0 mt-2 w-64 bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-1.5">' . $masItems . '</div></div>';
+$mas = '<div class="relative no-print" x-data="ckMenu(256)" @keydown.escape.window="open=false" @click.outside="open=false">'
+    . '<button type="button" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()" aria-haspopup="menu">' . icon('menu', 'w-4 h-4') . ' Más</button>'
+    . '<div x-show="open" x-transition x-cloak role="menu" :class="lado" class="absolute mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-1.5">' . $masItems . '</div></div>'
+    // Un menú se abre hacia donde cabe: anclado siempre al mismo lado, en el
+    // teléfono se salía de la pantalla por un lado o por el otro según dónde
+    // cayera el botón al partirse la fila.
+    . '<script>function ckMenu(ancho) { return { open: false, lado: "right-0", abrir(b) {'
+    . ' const r = b.getBoundingClientRect(); this.lado = r.right - ancho >= 8 ? "right-0" : "left-0"; this.open = !this.open; } }; }</script>';
 $acciones = $vistasBtn . $libroBtn . $mas;
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);

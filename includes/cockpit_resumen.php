@@ -294,7 +294,10 @@ function cockpit_instalacion(): array
                     $p39, 'Los pedidos en línea facturados no dicen qué promoción usaron.', false];
     }
     $filas = array_merge($filas, [
-        ['Configuración desde la pantalla', $hay('cockpit_tipos') && $hay('cockpit_canales') && $hay('cockpit_parametros') && $hay('kpi_rubros') && $hay('kpi_metricas_def'),
+        // Las mismas seis que exige cockpit_config_disponible(): si no, la pantalla
+        // diría «falta la actualización» con todo en verde.
+        ['Configuración desde la pantalla', $hay('cockpit_tipos') && $hay('cockpit_canales') && $hay('cockpit_canal_reglas')
+            && $hay('cockpit_parametros') && $hay('kpi_rubros') && $hay('kpi_metricas_def'),
          $p40, 'Tipos, canales y parámetros quedan fijos con los valores de fábrica.', true],
         ['Topes de descuento por tipo', $hay('cockpit_tipos', ['tope_desc_pct']), $p40, 'No se puede fijar el tope de cada tipo (sí el objetivo global).', false],
         ['Vistas guardadas', $hay('cockpit_vistas'), $p40, 'El botón «Vistas» no aparece.', false],
@@ -316,8 +319,7 @@ function cockpit_captura_reciente(int $dias = 7): array
 {
     if (!cockpit_capturando()) return ['lineas' => 0, 'con_lista' => 0, 'pct' => null];
     // Las ventas históricas importadas nunca traen precio de lista: no cuentan.
-    $importadas = qVal("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ventas' AND COLUMN_NAME = 'importacion_id'")
-        ? ' AND v.importacion_id IS NULL' : '';
+    $importadas = cockpit_columnas("TABLE_NAME = 'ventas' AND COLUMN_NAME = 'importacion_id'", 1) ? ' AND v.importacion_id IS NULL' : '';
     $r = qOne("SELECT COUNT(*) n, SUM(vd.precio_lista IS NOT NULL) con FROM ventas v JOIN venta_detalles vd ON vd.venta_id = v.id
                 WHERE " . rep_estados_venta('v') . " AND v.fecha >= ? AND vd.producto_id IS NOT NULL$importadas",
               [date('Y-m-d', strtotime("-$dias days")) . ' 00:00:00']) ?: [];

@@ -114,8 +114,13 @@ function cockpit_config_filas(string $tabla, string $orden = 'orden, clave'): ?a
     if (array_key_exists($tabla, $cache)) return $cache[$tabla];
     try {
         return $cache[$tabla] = qAll("SELECT * FROM $tabla ORDER BY $orden");
-    } catch (Throwable $e) {
-        return $cache[$tabla] = null;   // valores de fábrica antes que una página caída
+    } catch (PDOException $e) {
+        // Solo una tabla que no existe (42S02) cae a los valores de fábrica. Otro
+        // error (un bloqueo, un corte) sube: clasificar en silencio con otros
+        // catálogos daría cifras distintas de lo configurado sin avisar a nadie.
+        if ($e->getCode() !== '42S02') throw $e;
+        error_log("[cockpit] falta la tabla de configuración $tabla: se usan los valores de fábrica");
+        return $cache[$tabla] = null;
     }
 }
 
@@ -147,13 +152,24 @@ function cockpit_parametros_def(): array
     ];
 }
 
-/** Un objetivo en % configurado, o null si no hay (vacío o fuera de 0–100). */
+/**
+ * Lee un porcentaje escrito por una persona («12», «12,5»). null si está vacío;
+ * false si no es un número entre 0 y 100. Lo comparten los objetivos y la
+ * pantalla de configuración que los guarda.
+ */
+function cockpit_leer_pct($v)
+{
+    $v = trim(str_replace(',', '.', (string) $v));
+    if ($v === '') return null;
+    if (!is_numeric($v) || (float) $v < 0 || (float) $v > 100) return false;
+    return round((float) $v, 2);
+}
+
+/** Un objetivo en % configurado, o null si no hay (vacío o inválido). */
 function cockpit_objetivo(string $clave): ?float
 {
-    $v = trim((string) cockpit_param($clave, ''));
-    if ($v === '' || !is_numeric(str_replace(',', '.', $v))) return null;
-    $v = (float) str_replace(',', '.', $v);
-    return $v >= 0 && $v <= 100 ? $v : null;
+    $v = cockpit_leer_pct(cockpit_param($clave, ''));
+    return $v === false ? null : $v;
 }
 
 /** Tope de descuento de un tipo (% de su venta bruta), o null. */

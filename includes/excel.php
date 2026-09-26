@@ -11,10 +11,6 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 
-/**
- * Genera y descarga un .xlsx con cabecera de marca, encabezados con estilo y autoancho.
- * @param array $filas  Lista de filas; cada fila es un arreglo en el orden de $headers.
- */
 /** Nombre de hoja válido para Excel (31 caracteres, sin \\ / ? * [ ] :). */
 function excel_nombre_hoja(string $t): string
 {
@@ -113,16 +109,12 @@ function exportExcelLibro(string $nombre, array $hojas, array $portada = [], str
     exit;
 }
 
+/**
+ * Genera y descarga un .xlsx con cabecera de marca, encabezados con estilo y autoancho.
+ * @param array $filas  Lista de filas; cada fila es un arreglo en el orden de $headers.
+ */
 function exportExcel(string $nombre, array $headers, array $filas, ?string $titulo = null): void
 {
-    while (ob_get_level() > 0) ob_end_clean();
     $titulo = $titulo ?: ucfirst(str_replace('_', ' ', $nombre));
-    $ss = new Spreadsheet();
-    excel_llenar_hoja($ss->getActiveSheet(), $titulo, $headers, $filas);
-
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="' . $nombre . '_' . date('Ymd_His') . '.xlsx"');
-    header('Cache-Control: max-age=0');
-    (new Xlsx($ss))->save('php://output');
-    exit;
+    exportExcelLibro($nombre, [[$titulo, $titulo, $headers, $filas]]);
 }

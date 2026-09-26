@@ -80,17 +80,16 @@ function cfg_color(string $v, string $def = '#64748b'): string
 /** Un porcentaje 0–100 con dos decimales, o null si viene vacío. */
 function cfg_pct($v): ?float
 {
-    $v = trim(str_replace(',', '.', (string) $v));
-    if ($v === '') return null;
-    if (!is_numeric($v) || (float) $v < 0 || (float) $v > 100) throw new RuntimeException('Un porcentaje tiene que estar entre 0 y 100.');
-    return round((float) $v, 2);
+    $p = cockpit_leer_pct($v);
+    if ($p === false) throw new RuntimeException('Un porcentaje tiene que estar entre 0 y 100.');
+    return $p;
 }
 
 /** ¿Ya corrió la parte de la P40 que trae los topes por tipo? */
 function cfg_con_tope(): bool
 {
     static $ok = null;
-    return $ok ??= (bool) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_tipos' AND COLUMN_NAME = 'tope_desc_pct'");
+    return $ok ??= cockpit_columnas("TABLE_NAME = 'cockpit_tipos' AND COLUMN_NAME = 'tope_desc_pct'", 1);
 }
 
 /** Texto recortado o null. */
@@ -286,12 +285,18 @@ if (isPost()) {
 
             /* ---------- Parámetros ---------- */
             case 'parametros':
+                // Primero se valida TODO; después se escribe todo junto. Si no, un
+                // valor malo a mitad dejaba medio guardado bajo un mensaje de error.
+                $valores = [];
                 foreach (cockpit_parametros_def() as $k => [$lbl, $tipo]) {
                     $v = trim((string) ($_POST['p'][$k] ?? ''));
                     switch ($tipo) {
                         case 'int':    $v = (string) max(1, min(500, (int) $v)); break;
                         case 'mes':    $v = (string) max(1, min(12, (int) $v)); break;
-                        case 'pct':    $v = ($pv = cfg_pct($v)) === null ? '' : (string) $pv; break;
+                        case 'pct':
+                            try { $pv = cfg_pct($v); } catch (RuntimeException $e) { throw new RuntimeException('«' . $lbl . '»: ' . $e->getMessage()); }
+                            $v = $pv === null ? '' : (string) $pv;
+                            break;
                         case 'select': $v = array_key_exists($v, cockpit_presets()) ? $v : 'ytd'; break;
                         case 'canal':  if (!array_key_exists($v, cockpit_canales())) throw new RuntimeException('El canal por defecto tiene que ser un canal activo.'); break;
                         case 'lineas':
@@ -307,8 +312,13 @@ if (isPost()) {
                             $v = implode("\n", $lineas);
                             break;
                     }
-                    q("INSERT INTO cockpit_parametros (clave, valor) VALUES (?, ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)", [$k, $v]);
+                    $valores[$k] = $v;
                 }
+                tx(function () use ($valores) {
+                    foreach ($valores as $k => $v) {
+                        q("INSERT INTO cockpit_parametros (clave, valor) VALUES (?, ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)", [$k, $v]);
+                    }
+                });
                 flash('success', 'Parámetros guardados.');
                 break;
 
