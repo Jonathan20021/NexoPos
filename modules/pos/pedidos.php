@@ -148,6 +148,9 @@ if (isPost()) {
                         'pid' => (int) $p['id'], 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
                         'precio' => (float) $d['precio_unitario'], 'costo' => (float) $p['precio_compra'],
                         'base' => (float) $d['subtotal'], 'itbis' => (float) $d['itbis'],
+                        // Lo que la tienda guardó al crear el pedido (NULL en pedidos viejos).
+                        'lista' => isset($d['precio_lista']) ? (float) $d['precio_lista'] : null,
+                        'promo' => isset($d['promocion_id']) ? (int) $d['promocion_id'] : null,
                     ];
                 }
                 $total = round($subtotal + $itbisTotal, 2);
@@ -172,7 +175,7 @@ if (isPost()) {
                         'venta_id' => $ventaId, 'producto_id' => $l['pid'], 'descripcion' => $l['nombre'],
                         'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'], 'costo_unitario' => $l['costo'],
                         'descuento' => 0, 'itbis' => $l['itbis'], 'subtotal' => $l['base'],
-                    ]);
+                    ] + (cockpit_capturando() ? ['precio_lista' => $l['lista'], 'promocion_id' => $l['promo']] : []));
                     if ($l['tipo'] === 'producto') {
                         ajustarStock($l['pid'], $sid, -$l['cant'], 'venta', 'venta', $ventaId, $l['costo'], 'Venta ' . $numero);
                     }

@@ -72,7 +72,9 @@ if (isPost() && post('accion') === 'pedido') {
         if (!is_array($carrito) || !$carrito) throw new RuntimeException('Tu carrito está vacío.');
         if (count($carrito) > 50) throw new RuntimeException('Demasiados productos en el carrito.');
 
-        $creado = txReintentable(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis) {
+        // $filtroMarca tiene que entrar en el closure: sin él la consulta del
+        // producto terminaba en «AND » y TODO pedido en línea fallaba con un 1064.
+        $creado = txReintentable(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis, $filtroMarca) {
             $subtotal = 0; $itbisTotal = 0; $lineas = [];
             foreach ($carrito as $item) {
                 $pid  = (int) ($item['id'] ?? 0);
@@ -95,12 +97,15 @@ if (isPost() && post('accion') === 'pedido') {
                 }
 
                 // Precio con promoción vigente para la tienda (recalculado en el servidor).
-                $precioUnit = aplicarPromocion((float) $p['precio_venta'], $p, 'tienda')['precio'];
+                $promo = aplicarPromocion((float) $p['precio_venta'], $p, 'tienda');
+                $precioUnit = $promo['precio'];
                 $base  = round($precioUnit * $cant, 2);
                 $itbis = $p['itbis_aplica'] ? round($base * $tasaItbis / 100, 2) : 0.0;
                 $subtotal += $base; $itbisTotal += $itbis;
                 $lineas[] = ['pid' => $pid, 'desc' => $p['nombre'], 'cant' => $cant,
-                             'precio' => $precioUnit, 'itbis' => $itbis, 'sub' => $base];
+                             'precio' => $precioUnit, 'itbis' => $itbis, 'sub' => $base,
+                             // Rastro para el Promotion Cockpit: viaja a la venta al facturar.
+                             'lista' => round((float) $p['precio_venta'], 2), 'promo' => $promo['promo'] ? (int) $promo['promo']['id'] : null];
             }
             if (!$lineas) throw new RuntimeException('Tu carrito está vacío.');
 
@@ -119,7 +124,7 @@ if (isPost() && post('accion') === 'pedido') {
                     'pedido_id' => $pedidoId, 'producto_id' => $l['pid'], 'descripcion' => $l['desc'],
                     'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'],
                     'itbis' => $l['itbis'], 'subtotal' => $l['sub'],
-                ]);
+                ] + (cockpit_capturando() ? ['precio_lista' => $l['lista'], 'promocion_id' => $l['promo']] : []));
             }
             return ['id' => $pedidoId, 'token' => $token];
         });

@@ -58,6 +58,15 @@ SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DA
 SET @s := IF(@c=0, 'ALTER TABLE ventas ADD COLUMN descuento_motivo VARCHAR(40) NULL AFTER descuento', 'SELECT ''ventas.descuento_motivo ya existe''');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+-- Los pedidos de la tienda online calculan su promoción al crearse: la guardan
+-- ahí y se copia a la venta cuando se factura.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pedido_detalles' AND COLUMN_NAME='precio_lista');
+SET @s := IF(@c=0, 'ALTER TABLE pedido_detalles ADD COLUMN precio_lista DECIMAL(12,2) NULL AFTER precio_unitario', 'SELECT ''pedido_detalles.precio_lista ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pedido_detalles' AND COLUMN_NAME='promocion_id');
+SET @s := IF(@c=0, 'ALTER TABLE pedido_detalles ADD COLUMN promocion_id INT UNSIGNED NULL AFTER precio_lista', 'SELECT ''pedido_detalles.promocion_id ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- Sin FK a propósito: borrar una promoción vieja no puede fallar por las ventas
 -- que ya la usaron; el cockpit la muestra como «Promoción eliminada».
 SET @c := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='venta_detalles' AND INDEX_NAME='idx_vd_promocion');
@@ -193,6 +202,7 @@ UNION ALL SELECT 'permisos nuevos', COUNT(*) FROM permisos WHERE clave LIKE 'coc
 --   DROP TABLE IF EXISTS kpi_campana_metas, kpi_campana_metricas, kpi_campana_inversiones, kpi_campana_productos, kpi_campanas;
 --   ALTER TABLE venta_detalles DROP KEY idx_vd_promocion, DROP COLUMN promocion_id, DROP COLUMN precio_lista;
 --   ALTER TABLE ventas DROP COLUMN descuento_motivo;
+--   ALTER TABLE pedido_detalles DROP COLUMN promocion_id, DROP COLUMN precio_lista;
 --   ALTER TABLE promociones DROP COLUMN tipo_descuento, DROP COLUMN codigo;
 --   ALTER TABLE productos DROP COLUMN es_heroe, DROP COLUMN linea, DROP COLUMN segmento;
 --   DELETE FROM permisos WHERE clave LIKE 'cockpit.%' OR clave LIKE 'kpi_campanas.%';

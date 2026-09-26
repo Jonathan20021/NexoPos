@@ -790,6 +790,8 @@ CREATE TABLE pedido_detalles (
   descripcion VARCHAR(180) NOT NULL,
   cantidad DECIMAL(12,3) NOT NULL,
   precio_unitario DECIMAL(12,2) NOT NULL,
+  precio_lista DECIMAL(12,2) NULL,        -- precio de catálogo al pedir (Promotion Cockpit)
+  promocion_id INT UNSIGNED NULL,         -- promoción que ganó; pasa a la venta al facturar
   itbis DECIMAL(12,2) NOT NULL DEFAULT 0,
   subtotal DECIMAL(12,2) NOT NULL,
   PRIMARY KEY (id),

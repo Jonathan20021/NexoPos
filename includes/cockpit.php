@@ -36,8 +36,13 @@ function cockpit_capturando(): bool
     static $ok = null;
     if ($ok === null) {
         try {
-            $ok = (bool) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS
-                                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'venta_detalles' AND COLUMN_NAME = 'precio_lista'");
+            // Las cinco columnas que se escriben al vender. Si la P39 se quedó a
+            // medias, mejor no escribir ninguna que tumbar cada venta del POS.
+            $ok = (int) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS
+                               WHERE TABLE_SCHEMA = DATABASE() AND (
+                                     (TABLE_NAME = 'venta_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id'))
+                                  OR (TABLE_NAME = 'ventas' AND COLUMN_NAME = 'descuento_motivo')
+                                  OR (TABLE_NAME = 'pedido_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id')))") === 5;
         } catch (Throwable $e) {
             $ok = false;
         }
@@ -221,6 +226,13 @@ function cockpit_canales(): array
     $out = [];
     foreach ($filas as $r) if ($r['activo']) $out[$r['clave']] = $r['nombre'];
     return $out ?: ['retail' => 'Retail'];
+}
+
+/** Todos los canales, activos o no (para nombrar lo que se vendió en uno ya desactivado). */
+function cockpit_canales_todos(): array
+{
+    $filas = cockpit_config_filas('cockpit_canales');
+    return $filas === null ? cockpit_canales() : array_column($filas, 'nombre', 'clave');
 }
 
 /** Nombre en inglés de cada canal (encabezados del Excel de la marca). */
@@ -446,7 +458,8 @@ function cockpit_where(array $f, array $rango, bool $porLinea = true): array
         $p[] = $f['linea'];
     }
     if ($porLinea && $f['segmento']) {
-        $w[] = "COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id)) = ?";
+        // Mismo respaldo que el gráfico: tocar «Sin segmento» tiene que encontrar algo.
+        $w[] = "COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id), 'Sin segmento') = ?";
         $p[] = $f['segmento'];
     }
     return [implode(' AND ', $w), $p];

@@ -128,21 +128,29 @@ function kpi_por_canal(array $c, string $ini, string $fin): array
 {
     $canal = cockpit_canal_sql('v');
     [$w, $p] = kpi_where($c, $ini, $fin);
+    $vacio = ['ns' => 0.0, 'tickets' => 0.0, 'unidades' => 0.0, 'nuevos' => 0.0];
     $out = [];
-    foreach (array_keys(cockpit_canales()) as $k) $out[$k] = ['ns' => 0.0, 'tickets' => 0.0, 'unidades' => 0.0, 'nuevos' => 0.0];
+    // Todos los canales configurados, activos o no, más el de la web: la pantalla
+    // los lee por su clave y un canal desactivado no puede tumbar la campaña.
+    foreach (array_merge(array_keys(cockpit_canales_en()), array_keys(cockpit_canales()), ['web']) as $k) $out[$k] = $vacio;
+    $fila = function (string $g) use (&$out, $vacio) { if (!isset($out[$g])) $out[$g] = $vacio; return $g; };
 
     foreach (qAll("SELECT $canal g, SUM(v.subtotal - v.descuento) ns, COUNT(*) tickets FROM ventas v WHERE $w GROUP BY g", $p) as $r) {
-        $out[$r['g']]['ns'] = (float) $r['ns'];
-        $out[$r['g']]['tickets'] = (float) $r['tickets'];
+        $g = $fila((string) $r['g']);
+        $out[$g]['ns'] = (float) $r['ns'];
+        $out[$g]['tickets'] = (float) $r['tickets'];
     }
     foreach (qAll("SELECT $canal g, SUM(vd.cantidad) u FROM ventas v JOIN venta_detalles vd ON vd.venta_id = v.id
                    WHERE $w AND vd.es_muestra = 0 GROUP BY g", $p) as $r) {
-        $out[$r['g']]['unidades'] = (float) $r['u'];
+        $out[$fila((string) $r['g'])]['unidades'] = (float) $r['u'];
     }
-    foreach (kpi_nuevos($c, $ini, $fin, $canal) as $g => $n) $out[$g]['nuevos'] = (float) $n;
+    foreach (kpi_nuevos($c, $ini, $fin, $canal) as $g => $n) $out[$fila((string) $g)]['nuevos'] = (float) $n;
 
-    $out['total'] = ['ns' => 0.0, 'tickets' => 0.0, 'unidades' => 0.0, 'nuevos' => 0.0];
-    foreach (array_keys(cockpit_canales()) as $k) foreach ($out['total'] as $m => $_) $out['total'][$m] += $out[$k][$m];
+    // El total suma TODO lo vendido, esté o no activo el canal al que cayó:
+    // desactivar un canal en la configuración no puede hacer desaparecer venta.
+    $total = $vacio;
+    foreach ($out as $r) foreach ($total as $m => $_) $total[$m] += $r[$m];
+    $out['total'] = $total;
     return $out;
 }
 
@@ -154,10 +162,14 @@ function kpi_nuevos(array $c, string $ini, string $fin, string $grupo): array
         "SELECT $grupo g, COUNT(DISTINCT v.cliente_id) n
            FROM ventas v
            JOIN (SELECT cliente_id, MIN(fecha) f FROM ventas
-                  WHERE " . rep_estados_venta('ventas') . " AND cliente_id > 1 GROUP BY cliente_id) pc
+                  WHERE " . rep_estados_venta('ventas') . " AND cliente_id > 1
+                    -- Solo los que compraron en el rango: sin esto se recorría la
+                    -- historia de todos los clientes en cada llamada.
+                    AND cliente_id IN (SELECT DISTINCT cliente_id FROM ventas WHERE fecha BETWEEN ? AND ? AND cliente_id > 1)
+                  GROUP BY cliente_id) pc
              ON pc.cliente_id = v.cliente_id AND pc.f = v.fecha
           WHERE $w GROUP BY g",
-        $p
+        array_merge([$ini . ' 00:00:00', $fin . ' 23:59:59'], $p)
     );
     $out = [];
     foreach ($rows as $r) $out[(string) $r['g']] = (int) $r['n'];

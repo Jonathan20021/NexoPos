@@ -25,7 +25,8 @@ $tabs = [
 ];
 $tab = array_key_exists((string) get('tab'), $tabs) ? (string) get('tab') : 'tipos';
 
-if (!cockpit_config_disponible()) {
+// Lee promociones.tipo_descuento y ventas.descuento_motivo: necesita las dos migraciones.
+if (!cockpit_disponible() || !cockpit_config_disponible()) {
     layout_start('Configuración del cockpit', 'Catálogos, canales y parámetros');
     echo '<div class="card p-6">' . empty_state(
         'Falta aplicar la actualización de la base de datos',
@@ -120,6 +121,9 @@ if (isPost()) {
                 foreach ((array) ($_POST['c'] ?? []) as $clave => $f) {
                     $nombre = cfg_txt($f['nombre'] ?? '', 60);
                     if (!$nombre) throw new RuntimeException("El canal «{$clave}» necesita un nombre.");
+                    if (empty($f['activo']) && $clave === (string) cockpit_param('canal_defecto', 'retail')) {
+                        throw new RuntimeException("«{$nombre}» es el canal por defecto: elige otro en Parámetros antes de desactivarlo.");
+                    }
                     dbUpdate('cockpit_canales', ['nombre' => $nombre, 'nombre_en' => cfg_txt($f['nombre_en'] ?? '', 60),
                         'orden' => (int) ($f['orden'] ?? 0), 'activo' => !empty($f['activo']) ? 1 : 0], 'clave = ?', [$clave]);
                 }
@@ -135,6 +139,7 @@ if (isPost()) {
                 $nombre = cfg_txt(post('nombre'), 60);
                 $clave = substr(cfg_clave((string) post('clave'), (string) $nombre), 0, 20);
                 if (!$nombre || $clave === '') throw new RuntimeException('Escribe el nombre del canal.');
+                if ($clave === 'total') throw new RuntimeException('«total» es una palabra reservada: el sistema la usa para la fila de totales.');
                 if (qVal("SELECT 1 FROM cockpit_canales WHERE clave = ?", [$clave])) throw new RuntimeException("Ya existe el canal «{$clave}».");
                 dbInsert('cockpit_canales', ['clave' => $clave, 'nombre' => $nombre, 'nombre_en' => cfg_txt(post('nombre_en'), 60),
                     'orden' => (int) qVal("SELECT COALESCE(MAX(orden),0) + 10 FROM cockpit_canales"), 'activo' => 1]);

@@ -49,6 +49,12 @@ function kpi_form_campana(): array
     return $d;
 }
 
+/** Una campaña ligada a otra sucursal no se toca cambiando el id del formulario. */
+function kpi_campana_accesible(?array $c): bool
+{
+    return $c && (empty($c['sucursal_id']) || can_access_sucursal((int) $c['sucursal_id']));
+}
+
 if (isPost()) {
     verify_csrf();
     $accion = post('accion');
@@ -58,7 +64,7 @@ if (isPost()) {
             $d = kpi_form_campana();
             if ($id > 0) {
                 require_perm('kpi_campanas.editar');
-                if (!kpi_campana($id)) throw new RuntimeException('Campaña no encontrada.');
+                if (!kpi_campana_accesible(kpi_campana($id))) throw new RuntimeException('Campaña no encontrada.');
                 dbUpdate('kpi_campanas', $d, 'id = ?', [$id]);
                 audit('kpi_campanas', 'editar', 'Campaña actualizada: ' . $d['nombre'], ['tabla' => 'kpi_campanas', 'registro_id' => $id]);
                 flash('success', 'Campaña actualizada.');
@@ -74,7 +80,7 @@ if (isPost()) {
             require_perm('kpi_campanas.eliminar');
             $id = postInt('id');
             $c = kpi_campana($id);
-            if ($c) {
+            if (kpi_campana_accesible($c)) {
                 q("DELETE FROM kpi_campanas WHERE id = ?", [$id]);
                 audit('kpi_campanas', 'eliminar', 'Campaña eliminada: ' . $c['nombre'], ['tabla' => 'kpi_campanas', 'registro_id' => $id]);
                 flash('success', 'Campaña eliminada.');
@@ -87,8 +93,10 @@ if (isPost()) {
 }
 
 $q = trim((string) get('q'));
-$where = '1=1'; $params = [];
-if ($q !== '') { $where = 'k.nombre LIKE ?'; $params[] = '%' . $q . '%'; }
+// Quien está atado a una sucursal ve las campañas de todas y las de la suya.
+[$wSuc, $pSuc] = sucursalScope('k.sucursal_id');
+$where = "(k.sucursal_id IS NULL OR $wSuc)"; $params = $pSuc;
+if ($q !== '') { $where .= ' AND k.nombre LIKE ?'; $params[] = '%' . $q . '%'; }
 $campanas = qAll(
     "SELECT k.*, su.nombre sucursal,
             (SELECT COALESCE(SUM(monto),0) FROM kpi_campana_inversiones i WHERE i.campana_id = k.id) inversion,

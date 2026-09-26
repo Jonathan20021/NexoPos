@@ -117,6 +117,12 @@ if (isPost()) {
 $R = kpi_resumen($c);
 $ty = $R['ty']; $ly = $R['ly']; $T = $ty['total']; $L = $ly['total'];
 $canales = cockpit_canales();
+// Un canal desactivado que igual recibió ventas se enseña (marcado): si no, las
+// filas no sumarían el total.
+foreach (cockpit_canales_todos() + array_fill_keys(array_keys($ty), null) as $k => $nombre) {
+    if ($k === 'total' || isset($canales[$k])) continue;
+    if (($ty[$k]['ns'] ?? 0) != 0 || ($ly[$k]['ns'] ?? 0) != 0) $canales[$k] = ($nombre ?? $k) . ' (inactivo)';
+}
 $inv = $R['inversion'];
 $met = $R['metricas'];
 $mval = fn(string $k, string $campo = 'valor') => isset($met[$k][$campo]) && $met[$k][$campo] !== null ? (float) $met[$k][$campo] : null;
@@ -337,7 +343,7 @@ $puedeEditar = can('kpi_campanas.editar');
 $enCurso = $c['fecha_inicio'] <= date('Y-m-d') && $c['fecha_fin'] >= date('Y-m-d');
 
 $acciones = '<a href="?id=' . $id . '&export=excel" class="btn btn-ghost">' . icon('download', 'w-4 h-4') . ' Excel de la marca</a>'
-    . ($puedeEditar ? '<button type="button" onclick="' . e(jsEvent('kc:edit', array_intersect_key($c, array_flip(['id', 'nombre', 'descripcion', 'fecha_inicio', 'fecha_fin', 'ly_inicio', 'ly_fin', 'sucursal_id', 'tienda_id', 'meta_ventas', 'tasa_eur', 'notas'])))) . '" class="btn btn-ghost">' . icon('edit', 'w-4 h-4') . ' Editar</button>' : '')
+    . ($puedeEditar ? '<button type="button" onclick="' . (jsEvent('kc:edit', array_intersect_key($c, array_flip(['id', 'nombre', 'descripcion', 'fecha_inicio', 'fecha_fin', 'ly_inicio', 'ly_fin', 'sucursal_id', 'tienda_id', 'meta_ventas', 'tasa_eur', 'notas'])))) . '" class="btn btn-ghost">' . icon('edit', 'w-4 h-4') . ' Editar</button>' : '')
     . '<a href="' . e(url('modules/marketing/kpi_campanas.php')) . '" class="btn btn-ghost">' . icon('arrow-left', 'w-4 h-4') . ' Campañas</a>';
 $alcance = ($c['sucursal_id'] ? (string) qVal("SELECT nombre FROM sucursales WHERE id = ?", [$c['sucursal_id']]) : 'Todas las sucursales')
     . ($c['tienda_id'] ? ' · ' . (tiendas_opciones()[(int) $c['tienda_id']] ?? '') : '');
