@@ -146,6 +146,15 @@ comprueba('un periodo rápido se guarda como periodo', cockpit_vista_query(['tab
 comprueba('fechas a mano se guardan tal cual', cockpit_vista_query(['ty_desde' => '2025-11-20', 'ty_hasta' => '2025-12-01']), 'ty_desde=2025-11-20&ty_hasta=2025-12-01');
 comprueba('solo claves conocidas', cockpit_vista_query(['tab' => 'resumen', 'export' => 'excel', 'x' => '<script>', 'a' => ['b']]), 'tab=resumen');
 
+titulo('Resumen por correo');
+require_once dirname(__DIR__) . '/includes/cockpit_resumen.php';
+comprueba('un sábado: la semana cerrada es lunes a domingo anterior', cockpit_resumen_periodo('semanal', '2026-09-26'), ['2026-09-14', '2026-09-20']);
+comprueba('un domingo la semana aún no cierra', cockpit_resumen_periodo('semanal', '2026-09-27'), ['2026-09-14', '2026-09-20']);
+comprueba('el lunes ya toca la semana que acaba de cerrar', cockpit_resumen_periodo('semanal', '2026-09-28'), ['2026-09-21', '2026-09-27']);
+comprueba('mensual: el mes anterior completo', cockpit_resumen_periodo('mensual', '2026-03-01'), ['2026-02-01', '2026-02-28']);
+comprueba('mensual en enero: diciembre del año anterior', cockpit_resumen_periodo('mensual', '2026-01-15'), ['2025-12-01', '2025-12-31']);
+comprueba('sin frecuencia no hay periodo', cockpit_resumen_periodo('', '2026-01-15'), null);
+
 titulo('Catálogos');
 comprueba('todo motivo de caja tiene su tipo en el cockpit', array_diff(array_keys(cockpit_motivos_caja()), array_keys(cockpit_tipos())), []);
 comprueba('toda familia de promoción tiene su tipo', array_diff(array_keys(cockpit_tipos_promocion()), array_keys(cockpit_tipos())), []);

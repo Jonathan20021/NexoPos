@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS cockpit_vistas (
   KEY idx_cv_usuario (usuario_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Resumen por correo de una vista: '' (no), 'semanal' (la semana cerrada, cada
+-- lunes) o 'mensual' (el mes cerrado, cada día 1). ultimo_periodo = último día
+-- del periodo ya enviado: evita mandar dos veces el mismo.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cockpit_vistas' AND COLUMN_NAME='frecuencia');
+SET @s := IF(@c=0, 'ALTER TABLE cockpit_vistas ADD COLUMN frecuencia VARCHAR(10) NOT NULL DEFAULT '''' AFTER compartida, ADD COLUMN ultimo_periodo DATE NULL AFTER frecuencia', 'SELECT ''cockpit_vistas.frecuencia ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- Permiso para cambiarlo todo (también en permission_catalog()).
 INSERT INTO permisos (clave, modulo, grupo, descripcion)
 SELECT * FROM (SELECT 'cockpit.configurar' c, 'cockpit' m, 'Marketing' g, 'Promotion Cockpit — Configurar catálogos, canales y parámetros' d) t

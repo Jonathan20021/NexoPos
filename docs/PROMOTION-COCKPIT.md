@@ -191,6 +191,24 @@ periodo rápido (este mes, mes pasado, año a la fecha…) se guarda el **period
 fechas (`?periodo=mes_pasado`), así la vista siempre abre actualizada. Solo el autor puede
 borrar la suya; con el mismo nombre, se reemplaza.
 
+### Resumen por correo
+
+Cada vista propia puede enviarse sola: **cada lunes** (la semana cerrada, lunes a domingo) o
+**cada día 1** (el mes cerrado). El correo trae venta bruta, tasa de descuento, % de venta en
+promoción, venta neta y margen contra el año anterior, lo más importante que encontró el
+cockpit y un botón que abre la vista en ese periodo. «Ver correo» muestra cómo llegaría.
+
+- Respeta los filtros de la vista (sucursal, canal, marca, segmento, línea, moneda, mismas
+  tiendas) y **se calcula como el dueño de la vista**: su sucursal y sus permisos, nunca los
+  de quien tenga la sesión abierta cuando corre el motor (`cockpit_como_usuario()`).
+- Un periodo se manda una sola vez (`cockpit_vistas.ultimo_periodo`, reclamado antes de
+  enviar). Si el envío falla, se libera y se reintenta en la siguiente pasada. Al activarlo
+  no se manda el periodo ya cerrado: el primero llega en el próximo cierre.
+- Corre sin cron, con el mismo enganche que las notificaciones, como máximo una vez por hora
+  (3 vistas por pasada); y también desde `modules/marketing/cron.php` si hay cron real.
+- Necesita el correo configurado (`RESEND_API_KEY`, `MAIL_FROM`); sin él no se envía nada.
+  Deja de enviarse si el dueño se desactiva o pierde `cockpit.ver`.
+
 ## KPIs de campañas (includes/kpi_campanas.php)
 
 Réplica del archivo «Holiday KPIs to track». Una campaña tiene fechas de este año, periodo

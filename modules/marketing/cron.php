@@ -40,6 +40,12 @@ if (!$esCli) {
     }
 }
 
+// Resúmenes del Promotion Cockpit por correo: no dependen del módulo de campañas.
+$resumen = cockpit_resumen_tick(10);
+if ($resumen['enviados'] + $resumen['fallidos'] > 0) {
+    echo "Promotion Cockpit · resúmenes enviados: {$resumen['enviados']}, fallidos: {$resumen['fallidos']}\n";
+}
+
 if (!mkt_disponible()) {
     exit("Marketing no disponible: falta aplicar database/migracion_marketing_p9.sql\n");
 }

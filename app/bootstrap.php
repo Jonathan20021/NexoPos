@@ -51,6 +51,7 @@ require_once dirname(__DIR__) . '/includes/conciliacion.php';
 require_once dirname(__DIR__) . '/includes/promociones.php';
 require_once dirname(__DIR__) . '/includes/cockpit.php';        // Promotion Cockpit: rastro y análisis de descuentos
 require_once dirname(__DIR__) . '/includes/kpi_campanas.php';   // KPIs de campañas (usa cockpit.php)
+require_once dirname(__DIR__) . '/includes/cockpit_resumen.php';  // Resumen del cockpit por correo (usa cockpit.php y mail.php)
 require_once dirname(__DIR__) . '/includes/ncf_reservas.php';
 require_once dirname(__DIR__) . '/includes/ecf.php';   // facturación electrónica (arrastra ecf_catalogos/trama/api)
 require_once dirname(__DIR__) . '/includes/monedas.php';

@@ -49,6 +49,16 @@ if (isPost()) {
         }
         redirect('modules/marketing/cockpit.php?' . http_build_query(array_diff_key($_GET, ['export' => 1])));
     }
+    if (post('accion') === 'frecuencia_vista' && cockpit_resumen_disponible()) {
+        $frec = array_key_exists((string) post('frecuencia'), cockpit_resumen_frecuencias()) ? (string) post('frecuencia') : '';
+        // Al activarlo no se manda el periodo que ya cerró: el primero llega en el próximo cierre.
+        $per = cockpit_resumen_periodo($frec);
+        q("UPDATE cockpit_vistas SET frecuencia = ?, ultimo_periodo = ? WHERE id = ? AND usuario_id = ?",
+          [$frec, $per[1] ?? null, (int) post('id'), $uid]);
+        flash('success', $frec === '' ? 'Ya no recibirás el resumen de esa vista.'
+            : 'Recibirás el resumen ' . ($frec === 'semanal' ? 'cada lunes' : 'cada día 1') . ' en ' . (current_user()['email'] ?? 'tu correo') . '.');
+        redirect('modules/marketing/cockpit.php?' . http_build_query(array_diff_key($_GET, ['export' => 1])));
+    }
     if (post('accion') === 'borrar_vista' && cockpit_vistas_disponible()) {
         q("DELETE FROM cockpit_vistas WHERE id = ? AND usuario_id = ?", [(int) post('id'), $uid]);
         flash('success', 'Vista borrada.');
@@ -81,6 +91,17 @@ if (isPost()) {
     redirect('modules/marketing/cockpit.php?' . http_build_query(array_diff_key($_GET, ['export' => 1])));
 }
 
+// Vista previa del correo de una vista propia (el último periodo cerrado).
+if (get('vista_correo') !== '' && cockpit_resumen_disponible()) {
+    $v = qOne("SELECT * FROM cockpit_vistas WHERE id = ? AND usuario_id = ?", [(int) get('vista_correo'), (int) (current_user()['id'] ?? 0)]);
+    $u = $v ? cockpit_resumen_dueno((int) $v['usuario_id']) : null;
+    if (!$v || !$u) { http_response_code(404); exit('Vista no encontrada.'); }
+    if ($v['frecuencia'] === '') $v['frecuencia'] = 'semanal';
+    [, $html] = cockpit_resumen_correo($v, $u, cockpit_resumen_periodo($v['frecuencia']));
+    header('Content-Type: text/html; charset=utf-8');
+    exit($html);
+}
+
 /* ============================================================
  *  Filtros y datos comunes
  * ============================================================ */
@@ -95,13 +116,8 @@ $x = cockpit_expr();
 // En el resumen los totales son la suma de los tipos, que ya se consultan:
 // dos barridos del periodo menos (≈0,4 s con 60.000 ventas).
 if ($tab === 'resumen') {
-    $porTipoTY = cockpit_por($f, $TY, $x['tipo']);
-    $porTipoLY = cockpit_por($f, $LY, $x['tipo']);
-    $totTY = cockpit_metricas(cockpit_sumar($porTipoTY));
-    $totLY = cockpit_metricas(cockpit_sumar($porTipoLY));
-    // Las facturas NO se pueden sumar por tipo (una factura con líneas de dos
-    // tipos contaría dos veces): se quitan para que nadie lea un dato falso.
-    unset($totTY['tickets'], $totTY['atv'], $totLY['tickets'], $totLY['atv']);
+    $res = cockpit_resumen_datos($f);
+    ['tot_ty' => $totTY, 'tot_ly' => $totLY] = $res;
 } else {
     $totTY = cockpit_metricas(cockpit_totales($f, $TY));
     $totLY = cockpit_metricas(cockpit_totales($f, $LY));
@@ -161,30 +177,7 @@ $etqMeses = array_map(fn($ym) => mesNombre((int) substr($ym, 5, 2), true), $mese
  * ============================================================ */
 $filasTipo = [];
 if ($tab === 'resumen') {
-    $claves = array_unique(array_merge(array_keys($porTipoTY), array_keys($porTipoLY)));
-    foreach ($claves as $k) {
-        $ty = $porTipoTY[$k] ?? cockpit_vacio();
-        $ly = $porTipoLY[$k] ?? cockpit_vacio();
-        $filasTipo[$k] = [
-            'ty' => cockpit_metricas($ty, $gsTY), 'ly' => cockpit_metricas($ly, $gsLY),
-            'ef' => cockpit_efectos($ty, $ly, $gsTY, $gsLY),
-        ];
-    }
-    uasort($filasTipo, fn($a, $b) => $b['ty']['gs'] <=> $a['ty']['gs']);
-    $agrupar = function (array $claves) use ($filasTipo, $gsTY, $gsLY) {
-        $sel = array_intersect_key($filasTipo, array_flip($claves));
-        $ef = ['volumen' => 0.0, 'mezcla' => 0.0, 'tasa' => 0.0, 'producto' => 0.0, 'total' => 0.0];
-        foreach ($sel as $r) foreach ($ef as $k => $_) $ef[$k] += $r['ef'][$k];
-        return [
-            'ty' => cockpit_metricas(cockpit_sumar(array_column($sel, 'ty')), $gsTY),
-            'ly' => cockpit_metricas(cockpit_sumar(array_column($sel, 'ly')), $gsLY),
-            'ef' => $ef,
-        ];
-    };
-    $enPromo = array_values(array_diff(array_keys($filasTipo), ['sin']));
-    $filaTotal = $agrupar(array_keys($filasTipo));
-    $filaSin   = $agrupar(['sin']);
-    $filaPromo = $agrupar($enPromo);
+    ['filas' => $filasTipo, 'total' => $filaTotal, 'sin' => $filaSin, 'promo' => $filaPromo] = $res;
 
     $menTY = cockpit_mensual($f, $TY);
     $menLY = cockpit_mensual($f, $LY);
@@ -428,6 +421,7 @@ if (cockpit_vistas_disponible()) {
     $uidV = (int) (current_user()['id'] ?? 0);
     $vistas = cockpit_vistas($uidV);
     $qActual = cockpit_vista_query($_GET);
+    $conCorreo = cockpit_resumen_disponible();
     ob_start(); ?>
     <div class="relative no-print" x-data="{open:false, guardar:false}" @keydown.escape.window="open=false" @click.outside="open=false">
       <button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
@@ -436,10 +430,22 @@ if (cockpit_vistas_disponible()) {
         <ul class="max-h-72 overflow-y-auto">
           <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
             <li class="flex items-center gap-1 rounded-lg <?= $v['query'] === $qActual ? 'bg-blue-50' : 'hover:bg-slate-50' ?>">
-              <a href="<?= e(url('modules/marketing/cockpit.php') . '?' . $v['query']) ?>" class="flex-1 min-w-0 px-2 py-2">
-                <span class="block text-sm font-semibold text-slate-700 truncate"><?= e($v['nombre']) ?></span>
-                <span class="block text-xs text-slate-400 truncate"><?= $esMia ? ($v['compartida'] ? 'Tuya · compartida' : 'Tuya') : 'De ' . e($v['autor'] ?? '—') ?></span>
-              </a>
+              <div class="flex-1 min-w-0">
+                <a href="<?= e(url('modules/marketing/cockpit.php') . '?' . $v['query']) ?>" class="block px-2 pt-2 <?= $esMia && $conCorreo ? 'pb-0.5' : 'pb-2' ?>">
+                  <span class="block text-sm font-semibold text-slate-700 truncate"><?= e($v['nombre']) ?></span>
+                  <span class="block text-xs text-slate-400 truncate"><?= $esMia ? ($v['compartida'] ? 'Tuya · compartida' : 'Tuya') : 'De ' . e($v['autor'] ?? '—') ?></span>
+                </a>
+                <?php if ($esMia && $conCorreo): ?>
+                <form method="post" class="flex items-center gap-1.5 px-2 pb-2">
+                  <?= csrf_field() ?><input type="hidden" name="accion" value="frecuencia_vista"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>">
+                  <?= icon('mail', 'w-3.5 h-3.5 text-slate-400 shrink-0') ?>
+                  <select name="frecuencia" onchange="this.form.submit()" class="text-xs border-0 bg-transparent p-0 pr-5 text-slate-500 focus:ring-0 cursor-pointer" aria-label="Resumen por correo de <?= e($v['nombre']) ?>">
+                    <?php foreach (cockpit_resumen_frecuencias() as $fk => $fl): ?><option value="<?= e($fk) ?>" <?= ($v['frecuencia'] ?? '') === $fk ? 'selected' : '' ?>><?= e($fk === '' ? 'Sin resumen por correo' : 'Correo: ' . mb_strtolower($fl)) ?></option><?php endforeach; ?>
+                  </select>
+                  <a href="?vista_correo=<?= (int) $v['id'] ?>" target="_blank" rel="noopener" class="text-xs text-blue-600 hover:underline ml-auto shrink-0">Ver correo</a>
+                </form>
+                <?php endif; ?>
+              </div>
               <?php if ($esMia): ?>
               <form method="post" onsubmit="return confirm('¿Borrar la vista «' + <?= e(json_encode($v['nombre'])) ?> + '»?')">
                 <?= csrf_field() ?><input type="hidden" name="accion" value="borrar_vista"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>">

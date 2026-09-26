@@ -1199,6 +1199,44 @@ function cockpit_aumento_de(array $e, ?float $profundidad): ?array
     return ['aumento' => $mediana, 'n' => count($v), 'parecidas' => isset($cerca) && $cerca];
 }
 
+/**
+ * Lo que necesita el resumen (la pestaña y el correo): cada tipo de descuento
+ * TY/LY con sus efectos, y los agregados total / sin promoción / en promoción.
+ * Las facturas NO se suman por tipo (una factura con líneas de dos tipos
+ * contaría dos veces): el total no las trae, para que nadie lea un dato falso.
+ */
+function cockpit_resumen_datos(array $f): array
+{
+    $x = cockpit_expr();
+    $porTY = cockpit_por($f, $f['ty'], $x['tipo']);
+    $porLY = cockpit_por($f, $f['ly'], $x['tipo']);
+    $totTY = cockpit_metricas(cockpit_sumar($porTY));
+    $totLY = cockpit_metricas(cockpit_sumar($porLY));
+    unset($totTY['tickets'], $totTY['atv'], $totLY['tickets'], $totLY['atv']);
+    $gsTY = (float) $totTY['gs']; $gsLY = (float) $totLY['gs'];
+    $filas = [];
+    foreach (array_unique(array_merge(array_keys($porTY), array_keys($porLY))) as $k) {
+        $ty = $porTY[$k] ?? cockpit_vacio();
+        $ly = $porLY[$k] ?? cockpit_vacio();
+        $filas[$k] = ['ty' => cockpit_metricas($ty, $gsTY), 'ly' => cockpit_metricas($ly, $gsLY), 'ef' => cockpit_efectos($ty, $ly, $gsTY, $gsLY)];
+    }
+    uasort($filas, fn($a, $b) => $b['ty']['gs'] <=> $a['ty']['gs']);
+    $agrupar = function (array $claves) use ($filas, $gsTY, $gsLY) {
+        $sel = array_intersect_key($filas, array_flip($claves));
+        $ef = ['volumen' => 0.0, 'mezcla' => 0.0, 'tasa' => 0.0, 'producto' => 0.0, 'total' => 0.0];
+        foreach ($sel as $r) foreach ($ef as $k => $_) $ef[$k] += $r['ef'][$k];
+        return ['ty' => cockpit_metricas(cockpit_sumar(array_column($sel, 'ty')), $gsTY),
+                'ly' => cockpit_metricas(cockpit_sumar(array_column($sel, 'ly')), $gsLY), 'ef' => $ef];
+    };
+    $promo = $agrupar(array_values(array_diff(array_keys($filas), ['sin'])));
+    return [
+        'tot_ty' => $totTY, 'tot_ly' => $totLY, 'filas' => $filas,
+        'total' => $agrupar(array_keys($filas)), 'sin' => $agrupar(['sin']), 'promo' => $promo,
+        'pct_promo_ty' => $gsTY > 0 ? $promo['ty']['gs'] / $gsTY * 100 : 0.0,
+        'pct_promo_ly' => $gsLY > 0 ? $promo['ly']['gs'] / $gsLY * 100 : 0.0,
+    ];
+}
+
 /* ============================================================
  *  Vistas guardadas
  * ============================================================ */
@@ -1241,7 +1279,8 @@ function cockpit_vista_query(array $get): string
 function cockpit_vistas(int $usuarioId): array
 {
     if (!cockpit_vistas_disponible()) return [];
-    return qAll("SELECT v.id, v.nombre, v.query, v.compartida, v.usuario_id, u.nombre autor
+    $frec = function_exists('cockpit_resumen_disponible') && cockpit_resumen_disponible() ? ', v.frecuencia' : '';
+    return qAll("SELECT v.id, v.nombre, v.query, v.compartida, v.usuario_id, u.nombre autor$frec
                    FROM cockpit_vistas v LEFT JOIN usuarios u ON u.id = v.usuario_id
                   WHERE v.usuario_id = ? OR v.compartida = 1
                   ORDER BY v.usuario_id <> ?, v.nombre", [$usuarioId, $usuarioId]);
@@ -1283,13 +1322,15 @@ function cockpit_monedas(): array
 /** La moneda elegida en la URL (?moneda=USD) o la base. [código, símbolo, tasa, nota] */
 function cockpit_moneda(): array
 {
-    static $m = null;
-    if ($m !== null) return $m;
+    // Cacheada por moneda pedida: el resumen por correo cambia de «petición» a media página.
+    static $m = [];
     $cod = strtoupper((string) (function_exists('get') ? get('moneda') : ''));
+    if (isset($m[$cod])) return $m[$cod];
+    $pedida = $cod;
     $monedas = cockpit_monedas();
     if (!isset($monedas[$cod])) $cod = '';
     [$sim, $tasa, $nota] = $monedas[$cod];
-    return $m = [$cod, $sim, $tasa, $nota];
+    return $m[$pedida] = [$cod, $sim, $tasa, $nota];
 }
 
 /** Pesos por unidad de la moneda de reporte (1 = moneda base). */

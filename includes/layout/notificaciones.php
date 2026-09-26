@@ -14,6 +14,8 @@ mkt_tick_si_toca();
 // transmitirse y consulta el estado de los que están en proceso. Red de
 // seguridad por si no hay cron; ver modules/finanzas/ecf_cron.php.
 ecfTickSiToca();
+// Resúmenes del Promotion Cockpit por correo (vistas guardadas con frecuencia).
+cockpit_resumen_tick_si_toca();
 
 $notifs     = notif_listar(['limit' => 12]);
 $noLeidas   = notif_no_leidas();

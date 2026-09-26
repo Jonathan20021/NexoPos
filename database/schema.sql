@@ -1292,6 +1292,8 @@ CREATE TABLE cockpit_vistas (
   nombre      VARCHAR(80)  NOT NULL,
   query       VARCHAR(1000) NOT NULL,
   compartida  TINYINT(1)   NOT NULL DEFAULT 0,
+  frecuencia  VARCHAR(10)  NOT NULL DEFAULT '',    -- resumen por correo: '', semanal, mensual
+  ultimo_periodo DATE      NULL,                   -- último día del periodo ya enviado
   created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_cv_usuario (usuario_id)
