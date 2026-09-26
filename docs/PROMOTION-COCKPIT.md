@@ -149,7 +149,8 @@ mismo número de días **justo antes** (hasta 28): unidades por día antes → d
 **margen incremental** (margen por día durante − antes, por los días) y **retorno** (margen
 incremental ÷ descuento regalado).
 
-- Veredicto: *rentable* (ganó margen), *cara* (vendió más de 5% más pero perdió margen),
+- Veredicto: *rentable* (vendió más y ganó margen), *ganó margen sin vender más*, *cara*
+  (vendió más de 5% más pero perdió margen),
   *sin efecto* (no movió la venta) o *sin base*.
 - Sin base cuando la promoción dura más de 90 días (el «antes» sería otra temporada) o cuando
   no hay ventas antes de su inicio. Se dice por qué en la tabla.
@@ -206,6 +207,10 @@ cockpit y un botón que abre la vista en ese periodo. «Ver correo» muestra có
   no se manda el periodo ya cerrado: el primero llega en el próximo cierre.
 - Corre sin cron, con el mismo enganche que las notificaciones, como máximo una vez por hora
   (3 vistas por pasada); y también desde `modules/marketing/cron.php` si hay cron real.
+- Si un envío falla, esa vista espera 6 horas antes de reintentar (`ultimo_intento`): una
+  dirección rechazada no acapara las pasadas de las demás.
+- Seguridad: el préstamo de sesión se deshace también ante un error fatal (tiempo o memoria
+  agotados) con una función de cierre, que PHP corre antes de guardar la sesión.
 - Necesita el correo configurado (`RESEND_API_KEY`, `MAIL_FROM`); sin él no se envía nada.
   Deja de enviarse si el dueño se desactiva o pierde `cockpit.ver`.
 

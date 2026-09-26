@@ -1294,6 +1294,7 @@ CREATE TABLE cockpit_vistas (
   compartida  TINYINT(1)   NOT NULL DEFAULT 0,
   frecuencia  VARCHAR(10)  NOT NULL DEFAULT '',    -- resumen por correo: '', semanal, mensual
   ultimo_periodo DATE      NULL,                   -- último día del periodo ya enviado
+  ultimo_intento DATETIME  NULL,                   -- un envío fallido espera 6 h antes de reintentar
   created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_cv_usuario (usuario_id)

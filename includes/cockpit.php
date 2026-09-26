@@ -956,13 +956,31 @@ function cockpit_efectividad(array $f, array $rango, int $maxBase = 28, int $top
                    GROUP BY k_prod, k_dia", $p) as $r) {
         $cubo[(int) $r['k_prod']][$r['k_dia']] = [(float) $r['qty'], (float) $r['ns'], (float) $r['ns'] - (float) $r['costo']];
     }
-    $suma = function (array $prods, string $ini, string $fin) use ($cubo) {
+    // Sumas acumuladas por producto: cada ventana cuesta dos búsquedas binarias
+    // por producto, no un recorrido de todos sus días.
+    $acum = [];
+    foreach ($cubo as $pid => $porDia) {
+        ksort($porDia);
+        $dias = array_keys($porDia); $c = [[0.0, 0.0, 0.0]]; $t = [0.0, 0.0, 0.0];
+        foreach ($porDia as [$q, $n, $m]) { $t[0] += $q; $t[1] += $n; $t[2] += $m; $c[] = $t; }
+        $acum[$pid] = [$dias, $c];
+    }
+    // Cuántos días de la lista son <= $d (o < $d si $estricto).
+    $hasta = function (array $dias, string $d, bool $estricto): int {
+        $lo = 0; $hi = count($dias);
+        while ($lo < $hi) {
+            $mid = ($lo + $hi) >> 1;
+            if ($estricto ? $dias[$mid] < $d : $dias[$mid] <= $d) $lo = $mid + 1; else $hi = $mid;
+        }
+        return $lo;
+    };
+    $suma = function (array $prods, string $ini, string $fin) use ($acum, $hasta) {
         $t = ['qty' => 0.0, 'ns' => 0.0, 'margen' => 0.0];
         foreach ($prods as $pid) {
-            foreach ($cubo[$pid] ?? [] as $dia => [$q, $n, $m]) {
-                if ($dia < $ini || $dia > $fin) continue;
-                $t['qty'] += $q; $t['ns'] += $n; $t['margen'] += $m;
-            }
+            if (!isset($acum[$pid])) continue;
+            [$dias, $c] = $acum[$pid];
+            $a = $c[$hasta($dias, $ini, true)]; $b = $c[$hasta($dias, $fin, false)];
+            $t['qty'] += $b[0] - $a[0]; $t['ns'] += $b[1] - $a[1]; $t['margen'] += $b[2] - $a[2];
         }
         return $t;
     };
@@ -1001,7 +1019,8 @@ function cockpit_efectividad(array $f, array $rango, int $maxBase = 28, int $top
 function cockpit_veredicto(?float $aumento, ?float $incremental): array
 {
     if ($aumento === null) return ['sin_base', 'Sin base para comparar', 'slate'];
-    if ($incremental > 0) return ['rentable', 'Vendió más y ganó margen', 'emerald'];
+    if ($incremental > 0) return $aumento > 0 ? ['rentable', 'Vendió más y ganó margen', 'emerald']
+                                             : ['margen', 'Ganó margen sin vender más', 'sky'];
     if ($aumento > 5) return ['cara', 'Vendió más, pero el descuento costó más de lo que trajo', 'amber'];
     return ['sin_efecto', 'No movió la venta: el descuento se regaló', 'rose'];
 }
@@ -1263,8 +1282,15 @@ function cockpit_vista_query(array $get): string
     }
     $manual = ($q['ly_manual'] ?? '') === '1';
     if (isset($q['ty_desde'], $q['ty_hasta']) && !$manual) {
-        foreach (cockpit_presets() as $clave => [, $rango]) {
-            if ($rango === [$q['ty_desde'], $q['ty_hasta']]) {
+        // Varios periodos coinciden ciertos días (el 10 de abril, «este mes» y
+        // «año fiscal» son lo mismo). Manda el que se pulsó (?periodo= en los
+        // atajos); si no, el más corto, que es el que alguien suele querer.
+        $presets = cockpit_presets();
+        $orden = array_values(array_unique(array_merge(isset($q['periodo'], $presets[$q['periodo']]) ? [$q['periodo']] : [],
+                                                       ['mes', 'mes_pasado', 'trimestre', 'fiscal', 'ytd', 'u12'], array_keys($presets))));
+        unset($q['periodo']);
+        foreach ($orden as $clave) {
+            if (isset($presets[$clave]) && $presets[$clave][1] === [$q['ty_desde'], $q['ty_hasta']]) {
                 unset($q['ty_desde'], $q['ty_hasta'], $q['ly_desde'], $q['ly_hasta'], $q['ly_manual']);
                 $q['periodo'] = $clave;
                 break;

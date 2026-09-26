@@ -177,6 +177,10 @@ CREATE TABLE IF NOT EXISTS cockpit_vistas (
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cockpit_vistas' AND COLUMN_NAME='frecuencia');
 SET @s := IF(@c=0, 'ALTER TABLE cockpit_vistas ADD COLUMN frecuencia VARCHAR(10) NOT NULL DEFAULT '''' AFTER compartida, ADD COLUMN ultimo_periodo DATE NULL AFTER frecuencia', 'SELECT ''cockpit_vistas.frecuencia ya existe''');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+-- Último intento de envío: una vista cuyo correo falla espera antes de reintentar.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cockpit_vistas' AND COLUMN_NAME='ultimo_intento');
+SET @s := IF(@c=0, 'ALTER TABLE cockpit_vistas ADD COLUMN ultimo_intento DATETIME NULL AFTER ultimo_periodo', 'SELECT ''cockpit_vistas.ultimo_intento ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 -- Permiso para cambiarlo todo (también en permission_catalog()).
 INSERT INTO permisos (clave, modulo, grupo, descripcion)

@@ -37,10 +37,12 @@ if (isPost()) {
     // Vistas guardadas: cada quien las suyas; compartirlas no da permiso a borrarlas.
     if (post('accion') === 'guardar_vista' && cockpit_vistas_disponible()) {
         $nombre = trim(mb_substr((string) post('nombre'), 0, 80));
+        $q = cockpit_vista_query($_GET);
         if ($nombre === '') {
             flash('warning', 'Ponle un nombre a la vista.');
+        } elseif (strlen($q) > 1000) {   // la columna es VARCHAR(1000)
+            flash('warning', 'Esta vista tiene demasiados filtros para guardarse. Quita alguno e inténtalo de nuevo.');
         } else {
-            $q = cockpit_vista_query($_GET);
             $existe = (int) qVal("SELECT id FROM cockpit_vistas WHERE usuario_id = ? AND nombre = ?", [$uid, $nombre]);
             $datos = ['query' => $q, 'compartida' => post('compartida') ? 1 : 0];
             $existe ? dbUpdate('cockpit_vistas', $datos, 'id = ?', [$existe])
@@ -314,7 +316,10 @@ if ($tab === 'simulador') {
         $sim['aumento'] = $aumentoGet !== null && $aumentoGet !== '' ? max(-90.0, min(500.0, (float) $aumentoGet))
             : ($simHist ? round($simHist['aumento']) : 0.0);
         $sim['aumento_propuesto'] = $aumentoGet === null || $aumentoGet === '';
-        if ($sim['aumento'] != 0) $simRes = cockpit_simular($f, ['aumento' => $sim['aumento']] + $cfgSim);
+        // Solo cambia el aumento: se recalcula sobre las mismas filas, sin volver a la base.
+        if ($sim['aumento'] != 0) {
+            $simRes = array_merge($simRes, cockpit_sim_calcular($simRes['filas'], ['aumento' => $sim['aumento']] + $cfgSim, $simRes['base'][2], $simRes['divisor']));
+        }
         // La misma promoción, más suave y más fuerte.
         if ($simRes['productos']) {
             $valores = $sim['tipo'] === 'porcentaje' ? [10, 15, 20, 25, 30, 40] : array_map(fn($k) => round($sim['valor'] * $k, 2), [0.5, 0.75, 1.25, 1.5, 2]);
@@ -581,8 +586,8 @@ $nFiltros = count(array_filter([get('sucursal_id'), get('tienda_id'), $f['canal'
   </form>
   <div class="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-slate-100">
     <span class="text-xs text-slate-400 mr-1">Rápido:</span>
-    <?php foreach ($presets as $lbl => [$d, $h]): ?>
-      <a href="<?= e(ck_url(['ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => null, 'ly_hasta' => null, 'ly_manual' => null])) ?>"
+    <?php foreach (cockpit_presets() as $pk => [$lbl, [$d, $h]]): ?>
+      <a href="<?= e(ck_url(['ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => null, 'ly_hasta' => null, 'ly_manual' => null, 'periodo' => $pk])) ?>"
          class="px-2.5 py-1 rounded-lg text-xs font-semibold <?= $TY === [$d, $h] ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100' ?>"><?= e($lbl) ?></a>
     <?php endforeach; ?>
     <span class="text-xs text-slate-400 ml-auto"><?= $f['ly_modo'] === 'semana'
@@ -1259,7 +1264,7 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
 
 <?php elseif ($tab === 'efectividad'):
   $conBase = array_filter($efec, fn($r) => $r['margen_incremental'] !== null);
-  $rentables = array_filter($conBase, fn($r) => $r['veredicto'][0] === 'rentable');
+  $rentables = array_filter($conBase, fn($r) => in_array($r['veredicto'][0], ['rentable', 'margen'], true));
   $incrTot = array_sum(array_column($conBase, 'margen_incremental'));
   $costoBase = array_sum(array_column($conBase, 'costo_desc'));
 ?>

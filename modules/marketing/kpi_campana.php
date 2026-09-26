@@ -648,7 +648,7 @@ foreach ($diasTY as $d => $a) {
       <h3 class="font-bold text-slate-800">Promociones de la campaña</h3>
       <p class="text-sm text-slate-400">Las que se usaron entre el <?= e(fechaCorta($c['fecha_inicio'])) ?> y el <?= e(fechaCorta($c['fecha_fin'])) ?>, con su resultado contra los días previos a cada una.</p>
     </div>
-    <?php if (can('cockpit.ver')): ?>
+    <?php if (can('cockpit.ver') && $c['fecha_inicio'] <= date('Y-m-d')): ?>
       <a class="btn btn-ghost btn-sm" href="<?= e(url('modules/marketing/cockpit.php') . '?' . http_build_query(['tab' => 'efectividad', 'ty_desde' => $c['fecha_inicio'], 'ty_hasta' => min($c['fecha_fin'], date('Y-m-d')),
           'ly_desde' => $c['ly_inicio'], 'ly_hasta' => $c['ly_fin'], 'ly_manual' => 1, 'sucursal_id' => $c['sucursal_id'] ?: null, 'tienda_id' => $c['tienda_id'] ?: null])) ?>">
         <?= icon('percent', 'w-3.5 h-3.5') ?> Ver en el cockpit</a>

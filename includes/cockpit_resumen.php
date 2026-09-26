@@ -27,6 +27,14 @@ function cockpit_resumen_disponible(): bool
         "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_vistas' AND COLUMN_NAME = 'frecuencia'");
 }
 
+/** ultimo_intento llegó después que la frecuencia: una P40 a medias sigue funcionando sin él. */
+function cockpit_resumen_con_intento(): bool
+{
+    static $ok = null;
+    return $ok ??= (bool) qVal(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_vistas' AND COLUMN_NAME = 'ultimo_intento'");
+}
+
 function cockpit_resumen_frecuencias(): array
 {
     return ['' => 'No enviar', 'semanal' => 'Cada lunes (semana cerrada)', 'mensual' => 'Cada día 1 (mes cerrado)'];
@@ -58,6 +66,17 @@ function cockpit_como_usuario(array $u, array $get, callable $fn)
     $antes = [];
     foreach ($claves as $k) $antes[$k] = array_key_exists($k, $_SESSION ?? []) ? [$_SESSION[$k]] : null;
     $getAntes = $_GET;
+    $restaurar = function () use ($antes) {
+        foreach ($antes as $k => $v) {
+            if ($v === null) unset($_SESSION[$k]); else $_SESSION[$k] = $v[0];
+        }
+    };
+    // Un error fatal (tiempo o memoria agotados) se salta el finally, y PHP
+    // guardaría la sesión con el usuario prestado: quien navegaba quedaría
+    // dentro como el dueño de la vista. Las funciones de cierre corren ANTES
+    // de que se escriba la sesión, así que ésta la deja siempre como estaba.
+    $activo = true;
+    register_shutdown_function(function () use (&$activo, $restaurar) { if ($activo) $restaurar(); });
     try {
         $_SESSION['user'] = ['id' => (int) $u['id'], 'nombre' => $u['nombre'], 'apellido' => $u['apellido'] ?? '', 'usuario' => $u['usuario'] ?? '',
                              'email' => $u['email'] ?? '', 'rol_id' => (int) $u['rol_id'], 'es_super' => (int) ($u['es_super'] ?? 0),
@@ -67,10 +86,9 @@ function cockpit_como_usuario(array $u, array $get, callable $fn)
         $_GET = $get;
         return $fn();
     } finally {
-        foreach ($antes as $k => $v) {
-            if ($v === null) unset($_SESSION[$k]); else $_SESSION[$k] = $v[0];
-        }
+        $restaurar();
         $_GET = $getAntes;
+        $activo = false;
     }
 }
 
@@ -176,15 +194,20 @@ function cockpit_resumen_tick(int $lote = COCKPIT_RESUMEN_LOTE, ?string $hoy = n
     $res = ['enviados' => 0, 'fallidos' => 0];
     if (!cockpit_resumen_disponible() || (!$enviar && !mail_configurado())) return $res;
     $enviar ??= 'mail_enviar';
-    foreach (qAll("SELECT * FROM cockpit_vistas WHERE frecuencia IN ('semanal','mensual') ORDER BY ultimo_periodo IS NOT NULL, ultimo_periodo, id") as $v) {
+    // Las que llevan más tiempo sin intentarse, primero; una que acaba de fallar
+    // espera 6 horas. Así una dirección rechazada no acapara todas las pasadas.
+    $conIntento = cockpit_resumen_con_intento();
+    foreach (qAll("SELECT * FROM cockpit_vistas WHERE frecuencia IN ('semanal','mensual')"
+                  . ($conIntento ? " AND (ultimo_intento IS NULL OR ultimo_intento < NOW() - INTERVAL 6 HOUR) ORDER BY ultimo_intento IS NOT NULL, ultimo_intento, id" : " ORDER BY id")) as $v) {
         if ($res['enviados'] + $res['fallidos'] >= $lote) break;
         $per = cockpit_resumen_periodo($v['frecuencia'], $hoy);
         if (!$per || ($v['ultimo_periodo'] !== null && $v['ultimo_periodo'] >= $per[1])) continue;
         $u = cockpit_resumen_dueno((int) $v['usuario_id']);
         if (!$u || !filter_var($u['email'], FILTER_VALIDATE_EMAIL)) continue;
         // Reclamar el periodo ANTES de enviar: otra petición a la vez no lo repite.
-        $tomado = q("UPDATE cockpit_vistas SET ultimo_periodo = ? WHERE id = ? AND (ultimo_periodo IS NULL OR ultimo_periodo < ?)",
-                    [$per[1], $v['id'], $per[1]])->rowCount();
+        $tomado = q("UPDATE cockpit_vistas SET ultimo_periodo = ?" . ($conIntento ? ", ultimo_intento = NOW()" : '')
+                    . " WHERE id = ? AND frecuencia = ? AND (ultimo_periodo IS NULL OR ultimo_periodo < ?)",
+                    [$per[1], $v['id'], $v['frecuencia'], $per[1]])->rowCount();
         if (!$tomado) continue;
         try {
             [$asunto, $html] = cockpit_resumen_correo($v, $u, $per);
@@ -195,8 +218,10 @@ function cockpit_resumen_tick(int $lote = COCKPIT_RESUMEN_LOTE, ?string $hoy = n
         if (!empty($r['ok'])) {
             $res['enviados']++;
         } else {
-            // Se devuelve el periodo para reintentar en la próxima pasada.
-            q("UPDATE cockpit_vistas SET ultimo_periodo = ? WHERE id = ?", [$v['ultimo_periodo'], $v['id']]);
+            // Se devuelve el periodo para reintentar, salvo que el dueño haya
+            // cambiado la vista mientras tanto (su cambio manda).
+            q("UPDATE cockpit_vistas SET ultimo_periodo = ? WHERE id = ? AND frecuencia = ? AND ultimo_periodo = ?",
+              [$v['ultimo_periodo'], $v['id'], $v['frecuencia'], $per[1]]);
             $res['fallidos']++;
             error_log('Resumen del cockpit (vista ' . $v['id'] . '): ' . ($r['error'] ?? 'error desconocido'));
         }
@@ -208,12 +233,28 @@ function cockpit_resumen_tick(int $lote = COCKPIT_RESUMEN_LOTE, ?string $hoy = n
 function cockpit_resumen_tick_si_toca(): void
 {
     // Sin correo configurado no cuesta ni una consulta: corre en cada página.
-    if (!mail_configurado() || !cockpit_resumen_disponible()) return;
+    if (!mail_configurado()) return;
+    // Como el motor de marketing: nunca debe tumbar una página. Y en la web va
+    // de una vista en una: el resto lo recogen las pasadas siguientes o el cron.
+    try {
+        if (!cockpit_resumen_disponible()) return;
+        cockpit_resumen_tick_si_toca_();
+    } catch (Throwable $e) {
+        error_log('[cockpit resumen] ' . $e->getMessage());
+    }
+}
+
+function cockpit_resumen_tick_si_toca_(): void
+{
     $ahora = time();
     $ultimo = qVal("SELECT valor FROM cockpit_parametros WHERE clave = 'resumen_ultimo_tick'");
     if ($ultimo !== null && $ultimo !== false && (int) $ultimo >= $ahora - 3600) return;
     if ($ultimo === null || $ultimo === false) q("INSERT IGNORE INTO cockpit_parametros (clave, valor) VALUES ('resumen_ultimo_tick', '0')");
     $toca = q("UPDATE cockpit_parametros SET valor = ? WHERE clave = 'resumen_ultimo_tick' AND CAST(valor AS UNSIGNED) < ?",
               [(string) $ahora, $ahora - 3600])->rowCount();
-    if ($toca) cockpit_resumen_tick();
+    if ($toca) {
+        @set_time_limit(60);
+        ignore_user_abort(true);
+        cockpit_resumen_tick(1);
+    }
 }

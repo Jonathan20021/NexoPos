@@ -139,11 +139,22 @@ comprueba('sin base no hay veredicto', cockpit_veredicto(null, null)[0], 'sin_ba
 comprueba('vendió más y ganó margen', cockpit_veredicto(40.0, 10.0)[0], 'rentable');
 comprueba('vendió más pero perdió margen', cockpit_veredicto(40.0, -10.0)[0], 'cara');
 comprueba('no movió la venta', cockpit_veredicto(2.0, -10.0)[0], 'sin_efecto');
+comprueba('vendió menos pero ganó margen: no dice «vendió más»', cockpit_veredicto(-20.0, 10.0)[0], 'margen');
 
 titulo('Vistas guardadas');
 [$d, $h] = cockpit_presets()['mes_pasado'][1];
 comprueba('un periodo rápido se guarda como periodo', cockpit_vista_query(['tab' => 'sellout', 'ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => 'x', 'ly_manual' => '0']), 'tab=sellout&periodo=mes_pasado');
 comprueba('fechas a mano se guardan tal cual', cockpit_vista_query(['ty_desde' => '2025-11-20', 'ty_hasta' => '2025-12-01']), 'ty_desde=2025-11-20&ty_hasta=2025-12-01');
+$pr = cockpit_presets();
+$mes = $pr['mes'][1];
+comprueba('el atajo pulsado manda aunque otro coincida', cockpit_vista_query(['ty_desde' => $mes[0], 'ty_hasta' => $mes[1], 'periodo' => 'mes']), 'periodo=mes');
+$choque = null;
+foreach ($pr as $k => [, $r]) foreach ($pr as $k2 => [, $r2]) if ($k !== $k2 && $r === $r2) $choque = [$k, $k2, $r];
+if ($choque) {
+    comprueba('sin atajo, gana el periodo más corto', cockpit_vista_query(['ty_desde' => $choque[2][0], 'ty_hasta' => $choque[2][1]]),
+        'periodo=' . (array_search($choque[0], ['mes', 'mes_pasado', 'trimestre', 'fiscal', 'ytd', 'u12']) < array_search($choque[1], ['mes', 'mes_pasado', 'trimestre', 'fiscal', 'ytd', 'u12']) ? $choque[0] : $choque[1]));
+}
+comprueba('un periodo pedido que no coincide con las fechas no se inventa', cockpit_vista_query(['ty_desde' => '2025-11-20', 'ty_hasta' => '2025-12-01', 'periodo' => 'mes']), 'ty_desde=2025-11-20&ty_hasta=2025-12-01');
 comprueba('solo claves conocidas', cockpit_vista_query(['tab' => 'resumen', 'export' => 'excel', 'x' => '<script>', 'a' => ['b']]), 'tab=resumen');
 
 titulo('Resumen por correo');
