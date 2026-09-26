@@ -11,6 +11,27 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 
+/**
+ * Texto que empieza por = + - @ entra como TEXTO, no como fórmula. Lo demás,
+ * igual que siempre (números, fechas, vacíos). Para libros armados con
+ * setCellValue()/fromArray() que llevan nombres escritos por usuarios: un
+ * producto o una campaña llamada «=HYPERLINK(…)» no debe ejecutarse al abrir
+ * el Excel. excel_llenar_hoja() ya escribe todo texto como texto explícito.
+ */
+if (!class_exists('ExcelSinFormulasBinder')) {
+    class ExcelSinFormulasBinder extends \PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder
+    {
+        public function bindValue(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell, mixed $value): bool
+        {
+            if (is_string($value) && $value !== '' && strpbrk($value[0], '=+-@') !== false && !is_numeric($value)) {
+                $cell->setValueExplicit($value, DataType::TYPE_STRING);
+                return true;
+            }
+            return parent::bindValue($cell, $value);
+        }
+    }
+}
+
 /** Nombre de hoja válido para Excel (31 caracteres, sin \\ / ? * [ ] :). */
 function excel_nombre_hoja(string $t): string
 {

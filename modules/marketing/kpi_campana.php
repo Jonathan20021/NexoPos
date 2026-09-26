@@ -185,6 +185,9 @@ usort($promosCamp, fn($a, $b) => $b['gs_promo'] <=> $a['gs_promo']);
  * ============================================================ */
 if (quiere_excel()) {
     while (ob_get_level() > 0) ob_end_clean();
+    // Nombres, SKUs, notas y comentarios los escriben usuarios: nada que
+    // empiece por «=» se abre como fórmula en el Excel de la marca.
+    \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new ExcelSinFormulasBinder());
     $ss = new Spreadsheet();
     $amarillo = 'FFF2CC'; $azul = 'DDEBF7'; $gris = 'F2F2F2';
     $cab = function ($sh, string $rango, string $color = 'D9D9D9') {
