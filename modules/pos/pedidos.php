@@ -537,7 +537,7 @@ echo kpis([
 
                   <?php if (can('pedidos.gestionar') && $p['metodo_pago'] === 'link_pago' && !$p['pago_confirmado_at'] && $p['estado'] !== 'cancelado'): ?>
                     <form method="post" class="inline"
-                          onsubmit="return confirm('¿Confirmas que <?= e($p['cliente_nombre']) ?> ya pagó <?= e(money($p['total'])) ?>?')">
+                          data-confirmar="<?= e('¿Confirmas que ' . $p['cliente_nombre'] . ' ya pagó ' . money($p['total']) . '?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?>
                       <input type="hidden" name="accion" value="confirmar_pago">
                       <input type="hidden" name="id" value="<?= (int) $p['id'] ?>">

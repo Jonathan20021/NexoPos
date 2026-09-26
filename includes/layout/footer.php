@@ -95,7 +95,10 @@
  *
  * Recorre los formularios con onsubmit="return confirm('…')", les extrae el
  * mensaje y les quita el atributo: a partir de ahí la confirmación pasa por el
- * modal. Si este script no llega a ejecutarse, el onsubmit original sigue
+ * modal. Si el formulario ya trae data-confirmar, el mensaje sale de ahí: es la
+ * forma segura cuando el texto lleva datos del usuario (un nombre con comilla
+ * no puede romper ningún JavaScript):
+ *   <form data-confirmar="<?= e($texto) ?>" onsubmit="return confirm(this.dataset.confirmar)"> Si este script no llega a ejecutarse, el onsubmit original sigue
  * intacto y la protección contra borrados accidentales no se pierde nunca.
  */
 (function () {
@@ -138,11 +141,13 @@
 
   // Traslada cada confirm() inline al modal.
   document.querySelectorAll('form[onsubmit]').forEach(function (form) {
-    var inline = form.getAttribute('onsubmit') || '';
-    var m = inline.match(/confirm\((['"])([\s\S]*?)\1\)/);
-    if (!m) return;
-
-    form.setAttribute('data-confirmar', m[2]);
+    var texto = form.getAttribute('data-confirmar');
+    if (texto === null) {
+      var inline = form.getAttribute('onsubmit') || '';
+      var m = inline.match(/confirm\((['"])([\s\S]*?)\1\)/);
+      if (!m) return;
+      form.setAttribute('data-confirmar', m[2]);
+    }
     form.removeAttribute('onsubmit');
 
     form.addEventListener('submit', function (e) {

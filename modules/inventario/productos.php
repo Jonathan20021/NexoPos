@@ -391,7 +391,7 @@ ob_start(); ?>
                 <div class="flex items-center justify-end gap-1">
                   <?php if ($cod === '' && $p['tipo'] === 'producto' && can('productos.editar')): ?>
                     <form method="post" class="inline"
-                          onsubmit="return confirm('¿Asignar un código de barras interno a «<?= e($p['nombre']) ?>»?')">
+                          data-confirmar="<?= e('¿Asignar un código de barras interno a «' . $p['nombre'] . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?><input type="hidden" name="accion" value="generar_barras"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
                       <button class="p-2 rounded-lg text-amber-500 hover:text-amber-600 hover:bg-amber-50" title="Generar código de barras interno"><?= icon('barcode', 'w-4 h-4') ?></button>
                     </form>
@@ -418,7 +418,7 @@ ob_start(); ?>
                     <button onclick="<?= jsEvent('prod:edit', $edit) ?>" class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('productos.eliminar')): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Eliminar «<?= e($p['nombre']) ?>»?')">
+                    <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar «' . $p['nombre'] . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
                       <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                     </form>

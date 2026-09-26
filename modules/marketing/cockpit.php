@@ -507,7 +507,7 @@ if (cockpit_vistas_disponible()) {
                 <?php endif; ?>
               </div>
               <?php if ($esMia): ?>
-              <form method="post" onsubmit="return confirm('¿Borrar la vista «' + <?= e(json_encode($v['nombre'])) ?> + '»?')">
+              <form method="post" data-confirmar="<?= e('¿Borrar la vista «' . $v['nombre'] . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                 <?= csrf_field() ?><input type="hidden" name="accion" value="borrar_vista"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>">
                 <button class="p-2 text-slate-300 hover:text-rose-600" aria-label="Borrar vista <?= e($v['nombre']) ?>"><?= icon('trash', 'w-4 h-4') ?></button>
               </form>

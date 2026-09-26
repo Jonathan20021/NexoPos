@@ -139,6 +139,20 @@ tampoco sale aquí.
 Para añadir una entidad, agrega su bloque en `buscar_global()` dentro de un `if (can(...))`
 y aplica `sucursalScope()` cuando la tabla tenga `sucursal_id`. Limita siempre con `$tope`.
 
+## Confirmaciones con datos del usuario
+Nunca metas un nombre (producto, campaña, cliente…) dentro de un `confirm('…')` en línea:
+`e()` escapa para HTML, pero el navegador decodifica el atributo antes de ejecutarlo, y un
+nombre como `x'+alert(1)+'` corre como código si el script del pie no llegó a ejecutarse.
+Usa el texto como atributo y deja el JavaScript fijo:
+
+```php
+<form method="post" data-confirmar="<?= e('¿Eliminar «' . $p['nombre'] . '»?') ?>"
+      onsubmit="return confirm(this.dataset.confirmar)">
+```
+
+El pie (`includes/layout/footer.php`) lo pasa al modal de la app; si no corre, el
+`confirm` nativo muestra el mismo texto.
+
 ## Notificaciones (`includes/notificaciones.php`)
 Una fila por **situación viva** del negocio, no por evento: la `clave` deduplica y,
 cuando el problema se resuelve, la notificación pasa a `resuelta` sola. El barrido

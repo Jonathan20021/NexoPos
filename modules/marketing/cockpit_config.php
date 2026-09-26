@@ -361,7 +361,7 @@ layout_start('Configuración del cockpit', 'Todo lo que el Promotion Cockpit y l
     '<a href="' . e(url('modules/marketing/cockpit.php')) . '" class="btn btn-ghost">' . icon('pie', 'w-4 h-4') . ' Ir al cockpit</a>');
 $chk = fn(string $name, $on, bool $dis = false) => '<input type="hidden" name="' . e($name) . '" value="0"><input type="checkbox" name="' . e($name) . '" value="1"'
     . ($on ? ' checked' : '') . ($dis ? ' disabled' : '') . ' class="w-5 h-5 rounded border-slate-300 text-blue-600">';
-$borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<form method="post" class="inline" onsubmit="return confirm(' . e(json_encode($conf)) . ')">'
+$borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<form method="post" class="inline" data-confirmar="' . e($conf) . '" onsubmit="return confirm(this.dataset.confirmar)">'
     . csrf_field() . '<input type="hidden" name="accion" value="' . e($accion) . '"><input type="hidden" name="' . e($campo) . '" value="' . e($valor) . '">'
     . '<button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar">' . icon('trash', 'w-4 h-4') . '</button></form>';
 ?>

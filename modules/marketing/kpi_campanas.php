@@ -194,7 +194,7 @@ if (count($conVenta) >= 2):
                           class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                 <?php endif; ?>
                 <?php if (can('kpi_campanas.eliminar')): ?>
-                  <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la campaña «<?= e($c['nombre']) ?>» con su inversión y sus KPIs capturados? Las ventas no se tocan.')">
+                  <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar la campaña «' . $c['nombre'] . '» con su inversión y sus KPIs capturados? Las ventas no se tocan.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                     <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                     <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                   </form>
