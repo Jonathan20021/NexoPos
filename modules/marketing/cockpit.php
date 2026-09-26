@@ -194,13 +194,16 @@ if ($tab === 'producto') {
     $incluirSin = get('sin') === '1';
     [$w, $p] = cockpit_where($f, $TY);
     $rows = qAll(
-        "SELECT {$x['tipo']} tipo, {$x['mecanismo']} mec, vd.producto_id pid,
+        // Alias k_*: «tipo» es también columna de productos y de promociones, y
+        // en un GROUP BY la columna le gana al alias.
+        "SELECT {$x['tipo']} k_tipo, {$x['mecanismo']} k_mec, vd.producto_id k_pid,
                 MAX(COALESCE(pr.codigo,'')) codigo, MAX(COALESCE(pr.nombre, vd.descripcion)) nombre,
                 SUM(vd.cantidad) qty, SUM({$x['costo']}) costo, SUM({$x['gs']}) gs, SUM({$x['ns']}) ns
            " . cockpit_from() . " WHERE $w" . ($incluirSin ? '' : " AND {$x['tipo']} <> 'sin'") . "
-          GROUP BY tipo, mec, pid ORDER BY gs DESC",
+          GROUP BY k_tipo, k_mec, k_pid ORDER BY gs DESC",
         $p
     );
+    $rows = array_map(fn($r) => ['tipo' => $r['k_tipo'], 'mec' => $r['k_mec'], 'pid' => $r['k_pid']] + $r, $rows);
     $mecInfo = cockpit_mecanismos($f, $TY);
     $arbol = [];
     foreach ($rows as $r) {
@@ -215,30 +218,30 @@ if ($tab === 'producto') {
 
 if ($tab === 'sellout') {
     $dims = [
-        'sucursal' => ['Sucursal', 'store', "(SELECT su.nombre FROM sucursales su WHERE su.id = v.sucursal_id)"],
-        'canal'    => ['Canal', 'megaphone', cockpit_canal_sql('v')],
-        'segmento' => ['Segmento', 'layers', "COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id), 'Sin segmento')"],
-        'linea'    => ['Línea', 'tag', "COALESCE(NULLIF(pr.linea,''), 'Sin línea')"],
+        'sucursal' => ['Sucursal', 'store'],
+        'canal'    => ['Canal', 'megaphone'],
+        'segmento' => ['Segmento', 'layers'],
+        'linea'    => ['Línea', 'tag'],
     ];
-    if (tiendas_hay()) {
-        $dims['tienda'] = ['Tienda (marca)', 'tag', "COALESCE((SELECT t.nombre FROM tiendas t WHERE t.id = v.tienda_id), 'Sin marca')"];
-    }
+    if (tiendas_hay()) $dims['tienda'] = ['Tienda (marca)', 'tag'];
+    // Una sola pasada por periodo; cada dimensión se reparte en PHP.
+    $cuboTY = cockpit_cubo($f, $TY);
+    $cuboLY = cockpit_cubo($f, $LY);
     $sell = [];
-    foreach ($dims as $k => [$nombre, $ico, $expr]) {
-        $a = cockpit_por($f, $TY, $expr);
-        $b = cockpit_por($f, $LY, $expr);
+    foreach (array_keys($dims) as $k) {
+        $a = cockpit_cubo_por($cuboTY, $k);
+        $b = cockpit_cubo_por($cuboLY, $k);
         $filas = [];
         foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $g) {
-            $filas[$g] = ['ty' => (float) ($a[$g]['ns'] ?? 0), 'ly' => (float) ($b[$g]['ns'] ?? 0)];
+            $filas[$g] = ['ty' => $a[$g] ?? 0.0, 'ly' => $b[$g] ?? 0.0];
         }
         uasort($filas, fn($p, $q) => $q['ty'] <=> $p['ty']);
         $sell[$k] = $filas;
     }
     $canalesNombre = cockpit_canales();
-    $segLin = array_map(fn($r) => (float) $r['ns'], cockpit_por($f, $TY,
-        "CONCAT(COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id), 'Sin segmento'), '|', COALESCE(NULLIF(pr.linea,''), 'Sin línea'))"));
-    $menTY = cockpit_mensual($f, $TY);
-    $menLY = cockpit_mensual($f, $LY);
+    $segLin = cockpit_cubo_por($cuboTY, 'segmento', 'linea');
+    $menTY = array_map(fn($ns) => ['ns' => $ns], cockpit_cubo_por($cuboTY, 'ym'));
+    $menLY = array_map(fn($ns) => ['ns' => $ns], cockpit_cubo_por($cuboLY, 'ym'));
 }
 
 /* ============================================================
@@ -329,7 +332,17 @@ $marcas = qAll("SELECT id, nombre FROM marcas ORDER BY nombre");
 $segmentos = cockpit_segmentos();
 $presets = array_map(fn($p) => $p[1], array_column(cockpit_presets(), null, 0));
 ?>
-<div class="card p-4 mb-5 no-print">
+<?php
+$nFiltros = count(array_filter([get('sucursal_id'), get('tienda_id'), $f['canal'], $f['marca'], $f['segmento'], $f['linea'] ?? null, $f['samestore'] ? 1 : null]));
+?>
+<div class="card p-4 mb-5 no-print" x-data="{abierto: window.matchMedia('(min-width: 768px)').matches}">
+  <!-- En el teléfono los filtros se pliegan: abiertos se comían media pantalla antes del primer número. -->
+  <button type="button" @click="abierto=!abierto" class="md:hidden w-full flex items-center justify-between gap-2 min-h-[44px] text-sm font-semibold text-slate-700" :aria-expanded="abierto.toString()">
+    <span class="inline-flex items-center gap-2"><?= icon('filter', 'w-4 h-4') ?> Filtros<?= $nFiltros ? ' <span class="badge badge-blue">' . $nFiltros . '</span>' : '' ?>
+      <span class="text-xs font-normal text-slate-400"><?= e(fechaCorta($TY[0]) . ' – ' . fechaCorta($TY[1])) ?></span></span>
+    <span class="transition" :class="abierto && 'rotate-180'"><?= icon('chevron-down', 'w-4 h-4') ?></span>
+  </button>
+  <div x-show="abierto" x-cloak class="mt-3 md:mt-0">
   <form method="get" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 items-end">
     <input type="hidden" name="tab" value="<?= e($tab) ?>">
     <?php if ($s = selectSucursalFiltro()): ?><div class="col-span-2 md:col-span-1"><span class="label">Sucursal</span><?= $s ?></div><?php endif; ?>
@@ -393,6 +406,7 @@ $presets = array_map(fn($p) => $p[1], array_column(cockpit_presets(), null, 0));
          class="px-2.5 py-1 rounded-lg text-xs font-semibold <?= $TY === [$d, $h] ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100' ?>"><?= e($lbl) ?></a>
     <?php endforeach; ?>
     <span class="text-xs text-slate-400 ml-auto">El año anterior se toma, por defecto, en las mismas fechas.</span>
+  </div>
   </div>
 </div>
 

@@ -576,6 +576,48 @@ function cockpit_mensual(array $f, array $rango): array
     return $out;
 }
 
+/**
+ * Sell-out en UNA pasada: venta neta agrupada a la vez por mes, sucursal, canal,
+ * tienda, segmento y línea. Salen unos cientos de filas y el reparto por cada
+ * dimensión se hace en PHP. Con una consulta por dimensión y periodo la
+ * pestaña hacía catorce barridos del periodo (3 s con 60.000 ventas).
+ *
+ * @return array<int,array{ym:string,sucursal:string,canal:string,tienda:string,segmento:string,linea:string,ns:float,gs:float}>
+ */
+function cockpit_cubo(array $f, array $rango): array
+{
+    $x = cockpit_expr();
+    [$w, $p] = cockpit_where($f, $rango);
+    $filas = qAll(
+        // Alias con prefijo a propósito: «canal» a secas es también una columna
+        // de `promociones`, y el GROUP BY agrupaba por ella en vez del alias.
+        "SELECT DATE_FORMAT(v.fecha, '%Y-%m') k_ym, v.sucursal_id k_suc, " . cockpit_canal_sql('v') . " k_can, COALESCE(v.tienda_id, 0) k_tie,
+                COALESCE(NULLIF(pr.segmento,''), c.nombre, 'Sin segmento') k_seg, COALESCE(NULLIF(pr.linea,''), 'Sin línea') k_lin,
+                SUM({$x['ns']}) ns, SUM({$x['gs']}) gs
+           " . cockpit_from() . " LEFT JOIN categorias c ON c.id = pr.categoria_id
+          WHERE $w GROUP BY k_ym, k_suc, k_can, k_tie, k_seg, k_lin",
+        $p
+    );
+    $suc = array_column(qAll("SELECT id, nombre FROM sucursales"), 'nombre', 'id');
+    $tie = function_exists('tiendas_hay') && tiendas_hay() ? array_column(qAll("SELECT id, nombre FROM tiendas"), 'nombre', 'id') : [];
+    return array_map(fn($r) => [
+        'ym' => $r['k_ym'], 'sucursal' => $suc[$r['k_suc']] ?? ('#' . $r['k_suc']), 'canal' => (string) $r['k_can'],
+        'tienda' => $tie[$r['k_tie']] ?? 'Sin marca', 'segmento' => (string) $r['k_seg'], 'linea' => (string) $r['k_lin'],
+        'ns' => (float) $r['ns'], 'gs' => (float) $r['gs'],
+    ], $filas);
+}
+
+/** Suma el cubo por una o varias dimensiones (unidas con «|»). @return array<string,float> */
+function cockpit_cubo_por(array $cubo, string ...$dims): array
+{
+    $out = [];
+    foreach ($cubo as $r) {
+        $k = implode('|', array_map(fn($d) => $r[$d], $dims));
+        $out[$k] = ($out[$k] ?? 0.0) + $r['ns'];
+    }
+    return $out;
+}
+
 /** Meses ('Y-m') que cubre un rango. */
 function cockpit_meses(array $rango): array
 {
