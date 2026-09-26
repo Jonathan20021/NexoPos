@@ -363,6 +363,26 @@ function notif_gen_promociones(): void
         }
     }
     notif_sync('campana_bajo_meta', $items);
+
+    // El mes en curso se pasa del descuento objetivo de la marca (toda la
+    // empresa). Desde el día 5: con dos o tres días la tasa baila demasiado.
+    $items = [];
+    $obj = function_exists('cockpit_objetivo') ? cockpit_objetivo('tasa_desc_objetivo') : null;
+    if ($obj !== null && (int) date('j') >= 5) {
+        $mes = cockpit_tasa_empresa(date('Y-m-01'), $hoy);
+        if ($mes['gs'] > 0 && $mes['desc_pct'] > $obj) {
+            $items[] = [
+                'clave' => 'desc_sobre_objetivo:' . date('Y-m'), 'categoria' => 'ventas',
+                'prioridad' => $mes['desc_pct'] - $obj >= 2 ? 'alta' : 'media',
+                'titulo' => 'Descuento por encima del objetivo este mes',
+                'mensaje' => 'Va en ' . number_format($mes['desc_pct'], 1) . '% de la venta bruta; el objetivo de la marca es '
+                    . number_format($obj, 1) . '%. Mira qué tipo de descuento lo empuja.',
+                'url' => 'modules/marketing/cockpit.php?tab=resumen&periodo=mes&ty_desde=' . date('Y-m-01') . '&ty_hasta=' . $hoy,
+                'icono' => 'percent', 'color' => 'rose', 'permiso' => 'cockpit.ver',
+            ];
+        }
+    }
+    notif_sync('desc_sobre_objetivo', $items);
 }
 
 /**

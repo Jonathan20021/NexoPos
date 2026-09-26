@@ -51,6 +51,22 @@ function cfg_color(string $v, string $def = '#64748b'): string
     return preg_match('/^#[0-9a-fA-F]{6}$/', trim($v)) ? strtolower(trim($v)) : $def;
 }
 
+/** Un porcentaje 0–100 con dos decimales, o null si viene vacío. */
+function cfg_pct($v): ?float
+{
+    $v = trim(str_replace(',', '.', (string) $v));
+    if ($v === '') return null;
+    if (!is_numeric($v) || (float) $v < 0 || (float) $v > 100) throw new RuntimeException('Un porcentaje tiene que estar entre 0 y 100.');
+    return round((float) $v, 2);
+}
+
+/** ¿Ya corrió la parte de la P40 que trae los topes por tipo? */
+function cfg_con_tope(): bool
+{
+    static $ok = null;
+    return $ok ??= (bool) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_tipos' AND COLUMN_NAME = 'tope_desc_pct'");
+}
+
 /** Texto recortado o null. */
 function cfg_txt($v, int $max): ?string
 {
@@ -70,7 +86,8 @@ if (isPost()) {
             /* ---------- Tipos de descuento ---------- */
             case 'tipos_guardar':
                 $filas = $_POST['t'] ?? [];
-                tx(function () use ($filas) {
+                $conTope = cfg_con_tope();
+                tx(function () use ($filas, $conTope) {
                     foreach ((array) $filas as $clave => $f) {
                         if (!qVal("SELECT 1 FROM cockpit_tipos WHERE clave = ?", [$clave])) continue;
                         $nombre = cfg_txt($f['nombre'] ?? '', 80);
@@ -81,6 +98,7 @@ if (isPost()) {
                             'orden'         => (int) ($f['orden'] ?? 0),
                             'es_promocion'  => !empty($f['es_promocion']) ? 1 : 0,
                             'etiqueta_caja' => cfg_txt($f['etiqueta_caja'] ?? '', 80),
+                        ] + ($conTope ? ['tope_desc_pct' => cfg_pct($f['tope'] ?? '')] : []) + [
                             // «Sin promoción» y compañía los usa el cálculo: siempre activos.
                             'activo'        => !empty($f['activo']) || (int) qVal("SELECT sistema FROM cockpit_tipos WHERE clave = ?", [$clave]) ? 1 : 0,
                         ], 'clave = ?', [$clave]);
@@ -247,6 +265,7 @@ if (isPost()) {
                     switch ($tipo) {
                         case 'int':    $v = (string) max(1, min(500, (int) $v)); break;
                         case 'mes':    $v = (string) max(1, min(12, (int) $v)); break;
+                        case 'pct':    $v = ($pv = cfg_pct($v)) === null ? '' : (string) $pv; break;
                         case 'select': $v = array_key_exists($v, cockpit_presets()) ? $v : 'ytd'; break;
                         case 'canal':  if (!array_key_exists($v, cockpit_canales())) throw new RuntimeException('El canal por defecto tiene que ser un canal activo.'); break;
                         case 'lineas':
@@ -320,6 +339,7 @@ $borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<fo
 </nav>
 
 <?php if ($tab === 'tipos'):
+  $conTope = cfg_con_tope();
   $tipos = qAll("SELECT t.*,
                         (SELECT COUNT(*) FROM promociones p WHERE p.tipo_descuento = t.clave) promos,
                         (SELECT COUNT(*) FROM ventas v WHERE v.descuento_motivo = t.clave) ventas
@@ -334,7 +354,9 @@ $borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<fo
       <?= csrf_field() ?><input type="hidden" name="accion" value="tipos_guardar">
       <div class="overflow-x-auto">
         <table class="data-table text-[13px]">
-          <thead><tr><th class="w-20">Orden</th><th>Nombre en el cockpit</th><th class="w-16">Color</th><th class="text-center">Familia de promoción</th><th>Etiqueta en caja (POS)</th><th class="text-center">Activo</th><th class="text-right">Uso</th><th></th></tr></thead>
+          <thead><tr><th class="w-20">Orden</th><th>Nombre en el cockpit</th><th class="w-16">Color</th><th class="text-center">Familia de promoción</th><th>Etiqueta en caja (POS)</th>
+            <?php if ($conTope): ?><th class="w-28" title="Descuento máximo que la marca acepta para este tipo, en % de su venta bruta. Vacío = sin tope.">Tope desc. %</th><?php endif; ?>
+            <th class="text-center">Activo</th><th class="text-right">Uso</th><th></th></tr></thead>
           <tbody>
           <?php foreach ($tipos as $t): $k = $t['clave']; ?>
             <tr class="<?= $t['activo'] ? '' : 'opacity-60' ?>">
@@ -347,6 +369,10 @@ $borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<fo
               <td class="text-center"><?= in_array($k, ['sin', 'muestra', 'negociado', 'promocion', 'manual'], true) ? '<span class="text-slate-300">—</span>' : $chk("t[$k][es_promocion]", $t['es_promocion']) ?></td>
               <td><?= in_array($k, ['sin', 'muestra', 'negociado', 'promocion'], true) ? '<span class="text-slate-300 text-xs">No aplica</span>'
                     : '<input name="t[' . e($k) . '][etiqueta_caja]" value="' . e((string) $t['etiqueta_caja']) . '" maxlength="80" class="input py-1.5 min-w-[200px]" placeholder="Vacío = no es motivo del POS" aria-label="Etiqueta en caja">' ?></td>
+              <?php if ($conTope): ?>
+              <td><?= $k === 'sin' ? '<span class="text-slate-300">—</span>'
+                    : '<input type="number" name="t[' . e($k) . '][tope]" value="' . e($t['tope_desc_pct'] === null ? '' : rtrim(rtrim((string) $t['tope_desc_pct'], '0'), '.')) . '" min="0" max="100" step="0.1" class="input py-1.5 w-24" placeholder="Sin tope" aria-label="Tope de descuento">' ?></td>
+              <?php endif; ?>
               <td class="text-center"><?= $chk("t[$k][activo]", $t['activo'], (bool) $t['sistema']) ?></td>
               <td class="text-right text-xs text-slate-500 whitespace-nowrap"><?= (int) $t['promos'] ?> promo · <?= number_format((int) $t['ventas']) ?> ventas</td>
               <td class="text-right"><?= !$t['sistema'] && !$t['promos'] && !$t['ventas'] ? $borrar('tipo_eliminar', 'clave', $k, '¿Eliminar el tipo «' . $t['nombre'] . '»?') : '' ?></td>
@@ -582,6 +608,8 @@ $borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<fo
             <select id="p_<?= e($k) ?>" name="p[<?= e($k) ?>]" class="select"><?php for ($m = 1; $m <= 12; $m++): ?><option value="<?= $m ?>" <?= (int) $val === $m ? 'selected' : '' ?>><?= e(mesNombre($m)) ?></option><?php endfor; ?></select>
           <?php elseif ($tipo === 'select'): ?>
             <select id="p_<?= e($k) ?>" name="p[<?= e($k) ?>]" class="select"><?php foreach (cockpit_presets() as $pk => [$pl]): ?><option value="<?= e($pk) ?>" <?= $val === $pk ? 'selected' : '' ?>><?= e($pl) ?></option><?php endforeach; ?></select>
+          <?php elseif ($tipo === 'pct'): ?>
+            <div class="relative"><input id="p_<?= e($k) ?>" type="number" min="0" max="100" step="0.1" name="p[<?= e($k) ?>]" value="<?= e($val) ?>" class="input pr-8" placeholder="Sin objetivo"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span></div>
           <?php elseif ($tipo === 'canal'): ?>
             <select id="p_<?= e($k) ?>" name="p[<?= e($k) ?>]" class="select"><?php foreach (cockpit_canales() as $ck => $cn): ?><option value="<?= e($ck) ?>" <?= $val === $ck ? 'selected' : '' ?>><?= e($cn) ?></option><?php endforeach; ?></select>
           <?php else: ?>

@@ -182,6 +182,12 @@ SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DA
 SET @s := IF(@c=0, 'ALTER TABLE cockpit_vistas ADD COLUMN ultimo_intento DATETIME NULL AFTER ultimo_periodo', 'SELECT ''cockpit_vistas.ultimo_intento ya existe''');
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+-- Tope de descuento por tipo (% de su venta bruta): el objetivo de la marca
+-- para cada familia. NULL = sin tope.
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='cockpit_tipos' AND COLUMN_NAME='tope_desc_pct');
+SET @s := IF(@c=0, 'ALTER TABLE cockpit_tipos ADD COLUMN tope_desc_pct DECIMAL(5,2) NULL AFTER etiqueta_caja', 'SELECT ''cockpit_tipos.tope_desc_pct ya existe''');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- Permiso para cambiarlo todo (también en permission_catalog()).
 INSERT INTO permisos (clave, modulo, grupo, descripcion)
 SELECT * FROM (SELECT 'cockpit.configurar' c, 'cockpit' m, 'Marketing' g, 'Promotion Cockpit — Configurar catálogos, canales y parámetros' d) t

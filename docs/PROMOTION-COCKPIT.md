@@ -45,6 +45,20 @@ renombran y se recolorean, pero no se borran ni se desactivan.
 
 Sin la P40 todo sigue funcionando con los valores de siempre (los de la siembra).
 
+## Objetivos de descuento
+
+La marca fija cuánto acepta descontar, y el cockpit lo vigila:
+
+- **Configuración → Parámetros**: *tasa de descuento objetivo* y *venta en promoción
+  objetivo* (máximos, en % de la venta bruta). Vacío = sin objetivo.
+- **Configuración → Tipos**: *tope desc. %* por tipo (p. ej. GWP ≤ 15%).
+- **Resumen**: las tarjetas muestran «obj. ≤ X%» en verde o rojo, los gráficos mes a mes
+  llevan la línea del objetivo y la tabla por tipo marca en rojo el tipo que pasa su tope.
+- **Lo más importante**, el **resumen por correo** y la tarjeta de hallazgos ponen primero
+  lo que está fuera de objetivo (un tipo con menos de 0,5% de la venta no dispara aviso).
+- **Notificación** a quien ve el cockpit cuando el mes en curso de toda la empresa pasa la
+  tasa objetivo (desde el día 5; con dos o tres días la tasa baila demasiado).
+
 ## Gráficos interactivos
 
 Los gráficos del cockpit y de las campañas son **Apache ECharts** (licencia Apache 2.0),

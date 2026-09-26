@@ -99,6 +99,19 @@ comprueba('el aviso de tasa sale en rojo', $hz[array_search(true, array_map(fn($
 comprueba('nunca más de los pedidos', count(cockpit_hallazgos($T, $tiposH, 30.0, 10.0, 2)), 2);
 comprueba('sin año anterior no inventa comparaciones', count(array_filter(cockpit_hallazgos($tot($fila(100, 90, 50), $fila(0, 0, 0)), [], 0.0, 0.0), fn($x) => str_contains($x['texto'], 'pts'))), 0);
 
+titulo('Objetivos de descuento');
+// Total al 15% de descuento; GWP al 33% con 30% de la venta.
+$obj = fn(?float $d, ?float $p, array $topes = []) => ['desc' => $d, 'promo' => $p, 'topes' => $topes];
+$txt = fn(array $hz) => implode(' | ', array_column($hz, 'texto'));
+$hz = cockpit_hallazgos($T, $tiposH, 30.0, 30.0, 5, $obj(12.0, null));
+comprueba('pasarse del objetivo sale primero', str_contains($hz[0]['texto'], 'por encima del objetivo de 12.0%'), true);
+comprueba('... en rojo', $hz[0]['tono'], 'malo');
+comprueba('dentro del objetivo lo dice en verde', str_contains($txt(cockpit_hallazgos($T, $tiposH, 30.0, 30.0, 9, $obj(20.0, null))), 'dentro del objetivo'), true);
+comprueba('venta en promoción sobre su objetivo', str_contains($txt(cockpit_hallazgos($T, $tiposH, 30.0, 30.0, 9, $obj(null, 25.0))), 'supera el objetivo de 25.0%'), true);
+$hz = cockpit_hallazgos($T, $tiposH, 30.0, 30.0, 9, $obj(null, null, ['gwp' => 20.0]));
+comprueba('tipo sobre su tope, con el tipo para navegar', [str_contains($txt($hz), 'por encima de su tope de 20.0%'), in_array('gwp', array_column($hz, 'tipo'), true)], [true, true]);
+comprueba('sin objetivos, nada de objetivos', str_contains($txt(cockpit_hallazgos($T, $tiposH, 30.0, 30.0, 9, $obj(null, null))), 'objetivo'), false);
+
 titulo('Proyección de campaña');
 require_once dirname(__DIR__) . '/includes/kpi_campanas.php';
 $dias = fn(array $v, string $ini) => array_combine(array_map(fn($i) => date('Y-m-d', strtotime("$ini +$i day")), array_keys($v)), array_map(fn($x) => ['ns' => (float) $x], $v));

@@ -1156,6 +1156,7 @@ CREATE TABLE cockpit_tipos (
   color          CHAR(7)      NOT NULL DEFAULT '#64748b',
   es_promocion   TINYINT(1)   NOT NULL DEFAULT 0,    -- se puede asignar a una promoción
   etiqueta_caja  VARCHAR(80)  NULL,                  -- si no es NULL, es un motivo del POS
+  tope_desc_pct  DECIMAL(5,2) NULL,                  -- objetivo: descuento máximo del tipo (% de su venta bruta)
   sistema        TINYINT(1)   NOT NULL DEFAULT 0,    -- lo usa el cálculo: no se borra
   orden          INT          NOT NULL DEFAULT 0,
   activo         TINYINT(1)   NOT NULL DEFAULT 1,

@@ -97,6 +97,14 @@ function grafico_lineas_ty_ly(array $etiquetas, array $ty, array $ly, array $cfg
              'lineStyle' => ['width' => 2, 'color' => GRAF_LY, 'type' => 'dashed'], 'itemStyle' => ['color' => GRAF_LY]],
         ],
     ];
+    // Una meta (p. ej. la tasa de descuento objetivo) como línea horizontal.
+    if (isset($cfg['objetivo']) && $cfg['objetivo'] !== null) {
+        $opt['series'][0]['markLine'] = ['silent' => true, 'symbol' => 'none',
+            'lineStyle' => ['color' => '#d97706', 'type' => 'dashed', 'width' => 1.5],
+            'label' => ['formatter' => $cfg['objetivo_etq'] ?? 'Objetivo', 'position' => 'insideEndTop', 'color' => '#b45309', 'fontSize' => 11],
+            'data' => [['yAxis' => (float) $cfg['objetivo']]]];
+    }
+    unset($cfg['objetivo'], $cfg['objetivo_etq']);
     if ($zoom) {
         $opt['dataZoom'] = [['type' => 'inside'], ['type' => 'slider', 'height' => 22, 'bottom' => 4, 'borderColor' => '#e2e8f0',
             'fillerColor' => 'rgba(42,120,214,0.12)', 'handleStyle' => ['color' => GRAF_TY]]];

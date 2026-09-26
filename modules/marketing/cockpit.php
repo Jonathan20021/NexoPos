@@ -160,12 +160,22 @@ function ck_money(float $v): string
 // Los gráficos escriben sus importes en la moneda elegida.
 $GLOBALS['graficos_moneda'] = cockpit_moneda()[1];
 
+/** Insignia «objetivo ≤ X%» para una tarjeta: verde si se cumple, roja si no. */
+function ck_meta(float $valor, ?float $objetivo): string
+{
+    if ($objetivo === null) return '';
+    $ok = $valor <= $objetivo;
+    return '<span class="inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ' . ($ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700') . '"'
+        . ' title="Objetivo de la marca: máximo ' . e(cockpit_pct($objetivo)) . '">' . ($ok ? '✓ ' : '▲ ') . 'obj. ≤ ' . e(cockpit_pct($objetivo)) . '</span>';
+}
+
 /** Tarjeta compacta del cockpit: valor TY, LY y variación. */
-function ck_tile(string $titulo, string $valorTY, string $valorLY, string $var, string $extra = ''): string
+function ck_tile(string $titulo, string $valorTY, string $valorLY, string $var, string $extra = '', string $pie = ''): string
 {
     return '<div class="rounded-xl border border-slate-200 bg-white p-4 flex flex-col min-w-0">'
         . '<div class="flex items-start justify-between gap-2"><p class="text-sm font-semibold text-slate-600">' . e($titulo) . '</p>' . $extra . '</div>'
         . '<p class="text-xl 2xl:text-2xl font-extrabold text-slate-800 tabular-nums mt-1 break-words">' . $valorTY . '</p>'
+        . ($pie !== '' ? '<div class="mt-1">' . $pie . '</div>' : '')
         . '<p class="text-xs text-slate-400 mt-auto pt-2 bg-slate-50 -mx-4 -mb-4 px-4 pb-2.5 rounded-b-xl">Año anterior: <span class="tabular-nums">' . $valorLY . '</span> · ' . $var . '</p>'
         . '</div>';
 }
@@ -626,6 +636,8 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
 <?php if ($tab === 'resumen'):
   $porTipoTyPlano = array_map(fn($r) => $r['ty'], $filasTipo);
   $porTipoLyPlano = array_map(fn($r) => $r['ly'], $filasTipo);
+  $objDesc = cockpit_objetivo('tasa_desc_objetivo');
+  $objPromo = cockpit_objetivo('venta_promo_objetivo');
   $pPromoTY = $gsTY > 0 ? $filaPromo['ty']['gs'] / $gsTY * 100 : 0.0;
   $pPromoLY = $gsLY > 0 ? $filaPromo['ly']['gs'] / $gsLY * 100 : 0.0;
   $dirTY = $directo($totTY, $porTipoTyPlano); $dirLY = $directo($totLY, $porTipoLyPlano);
@@ -672,19 +684,21 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
       <p class="text-xs font-bold uppercase tracking-wider text-amber-600 mb-3">Descuento mes a mes</p>
       <div class="space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
-          <div class="sm:col-span-2"><?= ck_tile('Tasa de descuento', cockpit_pct($totTY['desc_pct']), cockpit_pct($totLY['desc_pct']), ck_var($totTY['desc_pct'], $totLY['desc_pct'], true, true)) ?></div>
+          <div class="sm:col-span-2"><?= ck_tile('Tasa de descuento', cockpit_pct($totTY['desc_pct']), cockpit_pct($totLY['desc_pct']), ck_var($totTY['desc_pct'], $totLY['desc_pct'], true, true), pie: ck_meta($totTY['desc_pct'], $objDesc)) ?></div>
           <div class="sm:col-span-3">
             <?= grafico_lineas_ty_ly($etqMeses, $serie($menTY, $meses, 'desc'),
                 array_slice(array_pad($serie($menLY, $mesesLY, 'desc'), count($meses), 0), 0, count($meses)),
-                ['formato' => 'pct', 'titulo' => 'Tasa de descuento mes a mes', 'escala' => true, 'herramientas' => false], '190px') ?>
+                ['formato' => 'pct', 'titulo' => 'Tasa de descuento mes a mes', 'escala' => true, 'herramientas' => false,
+                 'objetivo' => $objDesc, 'objetivo_etq' => $objDesc !== null ? 'Objetivo ' . cockpit_pct($objDesc) : null], '190px') ?>
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-center">
-          <div class="sm:col-span-2"><?= ck_tile('% Venta en promoción', cockpit_pct($pPromoTY), cockpit_pct($pPromoLY), ck_var($pPromoTY, $pPromoLY, true, true)) ?></div>
+          <div class="sm:col-span-2"><?= ck_tile('% Venta en promoción', cockpit_pct($pPromoTY), cockpit_pct($pPromoLY), ck_var($pPromoTY, $pPromoLY, true, true), pie: ck_meta($pPromoTY, $objPromo)) ?></div>
           <div class="sm:col-span-3">
             <?= grafico_lineas_ty_ly($etqMeses, $serie($menTY, $meses, 'promo'),
                 array_slice(array_pad($serie($menLY, $mesesLY, 'promo'), count($meses), 0), 0, count($meses)),
-                ['formato' => 'pct', 'titulo' => 'Venta en promoción mes a mes', 'escala' => true, 'herramientas' => false], '190px') ?>
+                ['formato' => 'pct', 'titulo' => 'Venta en promoción mes a mes', 'escala' => true, 'herramientas' => false,
+                 'objetivo' => $objPromo, 'objetivo_etq' => $objPromo !== null ? 'Objetivo ' . cockpit_pct($objPromo) : null], '190px') ?>
           </div>
         </div>
       </div>
@@ -801,7 +815,7 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         </thead>
         <tbody>
         <?php
-        $pinta = function (string $nombre, array $r, string $cls = '', string $color = '') use ($conLY) {
+        $pinta = function (string $nombre, array $r, string $cls = '', string $color = '', ?float $tope = null) use ($conLY) {
             $t = $r['ty'];
             $h = '<tr class="' . $cls . '"><td>'
                . ($color ? '<span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background:' . e($color) . '"></span>' : '')
@@ -810,7 +824,8 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
                . '<td class="text-right tabular-nums text-slate-500">' . cockpit_pct($t['peso_gs']) . '</td>'
                . '<td class="text-right tabular-nums">' . cockpit_pct($t['margen_gs']) . '</td>'
                . '<td class="text-right tabular-nums">' . cockpit_n($t['desc']) . '</td>'
-               . '<td class="text-right tabular-nums">' . cockpit_pct($t['desc_pct']) . '</td>'
+               . '<td class="text-right tabular-nums' . ($tope !== null && $t['gs'] > 0 && $t['desc_pct'] > $tope ? ' text-rose-600 font-semibold' : '') . '">' . cockpit_pct($t['desc_pct'])
+               . ($tope !== null ? '<span class="block text-[10px] font-normal ' . ($t['desc_pct'] > $tope && $t['gs'] > 0 ? 'text-rose-500' : 'text-slate-400') . '">tope ' . cockpit_pct($tope) . '</span>' : '') . '</td>'
                . '<td class="text-right tabular-nums font-semibold">' . cockpit_n($t['ns']) . '</td>'
                . '<td class="text-right tabular-nums text-slate-500">' . cockpit_n($t['costo']) . '</td>'
                . '<td class="text-right tabular-nums">' . cockpit_n($t['margen']) . '</td>'
@@ -838,12 +853,12 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
             }
             return $h;
         };
-        echo $pinta('TOTAL', $filaTotal, 'font-bold bg-slate-50 text-slate-800');
+        echo $pinta('TOTAL', $filaTotal, 'font-bold bg-slate-50 text-slate-800', '', $objDesc);
         echo $pinta('Ventas sin promoción', $filaSin, 'font-semibold text-slate-700');
         echo $pinta('Ventas en promoción', $filaPromo, 'font-semibold text-slate-700 border-b-2 border-slate-200');
         foreach ($filasTipo as $k => $r) {
             if ($k === 'sin') continue;
-            echo $pinta(cockpit_tipo_label($k), $r, 'text-slate-600', cockpit_tipo_color($k));
+            echo $pinta(cockpit_tipo_label($k), $r, 'text-slate-600', cockpit_tipo_color($k), cockpit_tope_tipo($k));
         }
         ?>
         </tbody>

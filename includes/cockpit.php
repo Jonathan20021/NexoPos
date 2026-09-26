@@ -133,8 +133,26 @@ function cockpit_parametros_def(): array
         'top_skus'          => ['SKUs a mostrar cuando la campaña no tiene SKUs foco', 'int', '', '20'],
         'dias_max'          => ['Máximo de días en el detalle diario de una campaña', 'int', '', '93'],
         'tasas_reporte'     => ['Tasas fijas de reporte (una por línea: USD=59.50)', 'lineas', 'Pesos por unidad. El cockpit puede verse en esas monedas; siempre a esta tasa fija, nunca a la del día.', ''],
+        'tasa_desc_objetivo'   => ['Tasa de descuento objetivo (máximo, % de la venta bruta)', 'pct', 'Lo que la marca acepta descontar. Vacío = sin objetivo. El cockpit, el resumen por correo y las notificaciones avisan al pasarse.', ''],
+        'venta_promo_objetivo' => ['Venta en promoción objetivo (máximo, % de la venta bruta)', 'pct', 'Cuánta venta puede ir con descuento. Vacío = sin objetivo.', ''],
         'canales_captacion' => ['Canales de captación del POS (uno por línea)', 'lineas', 'Las opciones que el cajero elige al vender. Lo que quites no se borra de las ventas viejas.', "Mostrador\nInstagram\nWhatsApp\nFacebook\nReferido\nOtro"],
     ];
+}
+
+/** Un objetivo en % configurado, o null si no hay (vacío o fuera de 0–100). */
+function cockpit_objetivo(string $clave): ?float
+{
+    $v = trim((string) cockpit_param($clave, ''));
+    if ($v === '' || !is_numeric(str_replace(',', '.', $v))) return null;
+    $v = (float) str_replace(',', '.', $v);
+    return $v >= 0 && $v <= 100 ? $v : null;
+}
+
+/** Tope de descuento de un tipo (% de su venta bruta), o null. */
+function cockpit_tope_tipo(string $k): ?float
+{
+    $t = cockpit_tipos_def()[$k]['tope'] ?? null;
+    return $t === null ? null : (float) $t;
 }
 
 function cockpit_param_int(string $clave): int
@@ -184,7 +202,9 @@ function cockpit_tipos_def(): array
     }
     foreach ($filas as $r) {
         $t[$r['clave']] = ['nombre' => $r['nombre'], 'color' => $r['color'], 'es_promocion' => (int) $r['es_promocion'],
-                           'etiqueta_caja' => $r['etiqueta_caja'], 'sistema' => (int) $r['sistema'], 'activo' => (int) $r['activo']];
+                           'etiqueta_caja' => $r['etiqueta_caja'], 'sistema' => (int) $r['sistema'], 'activo' => (int) $r['activo'],
+                           // Columna posterior: sin ella, ningún tipo tiene tope.
+                           'tope' => isset($r['tope_desc_pct']) && $r['tope_desc_pct'] !== '' ? (float) $r['tope_desc_pct'] : null];
     }
     // El cálculo usa estas claves aunque alguien borre la fila a mano en la base.
     foreach (cockpit_tipos_defecto() as $k => [$n, $c, $p, $caja, $sis]) {
@@ -822,10 +842,14 @@ function cockpit_mecanismos(array $f, array $rango, bool $incluirInactivas = fal
  *
  * @param array $total  ['ty'=>metricas, 'ly'=>metricas, 'ef'=>efectos] del total
  * @param array $tipos  clave => la misma estructura, por tipo de descuento
+ * @param ?array $objetivos ['desc' => ?float, 'promo' => ?float, 'topes' => [tipo => float]];
+ *                          null = los configurados (Configuración → Parámetros y Tipos)
  * @return array<int,array{tono:string,texto:string,tipo:?string,peso:float}>
  */
-function cockpit_hallazgos(array $total, array $tipos, float $promoTY, float $promoLY, int $max = 5): array
+function cockpit_hallazgos(array $total, array $tipos, float $promoTY, float $promoLY, int $max = 5, ?array $objetivos = null): array
 {
+    $objetivos ??= ['desc' => cockpit_objetivo('tasa_desc_objetivo'), 'promo' => cockpit_objetivo('venta_promo_objetivo'),
+                    'topes' => array_filter(array_map(fn($r) => $r['tope'] ?? null, cockpit_tipos_def()), fn($v) => $v !== null)];
     $h = [];
     $t = $total['ty']; $l = $total['ly'];
     $hayLy = ($l['gs'] ?? 0) > 0;
@@ -888,8 +912,50 @@ function cockpit_hallazgos(array $total, array $tipos, float $promoTY, float $pr
         }
     }
 
+    // Contra los objetivos de la marca: pasarse pesa más que cualquier variación,
+    // porque es lo que la casa matriz pregunta primero.
+    $gs = (float) ($t['gs'] ?? 0);
+    if ($gs > 0 && ($obj = $objetivos['desc'] ?? null) !== null) {
+        $d = $t['desc_pct'] - $obj;
+        $h[] = $d > 0
+            ? ['tono' => 'malo', 'tipo' => null, 'peso' => 20 + $d * 4,
+               'texto' => 'La tasa de descuento (<b>' . $pc($t['desc_pct']) . '</b>) está por encima del objetivo de ' . $pc($obj) . ' (' . $pts($d) . ').']
+            : ['tono' => 'bueno', 'tipo' => null, 'peso' => 1,
+               'texto' => 'La tasa de descuento (<b>' . $pc($t['desc_pct']) . '</b>) está dentro del objetivo de ' . $pc($obj) . '.'];
+    }
+    if ($gs > 0 && ($obj = $objetivos['promo'] ?? null) !== null && $promoTY > $obj) {
+        $h[] = ['tono' => 'malo', 'tipo' => null, 'peso' => 18 + ($promoTY - $obj) * 2,
+            'texto' => 'La venta en promoción (<b>' . $pc($promoTY) . '</b>) supera el objetivo de ' . $pc($obj) . ' (' . $pts($promoTY - $obj) . ').'];
+    }
+    foreach ($objetivos['topes'] ?? [] as $k => $tope) {
+        $r = $tipos[$k]['ty'] ?? null;
+        // Un tipo con muy poca venta no merece la alarma (0,5% de la venta bruta).
+        if (!$r || ($r['gs'] ?? 0) <= 0 || ($r['peso_gs'] ?? 0) < 0.5 || $r['desc_pct'] <= $tope) continue;
+        $h[] = ['tono' => 'malo', 'tipo' => $k, 'peso' => 15 + ($r['desc_pct'] - $tope) * 2,
+            'texto' => '<b>' . e(cockpit_tipo_label($k)) . '</b> descuenta ' . $pc($r['desc_pct']) . ', por encima de su tope de ' . $pc($tope)
+                . ' (' . $pts($r['desc_pct'] - $tope) . ').'];
+    }
+
     usort($h, fn($a, $b) => $b['peso'] <=> $a['peso']);
     return array_slice($h, 0, $max);
+}
+
+/**
+ * Tasa de descuento de TODA la empresa en un rango, sin filtros de sesión (para
+ * la notificación: la ve cualquiera con el permiso, no depende de quién barre).
+ * @return array{gs:float, ns:float, desc_pct:float, promo_pct:float}
+ */
+function cockpit_tasa_empresa(string $desde, string $hasta): array
+{
+    $x = cockpit_expr();
+    $r = qOne("SELECT COALESCE(SUM({$x['gs']}),0) gs, COALESCE(SUM({$x['ns']}),0) ns,
+                      COALESCE(SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['gs']} ELSE 0 END),0) gs_promo "
+              . cockpit_from() . " WHERE " . rep_estados_venta('v') . " AND v.fecha BETWEEN ? AND ?",
+              [$desde . ' 00:00:00', $hasta . ' 23:59:59']) ?: [];
+    $gs = (float) ($r['gs'] ?? 0);
+    return ['gs' => $gs, 'ns' => (float) ($r['ns'] ?? 0),
+            'desc_pct' => $gs > 0 ? ($gs - (float) $r['ns']) / $gs * 100 : 0.0,
+            'promo_pct' => $gs > 0 ? (float) $r['gs_promo'] / $gs * 100 : 0.0];
 }
 
 /**
