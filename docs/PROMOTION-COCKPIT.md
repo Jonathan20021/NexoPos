@@ -24,6 +24,20 @@ Las dos aparecen también en el Centro de Reportes (grupo Operación y Ventas).
    o en Configuración del cockpit → Productos (tabla editable, filtro «sin clasificar» y
    renombrar/unir un segmento o una línea en todos los productos).
 
+### Comprobar la instalación
+
+**Configuración del cockpit → Estado** dice, parte por parte, qué está vivo en esta base y el
+paso exacto para lo que falta (qué migración correr, o qué definir en `config.local.php`), y
+qué se pierde mientras tanto. Si falta algo, todas las pestañas de Configuración lo avisan.
+Sin la P39/P40 la pantalla muestra solo ese estado en vez de un mensaje sin salida.
+
+Además mira las ventas de los últimos 7 días: si las columnas existen pero menos del 95% de
+las líneas trae precio de lista, algún servidor o terminal sigue con el código anterior (las
+ventas históricas importadas no cuentan: nunca traen precio de lista).
+
+Una P40 a medias (una tabla que falta) ya no tumba nada: el cockpit, el POS y las promociones
+siguen con los valores de fábrica hasta que se complete.
+
 ## Todo se configura desde la pantalla (P40)
 
 Nada de lo que clasifica o reporta el cockpit está fijo en el código. En **Marketing →

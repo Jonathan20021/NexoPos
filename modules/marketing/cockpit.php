@@ -226,8 +226,9 @@ if ($tab === 'detalle') {
     } else {
         uasort($mec, fn($a, $b) => [$a['tipo'], -$a['gs']] <=> [$b['tipo'], -$b['gs']]);
     }
-    $promoTY = cockpit_por($f, $TY, "({$x['tipo']} <> 'sin')");
-    $promoLY = cockpit_por($f, $LY, "({$x['tipo']} <> 'sin')");
+    // Venta con algún descuento: ya la trae el stacking (antes, dos barridos más).
+    $promoTY = ['1' => ['gs' => $stTY['gs_promo'], 'ns' => $stTY['ns_promo']]];
+    $promoLY = ['1' => ['gs' => $stLY['gs_promo'], 'ns' => $stLY['ns_promo']]];
     $pctPromo = fn(array $por, string $campo, float $tot) => $tot > 0 ? (float) ($por['1'][$campo] ?? 0) / $tot * 100 : 0.0;
 }
 

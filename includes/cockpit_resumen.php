@@ -258,3 +258,69 @@ function cockpit_resumen_tick_si_toca_(): void
         cockpit_resumen_tick(1);
     }
 }
+
+/* ============================================================
+ *  Estado de la instalación (Configuración → Estado)
+ * ============================================================ */
+
+/**
+ * Qué partes del cockpit están vivas en esta base y qué falta para el resto.
+ * Una consulta al esquema para todo. Cada fila: etiqueta, ok, qué hacer, qué
+ * se pierde mientras tanto, y si es imprescindible.
+ *
+ * @return array<int,array{etiqueta:string, ok:bool, falta:string, efecto:string, grave:bool}>
+ */
+function cockpit_instalacion(): array
+{
+    $cols = [];
+    foreach (qAll("SELECT TABLE_NAME t, COLUMN_NAME c FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN
+                          ('ventas','venta_detalles','pedido_detalles','productos','promociones','cockpit_tipos','cockpit_vistas',
+                           'kpi_campanas','cockpit_parametros','cockpit_canales','cockpit_canal_reglas','kpi_rubros','kpi_metricas_def')") as $r) {
+        $cols[$r['t']][$r['c']] = true;
+    }
+    $hay = fn(string $t, array $cs = []) => isset($cols[$t]) && !array_diff($cs, array_keys($cols[$t]));
+    $p39 = 'Ejecutar database/migracion_cockpit_promociones_p39.sql';
+    $p40 = 'Ejecutar database/migracion_cockpit_config_p40.sql (se puede repetir sin riesgo)';
+    $filas = [
+        ['Rastro de promoción en cada venta del POS', $hay('ventas', ['descuento_motivo']) && $hay('venta_detalles', ['precio_lista', 'promocion_id']),
+         $p39, 'Las ventas no guardan precio de lista ni promoción: el cockpit no ve los descuentos de promoción.', true],
+        ['Código y familia de las promociones', $hay('promociones', ['codigo', 'tipo_descuento']), $p39, 'Las promociones no se pueden clasificar por tipo.', true],
+        ['Segmento, línea y héroe de los productos', $hay('productos', ['segmento', 'linea', 'es_heroe']), $p39, 'Sin sell-out por segmento y línea ni productos héroe.', true],
+        ['KPIs de campañas', $hay('kpi_campanas'), $p39, 'No se pueden crear campañas (Holiday, Black Friday…).', true],
+    ];
+    if (isset($cols['pedido_detalles'])) {
+        $filas[] = ['Rastro de promoción en los pedidos de la tienda en línea', $hay('pedido_detalles', ['precio_lista', 'promocion_id']),
+                    $p39, 'Los pedidos en línea facturados no dicen qué promoción usaron.', false];
+    }
+    $filas = array_merge($filas, [
+        ['Configuración desde la pantalla', $hay('cockpit_tipos') && $hay('cockpit_canales') && $hay('cockpit_parametros') && $hay('kpi_rubros') && $hay('kpi_metricas_def'),
+         $p40, 'Tipos, canales y parámetros quedan fijos con los valores de fábrica.', true],
+        ['Topes de descuento por tipo', $hay('cockpit_tipos', ['tope_desc_pct']), $p40, 'No se puede fijar el tope de cada tipo (sí el objetivo global).', false],
+        ['Vistas guardadas', $hay('cockpit_vistas'), $p40, 'El botón «Vistas» no aparece.', false],
+        ['Resumen por correo de las vistas', $hay('cockpit_vistas', ['frecuencia', 'ultimo_periodo']), $p40, 'Las vistas no se pueden enviar por correo.', false],
+        ['Espera tras un correo fallido', $hay('cockpit_vistas', ['ultimo_intento']), $p40, 'Un correo que falla se reintenta en cada pasada.', false],
+        ['Envío de correo configurado', function_exists('mail_configurado') && mail_configurado(),
+         'Definir RESEND_API_KEY y MAIL_FROM en config/config.local.php', 'Los resúmenes por correo no salen (todo lo demás funciona).', false],
+    ]);
+    return array_map(fn($f) => ['etiqueta' => $f[0], 'ok' => (bool) $f[1], 'falta' => $f[2], 'efecto' => $f[3], 'grave' => $f[4]], $filas);
+}
+
+/**
+ * ¿El POS de verdad está guardando el rastro? Las columnas pueden existir y
+ * un servidor seguir con el código viejo. Mira las líneas de los últimos 7
+ * días: qué parte trae precio de lista, por canal de captación.
+ * @return array{lineas:int, con_lista:int, pct:?float}
+ */
+function cockpit_captura_reciente(int $dias = 7): array
+{
+    if (!cockpit_capturando()) return ['lineas' => 0, 'con_lista' => 0, 'pct' => null];
+    // Las ventas históricas importadas nunca traen precio de lista: no cuentan.
+    $importadas = qVal("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ventas' AND COLUMN_NAME = 'importacion_id'")
+        ? ' AND v.importacion_id IS NULL' : '';
+    $r = qOne("SELECT COUNT(*) n, SUM(vd.precio_lista IS NOT NULL) con FROM ventas v JOIN venta_detalles vd ON vd.venta_id = v.id
+                WHERE " . rep_estados_venta('v') . " AND v.fecha >= ? AND vd.producto_id IS NOT NULL$importadas",
+              [date('Y-m-d', strtotime("-$dias days")) . ' 00:00:00']) ?: [];
+    $n = (int) ($r['n'] ?? 0);
+    return ['lineas' => $n, 'con_lista' => (int) ($r['con'] ?? 0), 'pct' => $n ? (int) $r['con'] / $n * 100 : null];
+}

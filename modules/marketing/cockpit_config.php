@@ -22,17 +22,43 @@ $tabs = [
     'kpis'       => ['KPIs de campañas', 'target'],
     'parametros' => ['Parámetros', 'settings'],
     'productos'  => ['Productos', 'package'],
+    'estado'     => ['Estado', 'pulse'],
 ];
 $tab = array_key_exists((string) get('tab'), $tabs) ? (string) get('tab') : 'tipos';
 
-// Lee promociones.tipo_descuento y ventas.descuento_motivo: necesita las dos migraciones.
+/** Panel «Estado de la instalación»: qué está vivo y qué falta, con el paso exacto. */
+function cfg_panel_estado(): string
+{
+    $filas = cockpit_instalacion();
+    $cap = cockpit_captura_reciente();
+    $h = '<section class="card overflow-hidden mb-5"><div class="p-4 border-b border-slate-100">'
+       . '<h3 class="font-bold text-slate-800">Estado de la instalación</h3>'
+       . '<p class="text-sm text-slate-400">Lo que el Promotion Cockpit necesita en esta base de datos. Las migraciones se pueden repetir sin riesgo: solo añaden lo que falta.</p></div>'
+       . '<ul class="divide-y divide-slate-100">';
+    foreach ($filas as $f) {
+        $icono = $f['ok'] ? '<span class="text-emerald-600">' . icon('check', 'w-5 h-5') . '</span>'
+               : '<span class="' . ($f['grave'] ? 'text-rose-600' : 'text-amber-500') . '">' . icon('alert', 'w-5 h-5') . '</span>';
+        $h .= '<li class="flex gap-3 px-4 py-3">' . $icono . '<div class="min-w-0"><p class="text-sm font-semibold text-slate-700">' . e($f['etiqueta']) . '</p>'
+            . ($f['ok'] ? '<p class="text-xs text-slate-400">Listo</p>'
+                : '<p class="text-xs text-slate-500">' . e($f['efecto']) . '</p><p class="text-xs font-semibold ' . ($f['grave'] ? 'text-rose-700' : 'text-amber-700') . ' mt-0.5">' . e($f['falta']) . '</p>')
+            . '</div></li>';
+    }
+    // Las columnas pueden existir y un servidor seguir con el código viejo.
+    if ($cap['pct'] !== null) {
+        $bien = $cap['pct'] >= 95;
+        $h .= '<li class="flex gap-3 px-4 py-3"><span class="' . ($bien ? 'text-emerald-600' : 'text-amber-500') . '">' . icon($bien ? 'check' : 'alert', 'w-5 h-5') . '</span>'
+            . '<div><p class="text-sm font-semibold text-slate-700">Ventas de los últimos 7 días con rastro de promoción</p>'
+            . '<p class="text-xs ' . ($bien ? 'text-slate-400' : 'text-amber-700 font-semibold') . '">' . number_format($cap['pct'], 1) . '% de ' . number_format($cap['lineas']) . ' líneas'
+            . ($bien ? '' : '. Si la P39 ya corrió hace más de una semana, algún servidor o terminal sigue con el código anterior: actualízalo.') . '</p></div></li>';
+    }
+    return $h . '</ul></section>';
+}
+
+// Lee promociones.tipo_descuento y ventas.descuento_motivo: necesita las dos
+// migraciones. Sin ellas solo se puede ver el estado, que dice qué falta.
 if (!cockpit_disponible() || !cockpit_config_disponible()) {
-    layout_start('Configuración del cockpit', 'Catálogos, canales y parámetros');
-    echo '<div class="card p-6">' . empty_state(
-        'Falta aplicar la actualización de la base de datos',
-        'Ejecuta database/migracion_cockpit_config_p40.sql (después de la P39) para poder editar la configuración desde aquí.',
-        'alert'
-    ) . '</div>';
+    layout_start('Configuración del cockpit', 'Falta aplicar la actualización de la base de datos');
+    echo cfg_panel_estado();
     layout_end();
     exit;
 }
@@ -338,7 +364,21 @@ $borrar = fn(string $accion, string $campo, string $valor, string $conf) => '<fo
   <?php endforeach; ?>
 </nav>
 
-<?php if ($tab === 'tipos'):
+<?php
+// Faltan partes opcionales: se avisa en todas las pestañas, sin estorbar.
+$faltan = array_filter(cockpit_instalacion(), fn($f) => !$f['ok']);
+if ($faltan && $tab !== 'estado'): ?>
+  <a href="?tab=estado" class="card p-3 mb-5 flex items-center gap-2 text-sm text-amber-800 bg-amber-50/70 border-amber-200 hover:bg-amber-50 no-print">
+    <?= icon('alert', 'w-4 h-4 text-amber-500 shrink-0') ?>
+    <span><?= count($faltan) === 1 ? 'Falta 1 parte' : 'Faltan ' . count($faltan) . ' partes' ?> de la instalación: <?= e(implode(', ', array_map(fn($f) => mb_strtolower($f['etiqueta']), array_slice($faltan, 0, 3)))) ?><?= count($faltan) > 3 ? '…' : '' ?>.</span>
+    <span class="ml-auto font-semibold whitespace-nowrap">Ver qué hacer →</span>
+  </a>
+<?php endif; ?>
+
+<?php if ($tab === 'estado'): ?>
+  <?= cfg_panel_estado() ?>
+
+<?php elseif ($tab === 'tipos'):
   $conTope = cfg_con_tope();
   $tipos = qAll("SELECT t.*,
                         (SELECT COUNT(*) FROM promociones p WHERE p.tipo_descuento = t.clave) promos,
