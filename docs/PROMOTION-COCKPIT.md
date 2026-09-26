@@ -160,7 +160,14 @@ Con m = margen / venta bruta, s = peso del tipo, d = tasa de descuento, k = cost
 - **Mezcla de producto** = −GS_t,ty · (k_ty − k_ly)
 
 Los cuatro suman **exactamente** la variación del margen del tipo, y las filas la del total.
-`php pruebas/cockpit.php` lo comprueba (24 casos).
+`php pruebas/cockpit.php` lo comprueba con casos fabricados (65 pruebas de funciones puras).
+
+`php pruebas/cockpit_datos.php` lo comprueba **contra la base real**, solo leyendo: que el
+mismo número llegado por dos caminos sea el mismo (la suma de los tipos y el total, cada
+dimensión del sell-out, el stacking y los tipos en promoción, una moneda y otra, la
+efectividad optimizada y una consulta ingenua, la notificación y el resumen, el correo y la
+pantalla, una campaña y el cockpit en sus fechas). Se probó sembrando dos errores a propósito:
+los dos los detecta.
 
 ### Canales de la marca
 

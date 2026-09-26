@@ -223,6 +223,9 @@ arreglo de `rep_catalogo()`: el hub y los permisos salen de ahí.
 - `canalesVenta()` (POS) sale del parámetro `canales_captacion`.
 - Si tocas `cockpit_efectos()`, corre `php pruebas/cockpit.php`: los efectos tienen que sumar
   exactamente la variación del margen.
+- Si tocas una consulta del cockpit (`cockpit_expr()`, el cubo, el stacking, la efectividad, la
+  moneda), corre también `php pruebas/cockpit_datos.php` sobre una base con ventas: comprueba
+  que las cifras cuadran entre pestañas, monedas y caminos de cálculo.
 
 ## Gráficos interactivos (`includes/graficos.php` + Apache ECharts)
 Para tableros de análisis (Promotion Cockpit, campañas). ECharts va **dentro del repo**
@@ -553,6 +556,7 @@ php pruebas/nomina.php
 php pruebas/ecf.php
 php pruebas/documentos.php
 php pruebas/cockpit.php
+php pruebas/cockpit_datos.php   # necesita base con ventas; solo lee
 ```
 
 `pruebas/nomina.php` cubre el cálculo de nómina dominicana (`includes/nomina.php`):
