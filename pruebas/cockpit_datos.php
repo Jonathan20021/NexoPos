@@ -93,6 +93,10 @@ $st = cockpit_stacking($f, $f['ty']);
 cuadra('venta bruta con descuento del stacking = la de los tipos en promoción', $st['gs_promo'], $res['promo']['ty']['gs']);
 cuadra('venta neta con descuento del stacking = la de los tipos en promoción', $st['ns_promo'], $res['promo']['ty']['ns']);
 cuadra('la distribución por nº de descuentos suma la venta de esas facturas', array_sum($st['dist']), $st['gs']);
+// El Detallado toma sus totales del stacking (todas las facturas, con y sin descuento).
+foreach (['gs', 'ns', 'costo', 'tickets', 'sin_lista'] as $k) {
+    cuadra("totales del stacking = totales directos ($k)", $st['total'][$k], (float) $tot[$k]);
+}
 $mec = cockpit_mecanismos($f, $f['ty']);
 cuadra('los mecanismos suman la venta bruta en promoción', array_sum(array_column($mec, 'gs')), $res['promo']['ty']['gs']);
 $mensual = cockpit_mensual($f, $f['ty']);

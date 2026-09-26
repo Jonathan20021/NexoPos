@@ -782,26 +782,33 @@ function cockpit_stacking(array $f, array $rango): array
 {
     $x = cockpit_expr();
     [$w, $p] = cockpit_where($f, $rango);
+    // Se agrupan TODAS las facturas (también las sin descuento, n = 0): así la
+    // misma pasada da los totales del periodo y el Detallado se ahorra las dos
+    // consultas de totales. Una factura es una fila de t: los tickets son COUNT(*).
     $rows = qAll(
-        "SELECT t.ym, LEAST(t.n, 5) n, COUNT(*) tickets, SUM(t.gs) gs, SUM(t.gs_p) gs_p, SUM(t.ns_p) ns_p FROM (
+        "SELECT t.ym, LEAST(t.n, 5) n, COUNT(*) tickets, SUM(t.gs) gs, SUM(t.gs_p) gs_p, SUM(t.ns_p) ns_p,
+                SUM(t.promo) promo, SUM(t.caja) caja, SUM(t.ns) ns, SUM(t.costo) costo, SUM(t.qty) qty, SUM(t.sin_lista) sin_lista FROM (
             SELECT v.id,
                    MAX(DATE_FORMAT(v.fecha, '%Y-%m')) ym,
                    COUNT(DISTINCT vd.promocion_id)
                      + MAX(vd.es_muestra)
                      + MAX(CASE WHEN {$x['negociado']} THEN 1 ELSE 0 END)
                      + MAX(CASE WHEN v.descuento > 0 THEN 1 ELSE 0 END) n,
-                   SUM({$x['gs']}) gs,
                    -- Las líneas con algún descuento: el «% en promoción» sale de aquí
                    -- sin otro barrido del periodo.
                    SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['gs']} ELSE 0 END) gs_p,
-                   SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['ns']} ELSE 0 END) ns_p
+                   SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['ns']} ELSE 0 END) ns_p,
+                   " . cockpit_sumas_sql() . "
               " . cockpit_from() . " WHERE $w GROUP BY v.id
-         ) t WHERE t.n > 0 GROUP BY t.ym, LEAST(t.n, 5)",
+         ) t GROUP BY t.ym, LEAST(t.n, 5)",
         $p
     );
     $porMes = []; $dist = [1 => 0.0, 2 => 0.0, 3 => 0.0, 4 => 0.0, 5 => 0.0];
     $gs = 0.0; $tk = 0.0; $n = 0.0; $gsP = 0.0; $nsP = 0.0;
+    $total = cockpit_vacio();
     foreach ($rows as $r) {
+        foreach ($total as $k => $_) $total[$k] += (float) $r[$k];
+        if ((int) $r['n'] === 0) continue;       // sin descuento: solo cuenta en los totales
         $gsP += (float) $r['gs_p']; $nsP += (float) $r['ns_p'];
         $porMes[$r['ym']] ??= ['tickets' => 0.0, 'n' => 0.0];
         $porMes[$r['ym']]['tickets'] += (float) $r['tickets'];
@@ -809,7 +816,8 @@ function cockpit_stacking(array $f, array $rango): array
         $dist[(int) $r['n']] += (float) $r['gs'];
         $gs += (float) $r['gs']; $tk += (float) $r['tickets']; $n += (float) $r['tickets'] * (int) $r['n'];
     }
-    return ['por_mes' => $porMes, 'dist' => $dist, 'gs' => $gs, 'tickets' => $tk, 'n' => $n, 'gs_promo' => $gsP, 'ns_promo' => $nsP];
+    return ['por_mes' => $porMes, 'dist' => $dist, 'gs' => $gs, 'tickets' => $tk, 'n' => $n, 'gs_promo' => $gsP, 'ns_promo' => $nsP,
+            'total' => $total];
 }
 
 /**

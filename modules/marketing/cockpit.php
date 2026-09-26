@@ -127,6 +127,13 @@ if ($libro) unset($_GET['vista'], $_GET['tipo'], $_GET['sin']);
 if ($tab === 'resumen' || $libro) {
     $res = cockpit_resumen_datos($f);
     ['tot_ty' => $totTY, 'tot_ly' => $totLY] = $res;
+} elseif ($tab === 'detalle') {
+    // El stacking agrupa todas las facturas del periodo: sus totales son los
+    // del periodo, sin otra pasada (antes, dos consultas más).
+    $stTY = cockpit_stacking($f, $TY);
+    $stLY = cockpit_stacking($f, $LY);
+    $totTY = cockpit_metricas($stTY['total']);
+    $totLY = cockpit_metricas($stLY['total']);
 } else {
     $totTY = cockpit_metricas(cockpit_totales($f, $TY));
     $totLY = cockpit_metricas(cockpit_totales($f, $LY));
@@ -220,8 +227,8 @@ if ($tab === 'resumen' || $libro) {
 
 if ($tab === 'detalle' || $libro) {
     $vacioSt = ['por_mes' => [], 'dist' => [], 'gs' => 0.0, 'tickets' => 0.0, 'n' => 0.0, 'gs_promo' => 0.0, 'ns_promo' => 0.0];
-    $stTY = $libro ? $vacioSt : cockpit_stacking($f, $TY);   // solo pantalla
-    $stLY = $libro ? $vacioSt : cockpit_stacking($f, $LY);
+    $stTY ??= $vacioSt;   // en pantalla ya vino con los totales; el libro no lo usa
+    $stLY ??= $vacioSt;
     $vista = get('vista') === 'menos' ? 'menos' : 'todas';
     $mec = cockpit_mecanismos($f, $TY, $vista === 'menos');
     foreach ($mec as $k => $r) $mec[$k] = cockpit_metricas($r, $gsTY) + $r;
