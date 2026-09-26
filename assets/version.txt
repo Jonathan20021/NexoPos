@@ -1,3 +1,3 @@
-build=27
-fecha=2026-09-17T18:39:50Z
-base=5d223a5
+build=29
+fecha=2026-09-25T23:22:52Z
+base=dfb7ac4

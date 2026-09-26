@@ -318,6 +318,62 @@ padrón» la recalcularía como una quincena corriente y la destruiría.
 
 ---
 
+## 5b. Cargar o actualizar el padrón desde un Excel del cliente
+
+Se hizo dos veces (12-08-2026 y 25-09-2026) y las dos dejaron lecciones que
+conviene no volver a aprender.
+
+### El dígito verificador arbitra, no la fuente
+
+En la carga de septiembre siete cédulas no coincidían entre el Excel y lo que ya
+estaba guardado. **Ninguna de las dos fuentes era fiable:** el Excel corregía tres
+que estaban mal en el padrón y a la vez traía cuatro mal tecleadas donde el padrón
+tenía la buena. Elegir «la más nueva» habría metido cuatro errores; elegir «la que
+ya estaba» habría dejado tres.
+
+La regla que funcionó es mecánica: **se queda la que pasa el verificador** (Luhn
+sobre los diez primeros dígitos). Las que no lo pasa ninguna van a cotejarse contra
+la cédula física — el verificador dice que está mal escrita, no cuál es la correcta.
+
+### Emparejar por cédula con tolerancia, nunca solo por nombre
+
+Un comparador que exigía el primer nombre idéntico dio por altas nuevas a dos
+personas que ya estaban: `ASHEELE`/`Ashlee` y `VANESSA`/`Vanesa`. Crear un duplicado
+de alguien que ya cobra es el peor final posible de una carga.
+
+El orden que funciona: cédula exacta → cédula con un dígito de diferencia y nombre
+parecido → nombre con similitud alta. Y cada registro del padrón se consume una sola
+vez, para que dos filas del Excel no se peguen al mismo empleado.
+
+### Lo que un Excel de RRHH suele NO traer
+
+Conviene decidirlo antes de escribir nada:
+
+- **Salario.** El de septiembre no lo traía. Las altas entraron en 0, que es
+  legítimo mientras se consigue el dato, pero **un activo con salario 0 entra en la
+  nómina y cobra cero sin que nada se queje**: el total del período cuadra igual.
+- **Fecha de salida de las bajas.** No se inventa. Una fecha inventada produce una
+  liquidación con pinta de exacta y equivocada; sin fecha, la pantalla al menos se
+  niega a calcular.
+- **La sucursal, con la precisión del sistema.** La columna «TIENDA» de septiembre
+  agrupaba bajo un solo rótulo a gente repartida en tres locales distintos.
+  **Si el Excel es menos preciso que lo guardado, no se aplica**: perdería
+  información en vez de ganarla.
+
+### Antes y después
+
+Respaldo de `empleados` y `puestos` **antes** de escribir (`respaldo_*.sql` está
+git-ignorado), la carga dentro de una transacción, y un modo de simulación que
+imprime exactamente lo que haría. Después, **Administración → Integridad de datos**,
+grupo «Nómina y personal», que vigila las cuatro cosas que una carga deja abiertas:
+activos con salario 0, inactivos sin fecha de salida, fechas de ingreso imposibles o
+repetidas en medio padrón, y cédulas que no pasan el verificador.
+
+> Los datos del padrón —cédulas, salarios y cuentas de gente real— **no entran a
+> git**. Viven en archivos cubiertos por `/database/*.local.sql` y `respaldo_*.sql`.
+
+---
+
 ## 6. Prestaciones laborales
 
 `includes/prestaciones.php` · `modules/rrhh/prestaciones.php` ·

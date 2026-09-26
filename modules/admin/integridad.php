@@ -637,6 +637,91 @@ $permisos[] = chk(
 
 $grupos[] = ['titulo' => 'Permisos', 'icono' => 'shield', 'color' => 'rose', 'checks' => $permisos];
 
+/* ============================================================
+ *  Nómina y personal
+ *
+ *  Los cuatro huecos que deja una carga de padrón. Ninguno revienta nada: los
+ *  cuatro producen una cifra con pinta de correcta y equivocada, que es peor.
+ *  Salieron de la carga del 25-09-2026 y se vigilan aquí para no depender de
+ *  que alguien recuerde una lista que se pasó por chat.
+ * ============================================================ */
+$personal = [];
+
+$personal[] = chk(
+    'Empleados activos con salario en cero',
+    'La nómina procesa a todo el que esté activo. Con salario 0 la persona entra en la corrida y '
+    . 'cobra cero, sin que nada avise: el total del período cuadra igual porque sumar cero no rompe nada.',
+    function () {
+        $r = qAll("SELECT codigo, nombre, apellido, fecha_ingreso FROM empleados
+                    WHERE estado = 'activo' AND salario = 0 ORDER BY codigo");
+        return [count($r), array_map(fn($e) => $e['codigo'] . ' — ' . trim($e['nombre'] . ' ' . $e['apellido'])
+            . ' (ingresó ' . fechaCorta($e['fecha_ingreso']) . ')', $r)];
+    },
+    'Ponle su sueldo en Recursos Humanos → Empleados, o déjalo inactivo mientras tanto.'
+);
+
+$personal[] = chk(
+    'Empleados inactivos sin fecha de salida',
+    'Sin fecha de salida no se puede liquidar a nadie: el preaviso, la cesantía, las vacaciones '
+    . 'proporcionales y la regalía se calculan todos contra ella.',
+    function () {
+        $r = qAll("SELECT codigo, nombre, apellido FROM empleados
+                    WHERE estado = 'inactivo' AND fecha_salida IS NULL ORDER BY codigo");
+        return [count($r), array_map(fn($e) => $e['codigo'] . ' — ' . trim($e['nombre'] . ' ' . $e['apellido']), $r)];
+    },
+    'Complétala en la ficha del empleado antes de calcularle prestaciones.'
+);
+
+$personal[] = chk(
+    'Fechas de ingreso imposibles o sospechosas',
+    'La fecha de ingreso gobierna antigüedad, vacaciones del art. 177, regalía proporcional y cesantía. '
+    . 'Una fecha futura da antigüedad negativa; una fecha repetida en medio padrón suele ser el día en que '
+    . 'se cargó la lista, no el día en que entró la gente.',
+    function () {
+        $futuras = qAll("SELECT codigo, nombre, apellido, fecha_ingreso FROM empleados
+                          WHERE estado = 'activo' AND fecha_ingreso > CURDATE() ORDER BY codigo");
+        $d = array_map(fn($e) => $e['codigo'] . ' — ' . trim($e['nombre'] . ' ' . $e['apellido'])
+            . ': ingresa el ' . fechaCorta($e['fecha_ingreso']) . ' (en el futuro)', $futuras);
+
+        // Una misma fecha compartida por muchos huele a marcador de carga.
+        $repes = qAll("SELECT fecha_ingreso, COUNT(*) n FROM empleados
+                        WHERE estado = 'activo' GROUP BY fecha_ingreso
+                       HAVING n >= 5 ORDER BY n DESC");
+        foreach ($repes as $r) {
+            $d[] = $r['n'] . ' empleados comparten el ' . fechaCorta($r['fecha_ingreso'])
+                 . ' — ¿es la fecha real o el día que se cargó el padrón?';
+        }
+        return [count($d), $d];
+    },
+    'Corrígelas en la ficha de cada empleado. Mientras estén mal, toda prestación calculada sale mal.'
+);
+
+$personal[] = chk(
+    'Cédulas que no pasan el dígito verificador',
+    'La cédula viaja a la TSS y a la DGII. El verificador no prueba que sea de esa persona, pero sí que '
+    . 'está mal escrita: un dígito cambiado al teclear no lo pasa.',
+    function () {
+        $malas = [];
+        foreach (qAll("SELECT codigo, nombre, apellido, cedula FROM empleados WHERE estado = 'activo'") as $e) {
+            $d = preg_replace('/\D/', '', (string) $e['cedula']);
+            $motivo = null;
+            if (strlen($d) !== 11) {
+                $motivo = strlen($d) . ' dígitos en vez de 11';
+            } else {
+                $s = 0;
+                for ($i = 0; $i < 10; $i++) { $n = (int) $d[$i] * (($i % 2 === 0) ? 1 : 2); $s += $n > 9 ? $n - 9 : $n; }
+                if (((10 - ($s % 10)) % 10) !== (int) $d[10]) $motivo = 'dígito verificador incorrecto';
+            }
+            if ($motivo) $malas[] = $e['codigo'] . ' — ' . trim($e['nombre'] . ' ' . $e['apellido'])
+                . ' · ' . $e['cedula'] . ' (' . $motivo . ')';
+        }
+        return [count($malas), $malas];
+    },
+    'Cotéjala contra la cédula física. No la "arregles" a ojo: el verificador dice que está mal, no cuál es la buena.'
+);
+
+$grupos[] = ['titulo' => 'Nómina y personal', 'icono' => 'id', 'color' => 'amber', 'checks' => $personal];
+
 /* ---------- Resumen ---------- */
 $totalChecks = 0; $conProblema = 0; $conError = 0;
 foreach ($grupos as $g) {
