@@ -114,6 +114,38 @@ $pr = kpi_proyeccion($dias([10, 10, 0, 0], '2026-11-01'), [['ns' => 5], ['ns' =>
 comprueba('año anterior sin venta en lo que falta: promedio diario', [$pr['proyeccion'], $pr['metodo']], [40.0, 'promedio diario']);
 comprueba('fuera de las fechas no proyecta', kpi_proyeccion($ty, $ly, '2026-12-01'), null);
 
+titulo('Simulador de promociones');
+// Un producto: lista 100, se cobró 100, costo 60, 28 unidades en 28 días.
+$base = [['codigo' => 'A', 'nombre' => 'A', 'lista' => 100, 'qty' => 28, 'ns' => 2800, 'costo' => 1680]];
+$s = cockpit_sim_calcular($base, ['tipo' => 'porcentaje', 'valor' => 20, 'dias' => 10, 'aumento' => 0], 28);
+comprueba('margen sin promoción: 10 días × 1 ud × 40', $s['tot']['m0'], 400.0);
+comprueba('margen con 20%: 10 × 20', $s['tot']['m1'], 200.0);
+comprueba('equilibrio: 40 ÷ 20 − 1 = +100%', $s['equilibrio'], 100.0);
+comprueba('profundidad real 20%', $s['profundidad'], 20.0);
+$s = cockpit_sim_calcular($base, ['tipo' => 'porcentaje', 'valor' => 20, 'dias' => 10, 'aumento' => 100], 28);
+comprueba('en el equilibrio el margen es el mismo', $s['tot']['m1'], $s['tot']['m0']);
+comprueba('el descuento regalado crece con las unidades', $s['tot']['regalo'], 400.0);
+$s = cockpit_sim_calcular($base, ['tipo' => 'monto', 'valor' => 50, 'dias' => 10, 'aumento' => 0], 28);
+comprueba('bajo el costo: no hay equilibrio', [$s['equilibrio'], $s['pierde_por_unidad']], [null, true]);
+// Ya se vendía a 70: un 20% sobre lista (80) no lo sube.
+$s = cockpit_sim_calcular([['lista' => 100, 'qty' => 28, 'ns' => 1960, 'costo' => 1680] + $base[0]], ['tipo' => 'porcentaje', 'valor' => 20, 'dias' => 10], 28);
+comprueba('nunca sube lo que ya se cobraba más barato', [$s['productos'][0]['p1'], $s['tot']['regalo']], [70.0, 0.0]);
+// En US$ a 50: la venta ya llega convertida (100), la lista viene en pesos (5.000).
+$s = cockpit_sim_calcular([['lista' => 5000] + $base[0]], ['tipo' => 'monto', 'valor' => 5, 'dias' => 10], 28, 50.0);
+comprueba('en otra moneda, el monto se descuenta en esa moneda', $s['productos'][0]['p1'], 95.0);
+
+titulo('Efectividad');
+comprueba('sin base no hay veredicto', cockpit_veredicto(null, null)[0], 'sin_base');
+comprueba('vendió más y ganó margen', cockpit_veredicto(40.0, 10.0)[0], 'rentable');
+comprueba('vendió más pero perdió margen', cockpit_veredicto(40.0, -10.0)[0], 'cara');
+comprueba('no movió la venta', cockpit_veredicto(2.0, -10.0)[0], 'sin_efecto');
+
+titulo('Vistas guardadas');
+[$d, $h] = cockpit_presets()['mes_pasado'][1];
+comprueba('un periodo rápido se guarda como periodo', cockpit_vista_query(['tab' => 'sellout', 'ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => 'x', 'ly_manual' => '0']), 'tab=sellout&periodo=mes_pasado');
+comprueba('fechas a mano se guardan tal cual', cockpit_vista_query(['ty_desde' => '2025-11-20', 'ty_hasta' => '2025-12-01']), 'ty_desde=2025-11-20&ty_hasta=2025-12-01');
+comprueba('solo claves conocidas', cockpit_vista_query(['tab' => 'resumen', 'export' => 'excel', 'x' => '<script>', 'a' => ['b']]), 'tab=resumen');
+
 titulo('Catálogos');
 comprueba('todo motivo de caja tiene su tipo en el cockpit', array_diff(array_keys(cockpit_motivos_caja()), array_keys(cockpit_tipos())), []);
 comprueba('toda familia de promoción tiene su tipo', array_diff(array_keys(cockpit_tipos_promocion()), array_keys(cockpit_tipos())), []);

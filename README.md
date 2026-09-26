@@ -53,7 +53,8 @@ fiscales **NCF (B01/B02)** y **nómina dominicana** (TSS: AFP/SFS + ISR por esca
 - **Promotion Cockpit y KPIs de campañas** — venta bruta, descuento, venta neta y margen por tipo
   de promoción, este año contra el anterior, con los efectos sobre el margen (volumen, tasa,
   mezcla), stacking, promociones menos activadas, productos héroe y sell-out por segmento y
-  línea. Cada campaña (Holiday, Black Friday…) con su venta por canal y por día, SKUs foco,
+  línea; efectividad de cada promoción (aumento, margen incremental, retorno), simulador con
+  punto de equilibrio y vistas guardadas. Cada campaña (Holiday, Black Friday…) con su venta por canal y por día, SKUs foco,
   inversión, MER, CPA y el Excel en el formato de la marca.
   Ver [`docs/PROMOTION-COCKPIT.md`](docs/PROMOTION-COCKPIT.md).
 - **Tiendas (marcas comerciales)** — la empresa distribuye varias marcas y cada factura sale con

@@ -18,6 +18,7 @@
 --    kpi_metricas_def      KPIs capturados a mano, con su «rol» (tráfico,
 --                          sesiones web) para calcular conversiones
 --    cockpit_parametros    clave → valor
+--    cockpit_vistas        vistas guardadas (pestaña + filtros) por usuario
 --
 --  Requiere la P39. Idempotente. Reversión al final.
 -- ---------------------------------------------------------------------------
@@ -157,6 +158,19 @@ INSERT IGNORE INTO cockpit_parametros (clave, valor) VALUES
   -- Una opción por línea (CHAR(10) y no '\n': vale con o sin NO_BACKSLASH_ESCAPES).
   ('canales_captacion',  CONCAT_WS(CHAR(10), 'Mostrador', 'Instagram', 'WhatsApp', 'Facebook', 'Referido', 'Otro'));
 
+-- Vistas guardadas: un nombre para una combinación de pestaña y filtros (lo
+-- que va en la URL). Compartida = la ven todos los que entran al cockpit.
+CREATE TABLE IF NOT EXISTS cockpit_vistas (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id  INT UNSIGNED NOT NULL,
+  nombre      VARCHAR(80)  NOT NULL,
+  query       VARCHAR(1000) NOT NULL,
+  compartida  TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_cv_usuario (usuario_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Permiso para cambiarlo todo (también en permission_catalog()).
 INSERT INTO permisos (clave, modulo, grupo, descripcion)
 SELECT * FROM (SELECT 'cockpit.configurar' c, 'cockpit' m, 'Marketing' g, 'Promotion Cockpit — Configurar catálogos, canales y parámetros' d) t
@@ -178,8 +192,9 @@ UNION ALL SELECT 'cockpit_canales', COUNT(*) FROM cockpit_canales
 UNION ALL SELECT 'cockpit_canal_reglas', COUNT(*) FROM cockpit_canal_reglas
 UNION ALL SELECT 'kpi_rubros', COUNT(*) FROM kpi_rubros
 UNION ALL SELECT 'kpi_metricas_def', COUNT(*) FROM kpi_metricas_def
-UNION ALL SELECT 'cockpit_parametros', COUNT(*) FROM cockpit_parametros;
+UNION ALL SELECT 'cockpit_parametros', COUNT(*) FROM cockpit_parametros
+UNION ALL SELECT 'cockpit_vistas', COUNT(*) FROM cockpit_vistas;
 
 -- REVERSIÓN:
---   DROP TABLE IF EXISTS cockpit_parametros, kpi_metricas_def, kpi_rubros, cockpit_canal_reglas, cockpit_canales, cockpit_tipos;
+--   DROP TABLE IF EXISTS cockpit_vistas, cockpit_parametros, kpi_metricas_def, kpi_rubros, cockpit_canal_reglas, cockpit_canales, cockpit_tipos;
 --   DELETE FROM permisos WHERE clave = 'cockpit.configurar';

@@ -125,7 +125,7 @@ Los cuatro suman **exactamente** la variación del margen del tipo, y las filas 
 WhatsApp, Facebook, TikTok; Mayoreo = facturas con crédito fiscal o gubernamentales;
 Retail = el resto. Si la marca lo define distinto, se cambia ahí.
 
-## Las cuatro pestañas del cockpit
+## Las pestañas del cockpit
 
 1. **Resumen** — venta bruta/neta y margen con año anterior; tasa de descuento y % de venta en
    promoción mes a mes; composición (descuento directo vs. regalos); tabla por tipo con los
@@ -137,8 +137,51 @@ Retail = el resto. Si la marca lo define distinto, se cambia ahí.
    **nadie usó**.
 3. **Producto** — héroes contra el resto; árbol tipo → promoción → producto.
 4. **Sell-out** — participación y crecimiento por sucursal, canal, tienda, segmento y línea.
+5. **Efectividad** — ¿funcionó cada promoción? (ver abajo).
+6. **Simulador** — ¿qué pasaría con una promoción que aún no existe? (ver abajo).
 
 Cada pestaña exporta su tabla a Excel y PDF.
+
+## Efectividad de cada promoción
+
+Para cada promoción usada en el periodo, sus productos en los días de vigencia contra el
+mismo número de días **justo antes** (hasta 28): unidades por día antes → durante, aumento %,
+**margen incremental** (margen por día durante − antes, por los días) y **retorno** (margen
+incremental ÷ descuento regalado).
+
+- Veredicto: *rentable* (ganó margen), *cara* (vendió más de 5% más pero perdió margen),
+  *sin efecto* (no movió la venta) o *sin base*.
+- Sin base cuando la promoción dura más de 90 días (el «antes» sería otra temporada) o cuando
+  no hay ventas antes de su inicio. Se dice por qué en la tabla.
+- Es una lectura, no un experimento: la base puede traer otra temporada u otra promoción.
+- Además: quién compra en promoción (nuevos, recurrentes, sin identificar) y los clientes
+  **dependientes** (2+ facturas y 80%+ de su venta con descuento), con enlace a su ficha.
+
+## Simulador
+
+Describe una promoción (a qué aplica: todo, categoría, marca, segmento, línea o un SKU;
+porcentaje o monto fijo; días) y el cockpit calcula venta neta, margen y descuento regalado
+con y sin ella, y el **punto de equilibrio**: cuánto deben subir las unidades para ganar el
+mismo margen (margen de hoy ÷ margen con promoción a igual volumen − 1). Si el precio queda
+bajo el costo, no hay equilibrio y lo dice.
+
+- **Base**: lo vendido en los últimos N días (28 por defecto) con los filtros de arriba, al
+  precio y costo reales. El precio con promoción se aplica sobre el precio de lista y nunca
+  sube lo que ya se cobraba más barato.
+- **Aumento esperado**: si no se escribe, se propone la mediana de las promociones de
+  profundidad parecida (±5 pts) medidas en Efectividad durante el último año.
+- El control deslizante recalcula al instante tarjetas, veredicto y la marca en el gráfico
+  (margen según el aumento de unidades, contra la línea sin promoción).
+- No incluye tráfico a otros productos ni la venta que solo se adelanta: orden de magnitud,
+  no presupuesto. La cuenta vive en `cockpit_sim_calcular()` y la cubren las pruebas.
+
+## Vistas guardadas
+
+Botón **Vistas** en la cabecera: guarda la pestaña y los filtros actuales con un nombre
+(tabla `cockpit_vistas`, P40), para uno o compartida con el equipo. Si las fechas son un
+periodo rápido (este mes, mes pasado, año a la fecha…) se guarda el **periodo** y no las
+fechas (`?periodo=mes_pasado`), así la vista siempre abre actualizada. Solo el autor puede
+borrar la suya; con el mismo nombre, se reemplaza.
 
 ## KPIs de campañas (includes/kpi_campanas.php)
 

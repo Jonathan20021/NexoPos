@@ -1283,6 +1283,20 @@ INSERT IGNORE INTO cockpit_parametros (clave, valor) VALUES
   -- Una opción por línea (CHAR(10) y no '\n': vale con o sin NO_BACKSLASH_ESCAPES).
   ('canales_captacion',  CONCAT_WS(CHAR(10), 'Mostrador', 'Instagram', 'WhatsApp', 'Facebook', 'Referido', 'Otro'));
 
+DROP TABLE IF EXISTS cockpit_vistas;
+-- Vistas guardadas: un nombre para una combinación de pestaña y filtros (lo
+-- que va en la URL). Compartida = la ven todos los que entran al cockpit.
+CREATE TABLE cockpit_vistas (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usuario_id  INT UNSIGNED NOT NULL,
+  nombre      VARCHAR(80)  NOT NULL,
+  query       VARCHAR(1000) NOT NULL,
+  compartida  TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_cv_usuario (usuario_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------------------
 -- KPIs de campañas (Holiday, Black Friday…). Ver docs/PROMOTION-COCKPIT.md
 -- ---------------------------------------------------------------------------

@@ -367,7 +367,10 @@ function cockpit_filtros(): array
         $v = trim((string) get($k));
         return ($v !== '' && ($t = strtotime($v))) ? date('Y-m-d', $t) : $def;
     };
-    [$defD, $defH] = cockpit_presets()[(string) cockpit_param('periodo_defecto', 'ytd')][1] ?? cockpit_presets()['ytd'][1];
+    // ?periodo=mes_pasado se mueve con el calendario (lo usan las vistas guardadas).
+    $periodo = (string) get('periodo');
+    $periodo = isset(cockpit_presets()[$periodo]) ? $periodo : (string) cockpit_param('periodo_defecto', 'ytd');
+    [$defD, $defH] = cockpit_presets()[$periodo][1] ?? cockpit_presets()['ytd'][1];
     $tyD = $fecha('ty_desde', $defD);
     $tyH = $fecha('ty_hasta', $defH);
     if ($tyD > $tyH) [$tyD, $tyH] = [$tyH, $tyD];
@@ -863,6 +866,329 @@ function cockpit_promos_sin_uso(string $desde, string $hasta): array
           ORDER BY p.fecha_inicio",
         [$hasta, $desde, $desde . ' 00:00:00', $hasta . ' 23:59:59']
     );
+}
+
+/* ============================================================
+ *  Efectividad de cada promoción
+ * ============================================================ */
+
+/**
+ * ¿La promoción hizo vender más, y eso pagó el descuento?
+ *
+ * Para cada promoción vigente en el rango se toman los productos que se
+ * vendieron CON ella y se comparan, por día, dos ventanas:
+ *
+ *   durante   sus días de vigencia dentro del rango (toda la venta de esos
+ *             productos, con o sin la promo: si otra promo ganó en una línea,
+ *             sigue siendo venta del periodo);
+ *   base      el mismo número de días justo antes de que empezara (máximo
+ *             $maxBase), sin tocar el rango.
+ *
+ *   aumento             unidades/día durante ÷ unidades/día base − 1
+ *   margen incremental  (margen/día durante − margen/día base) × días
+ *   costo del descuento venta bruta − venta neta de las líneas con la promo
+ *   retorno             margen incremental ÷ costo del descuento
+ *
+ * Es una lectura, no un experimento: la base puede tener otra promoción o
+ * otra temporada. Sin venta en la base no hay comparación y se dice.
+ *
+ * @return array<int,array> una fila por promoción, de mayor a menor costo
+ */
+function cockpit_efectividad(array $f, array $rango, int $maxBase = 28, int $tope = 40): array
+{
+    $x = cockpit_expr();
+    [$w, $p] = cockpit_where($f, $rango);
+    // Lo vendido CON cada promoción: productos y costo del descuento.
+    $con = qAll(
+        "SELECT vd.promocion_id k_pro, vd.producto_id k_prod, SUM({$x['gs']}) gs, SUM({$x['ns']}) ns, SUM(vd.cantidad) qty
+           " . cockpit_from() . " WHERE $w AND vd.promocion_id IS NOT NULL AND vd.producto_id IS NOT NULL
+          GROUP BY k_pro, k_prod",
+        $p
+    );
+    $porPromo = [];
+    foreach ($con as $r) {
+        $k = (int) $r['k_pro'];
+        $porPromo[$k]['prods'][] = (int) $r['k_prod'];
+        $porPromo[$k]['costo_desc'] = ($porPromo[$k]['costo_desc'] ?? 0) + (float) $r['gs'] - (float) $r['ns'];
+        $porPromo[$k]['gs_promo'] = ($porPromo[$k]['gs_promo'] ?? 0) + (float) $r['gs'];
+    }
+    if (!$porPromo) return [];
+    uasort($porPromo, fn($a, $b) => $b['costo_desc'] <=> $a['costo_desc']);
+    $porPromo = array_slice($porPromo, 0, $tope, true);
+    $promos = [];
+    foreach (qAll("SELECT id, nombre, codigo, tipo_descuento, tipo, valor, fecha_inicio, fecha_fin FROM promociones WHERE id IN ("
+                  . implode(',', array_map('intval', array_keys($porPromo))) . ")") as $pr) {
+        $promos[(int) $pr['id']] = $pr;
+    }
+
+    $suma = function (array $prods, string $ini, string $fin) use ($f, $x) {
+        [$w, $p] = cockpit_where($f, [$ini, $fin]);
+        $r = qOne("SELECT COALESCE(SUM(vd.cantidad),0) qty, COALESCE(SUM({$x['ns']}),0) ns, COALESCE(SUM({$x['costo']}),0) costo "
+                  . cockpit_from() . " WHERE $w AND vd.es_muestra = 0 AND vd.producto_id IN (" . implode(',', $prods) . ")", $p) ?: [];
+        return ['qty' => (float) ($r['qty'] ?? 0), 'ns' => (float) ($r['ns'] ?? 0), 'margen' => (float) ($r['ns'] ?? 0) - (float) ($r['costo'] ?? 0)];
+    };
+
+    // Antes del primer día con ventas no hay «antes» que valga.
+    $primeraVenta = (string) (qVal("SELECT MIN(fecha) FROM ventas WHERE " . rep_estados_venta('ventas')) ?? '');
+    $out = [];
+    foreach ($porPromo as $id => $d) {
+        $pr = $promos[$id] ?? null;
+        if (!$pr) continue;
+        $ini = max($pr['fecha_inicio'], $rango[0]);
+        $fin = min($pr['fecha_fin'], $rango[1], date('Y-m-d'));
+        if ($ini > $fin) continue;
+        $dias = (int) floor((strtotime($fin) - strtotime($ini)) / 86400) + 1;
+        $diasBase = min($dias, $maxBase);
+        $bFin = date('Y-m-d', strtotime($pr['fecha_inicio'] . ' -1 day'));
+        $bIni = date('Y-m-d', strtotime($bFin . ' -' . ($diasBase - 1) . ' days'));
+        $prods = array_values(array_unique($d['prods']));
+        $dur = $suma($prods, $ini, $fin);
+        // Una promoción de meses no tiene un «antes» comparable: es el precio
+        // normal de ese periodo. Tampoco si la base cae antes de que hubiera ventas.
+        $larga = (strtotime($pr['fecha_fin']) - strtotime($pr['fecha_inicio'])) / 86400 > 90;
+        $sinHistoria = $primeraVenta === '' || $bIni . ' 00:00:00' < substr($primeraVenta, 0, 10) . ' 00:00:00';
+        $base = ($larga || $sinHistoria) ? ['qty' => 0.0, 'ns' => 0.0, 'margen' => 0.0] : $suma($prods, $bIni, $bFin);
+        $hayBase = $base['qty'] > 0;
+        $motivo = $larga ? 'Promoción de más de 90 días: no hay un «antes» comparable'
+                : ($sinHistoria ? 'Empezó antes de que el sistema tuviera ventas' : ($hayBase ? '' : 'Esos productos no vendieron en los días previos'));
+        $udD = $dur['qty'] / $dias; $udB = $hayBase ? $base['qty'] / $diasBase : null;
+        $mgD = $dur['margen'] / $dias; $mgB = $hayBase ? $base['margen'] / $diasBase : null;
+        $aumento = $hayBase && $udB > 0 ? ($udD / $udB - 1) * 100 : null;
+        $incr = $hayBase ? ($mgD - $mgB) * $dias : null;
+        $out[] = [
+            'id' => $id, 'nombre' => ($pr['codigo'] ? $pr['codigo'] . ' - ' : '') . $pr['nombre'],
+            'tipo' => $pr['tipo_descuento'] ?: 'promocion',
+            'profundidad' => $pr['tipo'] === 'porcentaje' ? (float) $pr['valor'] : null,
+            'ventana' => [$ini, $fin], 'base' => [$bIni, $bFin], 'dias' => $dias, 'dias_base' => $diasBase,
+            'productos' => count($prods), 'costo_desc' => $d['costo_desc'], 'gs_promo' => $d['gs_promo'],
+            'ud_dia' => $udD, 'ud_dia_base' => $udB, 'ns_dia' => $dur['ns'] / $dias,
+            'margen_dia' => $mgD, 'margen_dia_base' => $mgB,
+            'aumento' => $aumento, 'margen_incremental' => $incr,
+            'retorno' => $incr !== null && $d['costo_desc'] > 0 ? $incr / $d['costo_desc'] : null,
+            'veredicto' => cockpit_veredicto($aumento, $incr), 'motivo' => $motivo, 'larga' => $larga,
+        ];
+    }
+    return $out;
+}
+
+/** Lectura corta del resultado de una promoción. [clave, etiqueta, tono] */
+function cockpit_veredicto(?float $aumento, ?float $incremental): array
+{
+    if ($aumento === null) return ['sin_base', 'Sin base para comparar', 'slate'];
+    if ($incremental > 0) return ['rentable', 'Vendió más y ganó margen', 'emerald'];
+    if ($aumento > 5) return ['cara', 'Vendió más, pero el descuento costó más de lo que trajo', 'amber'];
+    return ['sin_efecto', 'No movió la venta: el descuento se regaló', 'rose'];
+}
+
+/**
+ * Clientes y promociones: de quién viene la venta con descuento.
+ *
+ *   nuevos        su primera compra de la historia cae en el rango
+ *   recurrentes   ya habían comprado antes
+ *   anónimos      consumidor final sin identificar
+ *   dependientes  2+ facturas en el rango y 80%+ de su venta bruta con descuento
+ *
+ * @return array{grupos:array<string,array{gs:float,gs_promo:float,clientes:int}>,dependientes:array,n_dependientes:int,gs_dependientes:float}
+ */
+function cockpit_clientes_promo(array $f, array $rango): array
+{
+    $x = cockpit_expr();
+    [$w, $p] = cockpit_where($f, $rango);
+    $rows = qAll(
+        "SELECT v.cliente_id k_cli, SUM({$x['gs']}) gs,
+                SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['gs']} ELSE 0 END) gsp, COUNT(DISTINCT v.id) t
+           " . cockpit_from() . " WHERE $w GROUP BY k_cli",
+        $p
+    );
+    $ids = array_values(array_filter(array_map(fn($r) => (int) $r['k_cli'], $rows), fn($id) => $id > 1));
+    $primera = [];
+    if ($ids) {
+        foreach (array_chunk($ids, 1000) as $lote) {
+            foreach (qAll("SELECT cliente_id, MIN(fecha) f FROM ventas WHERE " . rep_estados_venta('ventas') . "
+                            AND cliente_id IN (" . implode(',', $lote) . ") GROUP BY cliente_id") as $r) {
+                $primera[(int) $r['cliente_id']] = $r['f'];
+            }
+        }
+    }
+    $g = ['nuevos' => ['gs' => 0.0, 'gs_promo' => 0.0, 'clientes' => 0], 'recurrentes' => ['gs' => 0.0, 'gs_promo' => 0.0, 'clientes' => 0],
+          'anonimos' => ['gs' => 0.0, 'gs_promo' => 0.0, 'clientes' => 0]];
+    $dep = [];
+    foreach ($rows as $r) {
+        $id = (int) $r['k_cli'];
+        $grupo = $id <= 1 ? 'anonimos' : (($primera[$id] ?? '') >= $rango[0] . ' 00:00:00' ? 'nuevos' : 'recurrentes');
+        $g[$grupo]['gs'] += (float) $r['gs'];
+        $g[$grupo]['gs_promo'] += (float) $r['gsp'];
+        $g[$grupo]['clientes'] += $id > 1 ? 1 : 0;
+        if ($id > 1 && (int) $r['t'] >= 2 && (float) $r['gs'] > 0 && (float) $r['gsp'] / (float) $r['gs'] >= 0.8) {
+            $dep[$id] = ['gs' => (float) $r['gs'], 'pct' => (float) $r['gsp'] / (float) $r['gs'] * 100, 'facturas' => (int) $r['t']];
+        }
+    }
+    uasort($dep, fn($a, $b) => $b['gs'] <=> $a['gs']);
+    $top = array_slice($dep, 0, 10, true);
+    if ($top) {
+        $nombres = array_column(qAll("SELECT id, nombre FROM clientes WHERE id IN (" . implode(',', array_keys($top)) . ")"), 'nombre', 'id');
+        foreach ($top as $id => &$t) $t['nombre'] = $nombres[$id] ?? ('#' . $id);
+        unset($t);
+    }
+    return ['grupos' => $g, 'dependientes' => $top, 'n_dependientes' => count($dep), 'gs_dependientes' => array_sum(array_column($dep, 'gs'))];
+}
+
+/* ============================================================
+ *  Simulador «¿qué pasa si…?»
+ * ============================================================ */
+
+/**
+ * Qué costaría una promoción antes de lanzarla.
+ *
+ * Toma la venta real de los productos del alcance en los últimos $cfg['dias_base']
+ * días (con los filtros del cockpit: sucursal, canal…) y la proyecta a
+ * $cfg['dias'] días con y sin la promoción:
+ *
+ *   precio con promo   el de catálogo menos el descuento; si el precio al que ya
+ *                      se vende es más bajo (otra promo), se queda ése: gana el
+ *                      menor precio, igual que en el POS.
+ *   sin promo          unidades/día × días al precio y costo actuales
+ *   con promo          lo mismo × (1 + aumento esperado) al precio nuevo
+ *   punto de equilibrio cuánto más hay que vender para que el margen con promo
+ *                      iguale al de sin promo.
+ *
+ * @param array $cfg alcance, objetivo, tipo (porcentaje|monto), valor, dias, aumento (%), dias_base
+ */
+function cockpit_simular(array $f, array $cfg): array
+{
+    $x = cockpit_expr();
+    $diasBase = max(7, (int) ($cfg['dias_base'] ?? 28));
+    $hasta = date('Y-m-d', strtotime('-1 day'));
+    $desde = date('Y-m-d', strtotime($hasta . ' -' . ($diasBase - 1) . ' days'));
+    [$w, $p] = cockpit_where($f, [$desde, $hasta]);
+    [$wa, $pa] = cockpit_sim_alcance((string) ($cfg['alcance'] ?? 'todos'), $cfg['objetivo'] ?? null);
+    $rows = qAll(
+        "SELECT vd.producto_id k_prod, MAX(pr.codigo) codigo, MAX(pr.nombre) nombre, MAX(pr.precio_venta) lista,
+                SUM(vd.cantidad) qty, SUM({$x['ns']}) ns, SUM({$x['costo']}) costo
+           " . cockpit_from() . " WHERE $w AND $wa AND vd.es_muestra = 0 AND vd.producto_id IS NOT NULL
+          GROUP BY k_prod HAVING SUM(vd.cantidad) > 0 ORDER BY SUM({$x['ns']}) DESC",
+        array_merge($p, $pa)
+    );
+    return ['base' => [$desde, $hasta, $diasBase]] + cockpit_sim_calcular($rows, $cfg, $diasBase, cockpit_divisor());
+}
+
+/**
+ * La cuenta del simulador, sin base de datos (la cubren las pruebas).
+ * $rows: por producto, qty, ns y costo del periodo base, y su precio de lista.
+ */
+function cockpit_sim_calcular(array $rows, array $cfg, int $diasBase, float $d = 1.0): array
+{
+    $dias = max(1, (int) ($cfg['dias'] ?? 14));
+    $a = (float) ($cfg['aumento'] ?? 0) / 100;
+    $valor = max(0.0, (float) ($cfg['valor'] ?? 0));
+    $tot = ['u0' => 0.0, 'ns0' => 0.0, 'm0' => 0.0, 'u1' => 0.0, 'ns1' => 0.0, 'm1' => 0.0, 'regalo' => 0.0, 'mu0' => 0.0, 'mu1' => 0.0, 'nsb' => 0.0];
+    $prods = [];
+    foreach ($rows as $r) {
+        $q = (float) $r['qty'];
+        $p0 = (float) $r['ns'] / $q;
+        $c = (float) $r['costo'] / $q;
+        // Sin precio de lista en la ficha, se parte de lo que se cobró.
+        $lista = (float) $r['lista'] > 0 ? (float) $r['lista'] / $d : $p0;
+        // El monto se escribe en la moneda en que se está mirando.
+        $p1 = ($cfg['tipo'] ?? 'porcentaje') === 'monto' ? max(0.0, $lista - $valor) : $lista * (1 - min(100.0, $valor) / 100);
+        $p1 = min($p0, $p1);                      // gana el menor precio
+        $u0 = $q / $diasBase * $dias;
+        $u1 = $u0 * (1 + $a);
+        $tot['u0'] += $u0; $tot['ns0'] += $u0 * $p0; $tot['m0'] += $u0 * ($p0 - $c);
+        $tot['u1'] += $u1; $tot['ns1'] += $u1 * $p1; $tot['m1'] += $u1 * ($p1 - $c);
+        $tot['regalo'] += $u1 * ($p0 - $p1);
+        $tot['mu0'] += $u0 * ($p0 - $c); $tot['mu1'] += $u0 * ($p1 - $c);   // margen a volumen igual
+        $tot['nsb'] += $u0 * $p1;
+        $prods[] = ['codigo' => $r['codigo'], 'nombre' => $r['nombre'], 'u_dia' => $q / $diasBase, 'lista' => $lista, 'p0' => $p0, 'p1' => $p1, 'c' => $c,
+                    'mu0' => $p0 - $c, 'mu1' => $p1 - $c];
+    }
+    // Aumento que deja el margen igual: margen sin promo ÷ margen con promo a volumen igual − 1.
+    $equilibrio = $tot['mu1'] > 0 ? ($tot['mu0'] / $tot['mu1'] - 1) * 100 : null;
+    $curva = [];
+    for ($k = 0; $k <= 200; $k += 10) $curva[$k] = $tot['mu1'] * (1 + $k / 100);
+    return ['dias' => $dias, 'productos' => $prods, 'tot' => $tot,
+            'equilibrio' => $equilibrio, 'pierde_por_unidad' => $rows && $tot['mu1'] <= 0,
+            // Rebaja real sobre lo que se cobraba (con los productos que ya tenían otro precio).
+            'profundidad' => $tot['ns0'] > 0 ? (1 - $tot['nsb'] / $tot['ns0']) * 100 : null, 'curva' => $curva, 'margen_sin' => $tot['m0']];
+}
+
+/** WHERE del alcance de una promoción simulada. */
+function cockpit_sim_alcance(string $alcance, $objetivo): array
+{
+    switch ($alcance) {
+        case 'categoria': return ['pr.categoria_id = ?', [(int) $objetivo]];
+        case 'marca':     return ['pr.marca_id = ?', [(int) $objetivo]];
+        case 'producto':  return ['pr.id = ?', [(int) $objetivo]];
+        case 'segmento':  return ["COALESCE(NULLIF(pr.segmento,''), (SELECT c.nombre FROM categorias c WHERE c.id = pr.categoria_id), 'Sin segmento') = ?", [(string) $objetivo]];
+        case 'linea':     return ["COALESCE(NULLIF(pr.linea,''), 'Sin línea') = ?", [(string) $objetivo]];
+    }
+    return ['1=1', []];
+}
+
+/**
+ * Aumento que dieron las promociones parecidas (±5 puntos de profundidad) en
+ * el último año, para proponerlo en el simulador. null si no hay con qué.
+ */
+function cockpit_aumento_historico(array $f, ?float $profundidad): ?array
+{
+    $e = array_filter(cockpit_efectividad($f, [date('Y-m-d', strtotime('-365 days')), date('Y-m-d')]), fn($r) => $r['aumento'] !== null);
+    if ($profundidad !== null) {
+        $cerca = array_filter($e, fn($r) => $r['profundidad'] !== null && abs($r['profundidad'] - $profundidad) <= 5);
+        if ($cerca) $e = $cerca;
+    }
+    if (!$e) return null;
+    $v = array_column($e, 'aumento');
+    sort($v);
+    $mediana = $v[intdiv(count($v), 2)];
+    return ['aumento' => $mediana, 'n' => count($v), 'parecidas' => isset($cerca) && $cerca];
+}
+
+/* ============================================================
+ *  Vistas guardadas
+ * ============================================================ */
+
+function cockpit_vistas_disponible(): bool
+{
+    static $ok = null;
+    return $ok ??= (bool) qVal("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cockpit_vistas'");
+}
+
+/**
+ * La parte de la URL que se guarda: solo pestaña y filtros conocidos. Si las
+ * fechas son un periodo rápido, se guarda el periodo y no las fechas, para que
+ * «Mes pasado» siga siendo el mes pasado el mes que viene.
+ */
+function cockpit_vista_query(array $get): string
+{
+    $claves = ['tab', 'sucursal_id', 'tienda_id', 'canal', 'marca_id', 'segmento', 'linea', 'ty_desde', 'ty_hasta', 'ly_desde', 'ly_hasta',
+               'ly_manual', 'ly_modo', 'moneda', 'samestore', 'tipo', 'vista', 'periodo',
+               's_alcance', 's_obj', 's_tipo', 's_valor', 's_dias', 's_base', 's_aum'];
+    $q = [];
+    foreach ($claves as $k) {
+        if (isset($get[$k]) && is_scalar($get[$k]) && (string) $get[$k] !== '') $q[$k] = mb_substr((string) $get[$k], 0, 80);
+    }
+    $manual = ($q['ly_manual'] ?? '') === '1';
+    if (isset($q['ty_desde'], $q['ty_hasta']) && !$manual) {
+        foreach (cockpit_presets() as $clave => [, $rango]) {
+            if ($rango === [$q['ty_desde'], $q['ty_hasta']]) {
+                unset($q['ty_desde'], $q['ty_hasta'], $q['ly_desde'], $q['ly_hasta'], $q['ly_manual']);
+                $q['periodo'] = $clave;
+                break;
+            }
+        }
+    }
+    if (!$manual) unset($q['ly_desde'], $q['ly_hasta'], $q['ly_manual']);
+    return http_build_query($q);
+}
+
+/** Las vistas del usuario y las compartidas por los demás. */
+function cockpit_vistas(int $usuarioId): array
+{
+    if (!cockpit_vistas_disponible()) return [];
+    return qAll("SELECT v.id, v.nombre, v.query, v.compartida, v.usuario_id, u.nombre autor
+                   FROM cockpit_vistas v LEFT JOIN usuarios u ON u.id = v.usuario_id
+                  WHERE v.usuario_id = ? OR v.compartida = 1
+                  ORDER BY v.usuario_id <> ?, v.nombre", [$usuarioId, $usuarioId]);
 }
 
 /* ============================================================

@@ -2,13 +2,15 @@
 /**
  * Promotion Cockpit.
  *
- * De lo global al detalle, en cuatro pasos:
+ * De lo global al detalle, en seis pasos:
  *   1. Resumen    venta bruta → descuentos → venta neta y margen, por tipo de
  *                 descuento, con los efectos sobre el margen contra el año pasado.
  *   2. Detallado  stacking (cuántos descuentos lleva cada factura) y el detalle
  *                 promoción por promoción, con las menos activadas.
  *   3. Producto   productos héroe contra el resto y el detalle tipo → promoción → producto.
  *   4. Sell-out   participación y crecimiento por sucursal, canal, segmento y línea.
+ *   5. Efectividad  cada promoción contra sus días previos: aumento, margen incremental.
+ *   6. Simulador  una promoción que aún no existe: margen y punto de equilibrio.
  *
  * Cálculo y criterios: includes/cockpit.php y docs/PROMOTION-COCKPIT.md.
  */
@@ -31,6 +33,27 @@ if (!cockpit_disponible()) {
  * ============================================================ */
 if (isPost()) {
     verify_csrf();
+    $uid = (int) (current_user()['id'] ?? 0);
+    // Vistas guardadas: cada quien las suyas; compartirlas no da permiso a borrarlas.
+    if (post('accion') === 'guardar_vista' && cockpit_vistas_disponible()) {
+        $nombre = trim(mb_substr((string) post('nombre'), 0, 80));
+        if ($nombre === '') {
+            flash('warning', 'Ponle un nombre a la vista.');
+        } else {
+            $q = cockpit_vista_query($_GET);
+            $existe = (int) qVal("SELECT id FROM cockpit_vistas WHERE usuario_id = ? AND nombre = ?", [$uid, $nombre]);
+            $datos = ['query' => $q, 'compartida' => post('compartida') ? 1 : 0];
+            $existe ? dbUpdate('cockpit_vistas', $datos, 'id = ?', [$existe])
+                    : dbInsert('cockpit_vistas', $datos + ['usuario_id' => $uid, 'nombre' => $nombre]);
+            flash('success', $existe ? "Vista «{$nombre}» actualizada." : "Vista «{$nombre}» guardada.");
+        }
+        redirect('modules/marketing/cockpit.php?' . http_build_query(array_diff_key($_GET, ['export' => 1])));
+    }
+    if (post('accion') === 'borrar_vista' && cockpit_vistas_disponible()) {
+        q("DELETE FROM cockpit_vistas WHERE id = ? AND usuario_id = ?", [(int) post('id'), $uid]);
+        flash('success', 'Vista borrada.');
+        redirect('modules/marketing/cockpit.php?' . http_build_query(array_diff_key($_GET, ['export' => 1])));
+    }
     require_perm('productos.editar');
     if (post('accion') === 'clasificar') {
         $ok = 0; $noEncontrados = [];
@@ -61,7 +84,8 @@ if (isPost()) {
 /* ============================================================
  *  Filtros y datos comunes
  * ============================================================ */
-$tabs = ['resumen' => 'Resumen', 'detalle' => 'Detallado', 'producto' => 'Producto', 'sellout' => 'Sell-out'];
+$tabs = ['resumen' => 'Resumen', 'detalle' => 'Detallado', 'producto' => 'Producto', 'sellout' => 'Sell-out',
+         'efectividad' => 'Efectividad', 'simulador' => 'Simulador'];
 $tab = array_key_exists((string) get('tab'), $tabs) ? (string) get('tab') : 'resumen';
 $f = cockpit_filtros();
 $TY = $f['ty']; $LY = $f['ly'];
@@ -260,6 +284,47 @@ if ($tab === 'sellout') {
 /* ============================================================
  *  Exportación (la tabla principal de la pestaña)
  * ============================================================ */
+if ($tab === 'efectividad') {
+    $efec = cockpit_efectividad($f, $TY);
+    // Primero las que se pueden juzgar; dentro de cada grupo, las que más descuento regalaron.
+    usort($efec, fn($a, $b) => [$a['margen_incremental'] === null, -$a['costo_desc']] <=> [$b['margen_incremental'] === null, -$b['costo_desc']]);
+    $cliPromo = cockpit_clientes_promo($f, $TY);
+}
+
+if ($tab === 'simulador') {
+    // La promoción que se quiere probar vive en la URL, como el resto de filtros.
+    $simAlcances = ['todos' => 'Todo el catálogo', 'categoria' => 'Una categoría', 'marca' => 'Una marca', 'segmento' => 'Un segmento', 'linea' => 'Una línea', 'producto' => 'Un producto'];
+    $sim = [
+        'alcance'   => array_key_exists((string) get('s_alcance'), $simAlcances) ? (string) get('s_alcance') : 'todos',
+        'objetivo'  => trim((string) get('s_obj')),
+        'tipo'      => get('s_tipo') === 'monto' ? 'monto' : 'porcentaje',
+        'valor'     => max(0.0, (float) get('s_valor', 20)),
+        'dias'      => min(120, max(1, (int) (get('s_dias') ?: 14))),
+        'dias_base' => min(90, max(7, (int) (get('s_base') ?: 28))),
+    ];
+    if ($sim['tipo'] === 'porcentaje') $sim['valor'] = min(100.0, $sim['valor']);
+    // El producto se busca por código: nadie se sabe el id.
+    $simProducto = null;
+    if ($sim['alcance'] === 'producto') {
+        $simProducto = $sim['objetivo'] !== '' ? qOne("SELECT id, codigo, nombre FROM productos WHERE codigo = ? OR codigo_barras = ? LIMIT 1", [$sim['objetivo'], $sim['objetivo']]) : null;
+        $sim['objetivo_id'] = $simProducto['id'] ?? 0;
+    }
+    $simListo = $sim['alcance'] === 'todos' || ($sim['alcance'] === 'producto' ? $simProducto !== null : $sim['objetivo'] !== '');
+    $simRes = $simHist = null;
+    if ($simListo) {
+        $cfgSim = $sim + ['aumento' => 0];
+        $cfgSim['objetivo'] = $sim['alcance'] === 'producto' ? $sim['objetivo_id'] : $sim['objetivo'];
+        // Primera pasada sin aumento: da la profundidad real para buscar promociones parecidas.
+        $simRes = cockpit_simular($f, $cfgSim);
+        $simHist = cockpit_aumento_historico($f, $simRes['profundidad']);
+        $aumentoGet = get('s_aum');
+        $sim['aumento'] = $aumentoGet !== null && $aumentoGet !== '' ? max(-90.0, min(500.0, (float) $aumentoGet))
+            : ($simHist ? round($simHist['aumento']) : 0.0);
+        $sim['aumento_propuesto'] = $aumentoGet === null || $aumentoGet === '';
+        if ($sim['aumento'] != 0) $simRes = cockpit_simular($f, ['aumento' => $sim['aumento']] + $cfgSim);
+    }
+}
+
 if (export_solicitado()) {
     $n2 = fn($v) => number_format((float) $v, 2, '.', '');
     $p1 = fn($v) => number_format((float) $v, 1, '.', '');
@@ -303,6 +368,28 @@ if (export_solicitado()) {
             ['Tipo', 'Descuento', 'SKU', 'Producto', 'Cantidad', 'Costo', 'Venta bruta', 'Descuentos', 'Desc %', 'Venta neta'],
             $filas, 'Promotion Cockpit — detalle por producto');
     }
+    if ($tab === 'efectividad') {
+        $filas = [];
+        foreach ($efec as $r) {
+            $filas[] = [$r['nombre'], cockpit_tipo_label($r['tipo']), $r['ventana'][0] . ' a ' . $r['ventana'][1], $r['dias'], $r['productos'],
+                $r['ud_dia_base'] === null ? '—' : $n2($r['ud_dia_base']), $n2($r['ud_dia']), $r['aumento'] === null ? '—' : $p1($r['aumento']),
+                $r['margen_incremental'] === null ? '—' : $n2($r['margen_incremental']), $n2($r['costo_desc']),
+                $r['retorno'] === null ? '—' : $n2($r['retorno']), $r['veredicto'][1] . ($r['motivo'] ? ' (' . $r['motivo'] . ')' : '')];
+        }
+        export_tabla('cockpit_efectividad_' . $sufijo,
+            ['Promoción', 'Tipo', 'Vigencia analizada', 'Días', 'Productos', 'Unid./día antes', 'Unid./día durante', 'Aumento %',
+             'Margen incremental', 'Costo del descuento', 'Retorno', 'Veredicto'],
+            $filas, 'Promotion Cockpit — efectividad de cada promoción');
+    }
+    if ($tab === 'simulador') {
+        $filas = [];
+        foreach ($simRes['productos'] ?? [] as $r) {
+            $filas[] = [$r['codigo'], $r['nombre'], $n2($r['u_dia']), $n2($r['lista']), $n2($r['p0']), $n2($r['p1']), $n2($r['c']), $n2($r['mu0']), $n2($r['mu1'])];
+        }
+        export_tabla('cockpit_simulador_' . date('Y-m-d'),
+            ['SKU', 'Producto', 'Unid./día (base)', 'Precio de lista', 'Precio cobrado hoy', 'Precio con la promoción', 'Costo', 'Margen por unidad hoy', 'Margen por unidad con promo'],
+            $filas, 'Promotion Cockpit — simulación de promoción');
+    }
     // Sell-out: las cuatro dimensiones en una sola hoja.
     $filas = [];
     foreach ($sell ?? [] as $k => $dim) {
@@ -325,7 +412,48 @@ if (export_solicitado()) {
 $copiar = '<button type="button" x-data="{ok:false}" @click="navigator.clipboard.writeText(location.href).then(() => { ok = true; setTimeout(() => ok = false, 1800); })"'
     . ' class="btn btn-ghost no-print" title="Copia el enlace con todos los filtros">' . icon('file', 'w-4 h-4')
     . ' <span x-text="ok ? \'¡Copiado!\' : \'Copiar enlace\'">Copiar enlace</span></button>';
-$acciones = $copiar . rep_barra_titulo(can('cockpit.configurar')
+// Vistas guardadas: el mismo enlace, con nombre y sin tener que guardarlo en otro lado.
+$vistasBtn = '';
+if (cockpit_vistas_disponible()) {
+    $uidV = (int) (current_user()['id'] ?? 0);
+    $vistas = cockpit_vistas($uidV);
+    $qActual = cockpit_vista_query($_GET);
+    ob_start(); ?>
+    <div class="relative no-print" x-data="{open:false, guardar:false}" @keydown.escape.window="open=false" @click.outside="open=false">
+      <button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
+      <div x-show="open" x-transition x-cloak class="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
+        <?php if (!$vistas): ?><p class="text-sm text-slate-400 px-2 py-3">Aún no hay vistas. Guarda esta combinación de pestaña y filtros para volver con un clic.</p><?php endif; ?>
+        <ul class="max-h-72 overflow-y-auto">
+          <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
+            <li class="flex items-center gap-1 rounded-lg <?= $v['query'] === $qActual ? 'bg-blue-50' : 'hover:bg-slate-50' ?>">
+              <a href="<?= e(url('modules/marketing/cockpit.php') . '?' . $v['query']) ?>" class="flex-1 min-w-0 px-2 py-2">
+                <span class="block text-sm font-semibold text-slate-700 truncate"><?= e($v['nombre']) ?></span>
+                <span class="block text-xs text-slate-400 truncate"><?= $esMia ? ($v['compartida'] ? 'Tuya · compartida' : 'Tuya') : 'De ' . e($v['autor'] ?? '—') ?></span>
+              </a>
+              <?php if ($esMia): ?>
+              <form method="post" onsubmit="return confirm('¿Borrar la vista «' + <?= e(json_encode($v['nombre'])) ?> + '»?')">
+                <?= csrf_field() ?><input type="hidden" name="accion" value="borrar_vista"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>">
+                <button class="p-2 text-slate-300 hover:text-rose-600" aria-label="Borrar vista <?= e($v['nombre']) ?>"><?= icon('trash', 'w-4 h-4') ?></button>
+              </form>
+              <?php endif; ?>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <div class="border-t border-slate-100 mt-2 pt-2">
+          <button type="button" x-show="!guardar" @click="guardar=true; $nextTick(() => $refs.nv.focus())" class="w-full text-left px-2 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-lg"><?= icon('plus', 'w-4 h-4 inline') ?> Guardar la vista actual</button>
+          <form method="post" x-show="guardar" x-cloak class="space-y-2 p-1">
+            <?= csrf_field() ?><input type="hidden" name="accion" value="guardar_vista">
+            <input x-ref="nv" name="nombre" maxlength="80" required class="input" placeholder="Ej. Black Friday · retail · USD" aria-label="Nombre de la vista">
+            <label class="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" name="compartida" value="1" class="rounded border-slate-300 text-blue-600"> Compartir con el equipo</label>
+            <p class="text-xs text-slate-400">Si el periodo es uno de los rápidos (este mes, mes pasado…), se guarda el periodo y no las fechas: siempre abre actualizado. Con el mismo nombre, se reemplaza.</p>
+            <button class="btn btn-primary w-full"><?= icon('save', 'w-4 h-4') ?> Guardar</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <?php $vistasBtn = ob_get_clean();
+}
+$acciones = $vistasBtn . $copiar . rep_barra_titulo(can('cockpit.configurar')
     ? '<a href="' . e(url('modules/marketing/cockpit_config.php')) . '" class="btn btn-ghost no-print">' . icon('settings', 'w-4 h-4') . ' Configurar</a>' : '');
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
@@ -421,8 +549,8 @@ $nFiltros = count(array_filter([get('sucursal_id'), get('tienda_id'), $f['canal'
     <div class="col-span-2 md:col-span-1">
       <label class="label" for="ck_mon">Moneda</label>
       <select id="ck_mon" name="moneda" class="select">
-        <?php foreach (cockpit_monedas() as $cod => [$sim, $tasa, $nota]): ?>
-          <option value="<?= e($cod) ?>" <?= cockpit_moneda()[0] === $cod ? 'selected' : '' ?>><?= e($cod === '' ? $sim . ' (base)' : $cod . ' · ' . $sim) ?></option>
+        <?php foreach (cockpit_monedas() as $cod => [$monS, $tasa, $nota]): ?>
+          <option value="<?= e($cod) ?>" <?= cockpit_moneda()[0] === $cod ? 'selected' : '' ?>><?= e($cod === '' ? $monS . ' (base)' : $cod . ' · ' . $monS) ?></option>
         <?php endforeach; ?>
       </select>
     </div>
@@ -1019,7 +1147,7 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
     </section>
   </div>
 
-<?php else: /* sell-out */ ?>
+<?php elseif ($tab === 'sellout'): ?>
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
     <?php foreach ($sell as $k => $dim):
       $tot = array_sum(array_column($dim, 'ty')); $totL = array_sum(array_column($dim, 'ly'));
@@ -1112,6 +1240,340 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
           ['formato' => 'money0', 'titulo' => 'Sell-out mes a mes'], '380px', count($meses) > 12) ?>
     </section>
   </div>
+
+<?php elseif ($tab === 'efectividad'):
+  $conBase = array_filter($efec, fn($r) => $r['margen_incremental'] !== null);
+  $rentables = array_filter($conBase, fn($r) => $r['veredicto'][0] === 'rentable');
+  $incrTot = array_sum(array_column($conBase, 'margen_incremental'));
+  $costoBase = array_sum(array_column($conBase, 'costo_desc'));
+?>
+  <?= kpis([
+      ['label' => 'Promociones con comparación', 'valor' => count($conBase) . ' <span class="text-base font-semibold text-slate-400">de ' . count($efec) . '</span>', 'icono' => 'percent', 'color' => 'blue',
+       'nota' => 'Las demás no tienen un «antes» comparable'],
+      ['label' => 'Rentables', 'valor' => count($rentables), 'icono' => 'trending', 'color' => 'emerald',
+       'nota' => $conBase ? number_format(count($rentables) / count($conBase) * 100, 0) . '% de las comparables' : '—'],
+      ['label' => 'Margen incremental', 'valor' => ck_money($incrTot), 'icono' => 'coins', 'color' => $incrTot >= 0 ? 'emerald' : 'rose',
+       'nota' => 'Lo que ganaron de más (o perdieron) contra sus días previos'],
+      ['label' => 'Retorno del descuento', 'valor' => $costoBase > 0 ? number_format($incrTot / $costoBase, 2) . 'x' : '—', 'icono' => 'target', 'color' => 'violet',
+       'nota' => 'Margen incremental ÷ descuento regalado (' . ck_money($costoBase) . ')'],
+  ]) ?>
+
+  <div class="grid grid-cols-1 xl:grid-cols-5 gap-5 mb-5">
+    <section class="card p-4 xl:col-span-3">
+      <h3 class="font-bold text-slate-800">¿Vendió más? ¿Ganó margen?</h3>
+      <p class="text-sm text-slate-400 mb-2">Cada punto es una promoción. Arriba a la derecha: vendió más y ganó margen. Abajo a la derecha: vendió más, pero el descuento costó más de lo que trajo. El tamaño es el descuento regalado.</p>
+      <?php
+      $maxC = max(1, max(array_merge([1], array_column($conBase, 'costo_desc'))));
+      $pts = [];
+      foreach ($conBase as $r) {
+          $pts[] = ['name' => $r['nombre'], 'value' => [round($r['aumento'], 1), round($r['margen_incremental'])],
+              'symbolSize' => round(12 + 38 * sqrt($r['costo_desc'] / $maxC)), 'url' => ck_url(['tab' => 'detalle', 'tipo' => $r['tipo']]),
+              'itemStyle' => ['color' => cockpit_tipo_color($r['tipo']), 'opacity' => 0.85, 'borderColor' => '#fff', 'borderWidth' => 1.5],
+              'tip' => '<b>' . e($r['nombre']) . '</b><br>' . e($r['veredicto'][1]) . '<br>Unidades/día: ' . number_format((float) $r['ud_dia_base'], 1) . ' → <b>' . number_format($r['ud_dia'], 1)
+                  . '</b> (' . ($r['aumento'] >= 0 ? '+' : '−') . number_format(abs($r['aumento']), 0) . '%)<br>Margen incremental: <b>' . ck_money($r['margen_incremental'])
+                  . '</b><br>Descuento regalado: ' . ck_money($r['costo_desc']) . '<br>' . e(fechaCorta($r['ventana'][0]) . ' – ' . fechaCorta($r['ventana'][1])) . ' contra los ' . $r['dias_base'] . ' días previos'];
+      }
+      echo $pts ? grafico([
+          // Aire a los lados: los puntos grandes de las esquinas se cortaban contra el borde.
+          'grid' => ['left' => 12, 'right' => 90, 'top' => 36, 'bottom' => 34, 'containLabel' => true],
+          'xAxis' => ['type' => 'value', 'name' => 'Aumento de unidades', 'nameLocation' => 'middle', 'nameGap' => 26, 'formato' => 'pct', 'scale' => true, 'boundaryGap' => ['12%', '12%']],
+          'yAxis' => ['type' => 'value', 'name' => 'Margen incremental', 'scale' => true, 'boundaryGap' => ['15%', '15%']],
+          'series' => [['type' => 'scatter', 'data' => $pts,
+              'label' => ['show' => true, 'position' => 'right', 'formatter' => '{b}', 'fontSize' => 10, 'color' => '#52514e'], 'labelLayout' => ['hideOverlap' => true],
+              'markLine' => ['silent' => true, 'symbol' => 'none', 'label' => ['show' => false], 'lineStyle' => ['color' => '#94a3b8', 'type' => 'dashed'],
+                             'data' => [['xAxis' => 0], ['yAxis' => 0]]]]],
+      ], ['formato' => 'money0', 'titulo' => 'Efectividad de promociones'], '380px')
+      : empty_state('Nada que comparar todavía', 'Ninguna promoción del periodo tiene días previos comparables (las que duran meses no se pueden medir así).', 'chart'); ?>
+    </section>
+    <section class="card p-4 xl:col-span-2">
+      <h3 class="font-bold text-slate-800">¿Quién compra en promoción?</h3>
+      <p class="text-sm text-slate-400 mb-2">Venta bruta con y sin descuento de cada tipo de cliente</p>
+      <?php
+      $g = $cliPromo['grupos'];
+      $etq = ['nuevos' => 'Clientes nuevos', 'recurrentes' => 'Recurrentes', 'anonimos' => 'Sin identificar'];
+      echo grafico([
+          'legend' => ['data' => ['Con descuento', 'Sin descuento']],
+          'xAxis' => ['type' => 'value'],
+          'yAxis' => ['type' => 'category', 'inverse' => true, 'data' => array_values($etq)],
+          'series' => [
+              ['name' => 'Con descuento', 'type' => 'bar', 'stack' => 'c', 'barMaxWidth' => 26, 'itemStyle' => ['color' => GRAF_TY, 'borderColor' => '#fff', 'borderWidth' => 2],
+               'data' => array_map(fn($k) => round($g[$k]['gs_promo']), array_keys($etq))],
+              ['name' => 'Sin descuento', 'type' => 'bar', 'stack' => 'c', 'barMaxWidth' => 26, 'itemStyle' => ['color' => GRAF_LY, 'borderColor' => '#fff', 'borderWidth' => 2],
+               'data' => array_map(fn($k) => round($g[$k]['gs'] - $g[$k]['gs_promo']), array_keys($etq))],
+          ],
+      ], ['formato' => 'money0', 'titulo' => 'Clientes y promociones', 'herramientas' => false], '200px');
+      ?>
+      <ul class="mt-3 space-y-1.5 text-sm text-slate-600">
+        <?php foreach ($etq as $k => $lbl): $gg = $g[$k]; ?>
+          <li class="flex justify-between gap-3"><span><?= e($lbl) ?><?= $gg['clientes'] ? ' <span class="text-slate-400">(' . number_format($gg['clientes']) . ')</span>' : '' ?></span>
+            <span class="tabular-nums font-semibold"><?= $gg['gs'] > 0 ? cockpit_pct($gg['gs_promo'] / $gg['gs'] * 100) : '—' ?> en promo</span></li>
+        <?php endforeach; ?>
+      </ul>
+      <div class="mt-4 p-3 rounded-xl bg-amber-50 text-sm text-amber-900">
+        <b><?= number_format($cliPromo['n_dependientes']) ?> clientes dependientes de la promoción</b>: 2 o más compras en el periodo y el 80% o más con descuento.
+        Suman <?= ck_money($cliPromo['gs_dependientes']) ?> de venta bruta.
+      </div>
+    </section>
+  </div>
+
+  <section class="card overflow-hidden mb-5">
+    <div class="p-4 border-b border-slate-100">
+      <h3 class="font-bold text-slate-800">Resultado de cada promoción</h3>
+      <p class="text-sm text-slate-400">Los productos que se vendieron con la promoción, en sus días de vigencia contra el mismo número de días justo antes (hasta 28). Es una lectura, no un experimento: la base puede traer otra temporada u otra promoción.</p>
+    </div>
+    <?php if (!$efec): ?>
+      <div class="p-6"><?= empty_state('Sin promociones usadas en el periodo', 'Cuando las ventas empiecen a registrar su promoción, aquí se verá cuál funcionó.', 'percent') ?></div>
+    <?php else: ?>
+    <div class="overflow-x-auto">
+      <table class="data-table text-[13px] whitespace-nowrap">
+        <thead><tr><th>Promoción</th><th>Analizado</th><th class="text-right">Productos</th><th class="text-right">Unid./día antes → durante</th><th class="text-right">Aumento</th>
+          <th class="text-right">Margen incremental</th><th class="text-right">Descuento regalado</th><th class="text-right" title="Margen incremental ÷ descuento">Retorno</th><th>Veredicto</th></tr></thead>
+        <tbody>
+        <?php foreach ($efec as $r): ?>
+          <tr>
+            <td class="max-w-[280px]"><p class="font-semibold text-slate-700 truncate"><?= e($r['nombre']) ?></p>
+              <p class="text-xs text-slate-400"><span class="inline-block w-2 h-2 rounded-full mr-1 align-middle" style="background:<?= e(cockpit_tipo_color($r['tipo'])) ?>"></span><?= e(cockpit_tipo_label($r['tipo'])) ?><?= $r['profundidad'] !== null ? ' · ' . cockpit_pct($r['profundidad'], 0) : '' ?></p></td>
+            <td class="text-slate-500 text-xs"><?= e(fechaCorta($r['ventana'][0]) . ' – ' . fechaCorta($r['ventana'][1])) ?><br><?= (int) $r['dias'] ?> días<?= $r['ud_dia_base'] !== null ? ' vs. ' . (int) $r['dias_base'] . ' previos' : '' ?></td>
+            <td class="text-right tabular-nums"><?= number_format($r['productos']) ?></td>
+            <td class="text-right tabular-nums"><?= $r['ud_dia_base'] === null ? '<span class="text-slate-300">—</span>' : number_format($r['ud_dia_base'], 1) . ' → <b>' . number_format($r['ud_dia'], 1) . '</b>' ?></td>
+            <td class="text-right"><?= $r['aumento'] === null ? '<span class="text-slate-300">—</span>' : '<span class="font-semibold ' . ($r['aumento'] >= 0 ? 'text-emerald-600' : 'text-rose-600') . '">' . ($r['aumento'] >= 0 ? '+' : '−') . number_format(abs($r['aumento']), 0) . '%</span>' ?></td>
+            <td class="text-right"><?= $r['margen_incremental'] === null ? '<span class="text-slate-300">—</span>' : cockpit_celda_efecto($r['margen_incremental']) ?></td>
+            <td class="text-right tabular-nums"><?= cockpit_n($r['costo_desc']) ?></td>
+            <td class="text-right tabular-nums"><?= $r['retorno'] === null ? '<span class="text-slate-300">—</span>' : number_format($r['retorno'], 2) . 'x' ?></td>
+            <td><?= badge($r['veredicto'][1], $r['veredicto'][2]) ?><?php if ($r['motivo']): ?><p class="text-[11px] text-slate-400 mt-0.5"><?= e($r['motivo']) ?></p><?php endif; ?></td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php endif; ?>
+  </section>
+
+  <?php if ($cliPromo['dependientes']): ?>
+  <section class="card overflow-hidden mb-5">
+    <div class="p-4 border-b border-slate-100">
+      <h3 class="font-bold text-slate-800">Clientes que casi solo compran con descuento</h3>
+      <p class="text-sm text-slate-400">Los 10 con más venta. Útil para decidir a quién NO enviarle la próxima promoción masiva.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="data-table text-[13px]">
+        <thead><tr><th>Cliente</th><th class="text-right">Facturas</th><th class="text-right">Venta bruta</th><th class="text-right">Con descuento</th></tr></thead>
+        <tbody>
+        <?php foreach ($cliPromo['dependientes'] as $id => $d): ?>
+          <tr><td><a class="text-slate-700 hover:text-blue-600" href="<?= e(url('modules/crm/cliente.php?id=' . (int) $id)) ?>"><?= e($d['nombre']) ?></a></td>
+            <td class="text-right tabular-nums"><?= (int) $d['facturas'] ?></td><td class="text-right tabular-nums"><?= cockpit_n($d['gs']) ?></td>
+            <td class="text-right tabular-nums font-semibold"><?= cockpit_pct($d['pct'], 0) ?></td></tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <?php endif; ?>
+<?php elseif ($tab === 'simulador'):
+  $mon = cockpit_moneda()[1];
+  $categorias = qAll("SELECT id, nombre FROM categorias ORDER BY nombre");
+  $lineas = qCol("SELECT DISTINCT COALESCE(NULLIF(linea,''), 'Sin línea') l FROM productos WHERE activo = 1 ORDER BY l");
+  // Los filtros de arriba (sucursal, canal, marca…) siguen valiendo: la base sale de ellos.
+  $ocultos = array_filter($_GET, fn($v, $k) => is_scalar($v) && !str_starts_with((string) $k, 's_') && !in_array($k, ['tab', 'export'], true), ARRAY_FILTER_USE_BOTH);
+?>
+  <section class="card p-4 mb-5 no-print" x-data="{alcance: <?= e(json_encode($sim['alcance'])) ?>, tipo: <?= e(json_encode($sim['tipo'])) ?>}">
+    <h3 class="font-bold text-slate-800">¿Qué pasaría si…?</h3>
+    <p class="text-sm text-slate-400 mb-3">Describe la promoción. La base es lo que se vendió en los últimos días con los filtros de arriba; el precio de la promoción se aplica sobre el precio de lista y nunca sube lo que ya se cobraba más barato.</p>
+    <form method="get" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 items-end">
+      <input type="hidden" name="tab" value="simulador">
+      <?php foreach ($ocultos as $k => $v): ?><input type="hidden" name="<?= e($k) ?>" value="<?= e($v) ?>"><?php endforeach; ?>
+      <div class="col-span-2 md:col-span-1">
+        <label class="label" for="s_alcance">Aplica a</label>
+        <select id="s_alcance" name="s_alcance" x-model="alcance" class="select">
+          <?php foreach ($simAlcances as $k => $lbl): ?><option value="<?= e($k) ?>" <?= $sim['alcance'] === $k ? 'selected' : '' ?>><?= e($lbl) ?></option><?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-span-2 md:col-span-1" x-show="alcance !== 'todos'" x-cloak>
+        <label class="label" for="s_obj">¿Cuál?</label>
+        <select id="s_obj" name="s_obj" class="select" x-show="alcance === 'categoria'" :disabled="alcance !== 'categoria'">
+          <?php foreach ($categorias as $c): ?><option value="<?= (int) $c['id'] ?>" <?= $sim['alcance'] === 'categoria' && $sim['objetivo'] === (string) $c['id'] ? 'selected' : '' ?>><?= e($c['nombre']) ?></option><?php endforeach; ?>
+        </select>
+        <select name="s_obj" class="select" x-show="alcance === 'marca'" :disabled="alcance !== 'marca'" aria-label="Marca">
+          <?php foreach ($marcas as $m): ?><option value="<?= (int) $m['id'] ?>" <?= $sim['alcance'] === 'marca' && $sim['objetivo'] === (string) $m['id'] ? 'selected' : '' ?>><?= e($m['nombre']) ?></option><?php endforeach; ?>
+        </select>
+        <select name="s_obj" class="select" x-show="alcance === 'segmento'" :disabled="alcance !== 'segmento'" aria-label="Segmento">
+          <?php foreach ($segmentos as $sg): ?><option value="<?= e($sg) ?>" <?= $sim['alcance'] === 'segmento' && $sim['objetivo'] === $sg ? 'selected' : '' ?>><?= e($sg) ?></option><?php endforeach; ?>
+        </select>
+        <select name="s_obj" class="select" x-show="alcance === 'linea'" :disabled="alcance !== 'linea'" aria-label="Línea">
+          <?php foreach ($lineas as $ln): ?><option value="<?= e($ln) ?>" <?= $sim['alcance'] === 'linea' && $sim['objetivo'] === $ln ? 'selected' : '' ?>><?= e($ln) ?></option><?php endforeach; ?>
+        </select>
+        <input name="s_obj" class="input" x-show="alcance === 'producto'" :disabled="alcance !== 'producto'" placeholder="SKU o código de barras" aria-label="SKU del producto"
+               value="<?= $sim['alcance'] === 'producto' ? e($sim['objetivo']) : '' ?>">
+      </div>
+      <div>
+        <label class="label" for="s_tipo">Descuento</label>
+        <select id="s_tipo" name="s_tipo" x-model="tipo" class="select">
+          <option value="porcentaje" <?= $sim['tipo'] === 'porcentaje' ? 'selected' : '' ?>>Porcentaje</option>
+          <option value="monto" <?= $sim['tipo'] === 'monto' ? 'selected' : '' ?>>Monto fijo</option>
+        </select>
+      </div>
+      <div>
+        <label class="label" for="s_valor"><span x-text="tipo === 'monto' ? <?= e(json_encode('Monto (' . $mon . ')')) ?> : '% de descuento'">% de descuento</span></label>
+        <input id="s_valor" type="number" name="s_valor" min="0" step="0.5" :max="tipo === 'monto' ? null : 100" value="<?= e((string) $sim['valor']) ?>" class="input" required>
+      </div>
+      <div>
+        <label class="label" for="s_dias">Días de promoción</label>
+        <input id="s_dias" type="number" name="s_dias" min="1" max="120" value="<?= (int) $sim['dias'] ?>" class="input">
+      </div>
+      <div>
+        <label class="label" for="s_base">Días de base</label>
+        <input id="s_base" type="number" name="s_base" min="7" max="90" value="<?= (int) $sim['dias_base'] ?>" class="input" title="Cuántos días recientes se toman como venta normal">
+      </div>
+      <div>
+        <label class="label" for="s_aum">Aumento esperado %</label>
+        <input id="s_aum" type="number" name="s_aum" min="-90" max="500" step="1" value="<?= $simListo ? e((string) $sim['aumento']) : '' ?>" class="input" placeholder="Del historial">
+      </div>
+      <div class="col-span-2 md:col-span-1">
+        <button class="btn btn-primary w-full"><?= icon('pulse', 'w-4 h-4') ?> Simular</button>
+      </div>
+    </form>
+  </section>
+
+  <?php if (!$simListo): ?>
+    <div class="card p-6"><?= empty_state($sim['alcance'] === 'producto' && $sim['objetivo'] !== '' ? 'No se encontró ese producto' : 'Elige a qué aplica la promoción',
+        $sim['alcance'] === 'producto' ? 'Escribe el SKU o el código de barras tal como está en la ficha del producto.' : 'Selecciona el grupo de productos y pulsa «Simular».', 'percent') ?></div>
+  <?php elseif (!$simRes['productos']): ?>
+    <div class="card p-6"><?= empty_state('Sin ventas en la base', 'Esos productos no se vendieron entre el ' . fechaCorta($simRes['base'][0]) . ' y el ' . fechaCorta($simRes['base'][1]) . ' con los filtros elegidos. Amplía los días de base o quita filtros.', 'chart') ?></div>
+  <?php else:
+    $t = $simRes['tot'];
+    $eq = $simRes['equilibrio'];
+    $vivo = ['a' => (float) $sim['aumento'], 'u0' => $t['u0'], 'ns0' => $t['ns0'], 'm0' => $t['m0'], 'nsb' => $t['nsb'], 'mu1' => $t['mu1'],
+             'regalo0' => $t['ns0'] - $t['nsb'], 'eq' => $eq, 'mon' => $mon];
+  ?>
+  <div x-data="ckSim(<?= e(json_encode($vivo)) ?>)" x-init="$watch('a', () => pintar())">
+    <?php if ($simHist && $sim['aumento_propuesto']): ?>
+      <div class="card p-3 mb-4 text-sm text-slate-600 flex gap-2 items-start">
+        <span class="text-blue-500 shrink-0"><?= icon('history', 'w-4 h-4') ?></span>
+        <span>El aumento de <b><?= number_format($sim['aumento'], 0) ?>%</b> es la mediana de <?= (int) $simHist['n'] ?> promoción(es)
+          <?= $simHist['parecidas'] ? 'de profundidad parecida' : '' ?> del último año (pestaña Efectividad). Muévelo abajo para ver qué pasa con otros valores.</span>
+      </div>
+    <?php elseif ($sim['aumento_propuesto']): ?>
+      <div class="card p-3 mb-4 text-sm text-slate-600">No hay promociones medidas en el último año para proponer un aumento: se parte de 0%. Muévelo abajo.</div>
+    <?php endif; ?>
+
+    <div class="card p-4 mb-4">
+      <div class="flex flex-wrap items-center gap-3">
+        <label for="s_slider" class="text-sm font-semibold text-slate-700">Si las unidades suben</label>
+        <input id="s_slider" type="range" min="-50" max="200" step="1" x-model.number="a" class="flex-1 min-w-[180px] accent-blue-600">
+        <span class="text-lg font-extrabold tabular-nums w-20 text-right" x-text="(a >= 0 ? '+' : '−') + Math.abs(a) + '%'"></span>
+      </div>
+      <p class="mt-3 text-sm font-semibold rounded-lg px-3 py-2" :class="dif() >= 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'" x-text="veredicto()"></p>
+    </div>
+
+    <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm font-semibold text-slate-600">Venta neta</p>
+        <p class="text-lg sm:text-xl font-extrabold text-slate-800 tabular-nums mt-1" x-text="m(ns1())"></p>
+        <p class="text-xs text-slate-400 mt-1">Sin promoción: <span class="tabular-nums" x-text="m(ns0)"></span></p>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm font-semibold text-slate-600">Margen</p>
+        <p class="text-lg sm:text-xl font-extrabold tabular-nums mt-1" :class="dif() >= 0 ? 'text-emerald-600' : 'text-rose-600'" x-text="m(m1())"></p>
+        <p class="text-xs text-slate-400 mt-1">Sin promoción: <span class="tabular-nums" x-text="m(m0)"></span> · <span class="font-semibold" x-text="(dif() >= 0 ? '+' : '−') + m(Math.abs(dif()))"></span></p>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm font-semibold text-slate-600">Descuento regalado</p>
+        <p class="text-lg sm:text-xl font-extrabold text-slate-800 tabular-nums mt-1" x-text="m(regalo0 * (1 + a / 100))"></p>
+        <p class="text-xs text-slate-400 mt-1"><?= $simRes['profundidad'] !== null ? 'Rebaja media de ' . cockpit_pct($simRes['profundidad']) . ' sobre lo que se cobra hoy' : '' ?></p>
+      </div>
+      <div class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm font-semibold text-slate-600">Punto de equilibrio</p>
+        <p class="text-xl font-extrabold text-slate-800 tabular-nums mt-1"><?= $simRes['pierde_por_unidad'] ? '<span class="text-rose-600">No existe</span>' : ($eq === null ? '—' : '+' . number_format($eq, 0) . '%') ?></p>
+        <p class="text-xs text-slate-400 mt-1"><?= $simRes['pierde_por_unidad'] ? 'Con ese precio se pierde dinero en cada unidad: vender más empeora el margen.' : 'Lo que deben subir las unidades para ganar el mismo margen' ?></p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-5 gap-5 mb-5">
+      <section class="card p-4 xl:col-span-3">
+        <h3 class="font-bold text-slate-800">Margen según cuánto suban las ventas</h3>
+        <p class="text-sm text-slate-400 mb-2"><?= (int) $simRes['dias'] ?> días de promoción. Donde la línea azul cruza la gris, la promoción empieza a pagar su descuento.</p>
+        <div x-ref="graf">
+        <?php
+        $lineasMarca = [['xAxis' => (float) $sim['aumento'], 'name' => 'Esperado', 'lineStyle' => ['color' => '#2a78d6'], 'label' => ['formatter' => 'Esperado']]];
+        if ($eq !== null && $eq <= 200) $lineasMarca[] = ['xAxis' => round($eq, 1), 'name' => 'Equilibrio', 'lineStyle' => ['color' => '#d97706'], 'label' => ['formatter' => 'Equilibrio']];
+        echo grafico([
+            'legend' => ['data' => ['Con la promoción', 'Sin promoción']],
+            'grid' => ['left' => 8, 'right' => 16, 'top' => 40, 'bottom' => 34, 'containLabel' => true],
+            'xAxis' => ['type' => 'value', 'min' => -50, 'max' => 200, 'name' => 'Aumento de unidades', 'nameLocation' => 'middle', 'nameGap' => 26, 'formato' => 'pct'],
+            'yAxis' => ['type' => 'value', 'scale' => true],
+            'series' => [
+                ['id' => 'con', 'name' => 'Con la promoción', 'type' => 'line', 'showSymbol' => false, 'lineStyle' => ['width' => 3, 'color' => GRAF_TY], 'itemStyle' => ['color' => GRAF_TY],
+                 'data' => array_map(fn($k) => [$k, round($t['mu1'] * (1 + $k / 100))], range(-50, 200, 10)),
+                 'markLine' => ['silent' => true, 'symbol' => 'none', 'lineStyle' => ['type' => 'dashed'], 'label' => ['position' => 'insideEndTop', 'fontSize' => 11], 'data' => $lineasMarca]],
+                ['id' => 'sin', 'name' => 'Sin promoción', 'type' => 'line', 'showSymbol' => false, 'lineStyle' => ['width' => 2, 'color' => GRAF_LY, 'type' => 'dashed'], 'itemStyle' => ['color' => GRAF_LY],
+                 'data' => [[-50, round($t['m0'])], [200, round($t['m0'])]]],
+            ],
+        ], ['formato' => 'money0', 'titulo' => 'Simulación de promoción'], '340px');
+        ?>
+        </div>
+      </section>
+      <section class="card p-4 xl:col-span-2 text-sm text-slate-600 space-y-3">
+        <h3 class="font-bold text-slate-800">Cómo se calcula</h3>
+        <p><b>Base:</b> <?= number_format($t['u0'] / max(1, $simRes['dias']), 1) ?> unidades por día de <?= number_format(count($simRes['productos'])) ?> producto(s),
+          lo vendido del <?= e(fechaCorta($simRes['base'][0])) ?> al <?= e(fechaCorta($simRes['base'][1])) ?> (<?= (int) $simRes['base'][2] ?> días), al precio y costo que tuvieron.</p>
+        <p><b>Con la promoción:</b> cada producto pasa a su precio de lista con el descuento; si ya se vendía más barato, se queda en su precio.</p>
+        <p><b>Equilibrio:</b> margen de hoy ÷ margen con promoción a igual volumen − 1. Si las unidades suben menos que eso, se pierde margen.</p>
+        <p class="text-xs text-slate-400">No incluye tráfico extra a otros productos, ni la venta que se adelanta y luego falta (compras que igual se iban a hacer). Úsalo como orden de magnitud, no como presupuesto.</p>
+      </section>
+    </div>
+
+    <section class="card overflow-hidden mb-5">
+      <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 class="font-bold text-slate-800">Productos afectados</h3>
+          <p class="text-sm text-slate-400">Los de más venta<?= count($simRes['productos']) > 25 ? ' (25 de ' . number_format(count($simRes['productos'])) . '; la exportación trae todos)' : '' ?>. En rojo, los que quedarían por debajo del costo.</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data-table text-[13px] whitespace-nowrap">
+          <thead><tr><th>Producto</th><th class="text-right">Unid./día</th><th class="text-right">Lista</th><th class="text-right">Cobrado hoy → con promo</th><th class="text-right">Costo</th><th class="text-right">Margen por unidad</th></tr></thead>
+          <tbody>
+          <?php foreach (array_slice($simRes['productos'], 0, 25) as $r): ?>
+            <tr class="<?= $r['mu1'] < 0 ? 'bg-rose-50/60' : '' ?>">
+              <td class="max-w-[300px]"><p class="font-semibold text-slate-700 truncate"><?= e($r['nombre']) ?></p><p class="text-xs text-slate-400"><?= e($r['codigo']) ?></p></td>
+              <td class="text-right tabular-nums"><?= number_format($r['u_dia'], 1) ?></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['lista']) ?></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['p0']) ?> → <b><?= cockpit_n($r['p1']) ?></b></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['c']) ?></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['mu0']) ?> → <b class="<?= $r['mu1'] < 0 ? 'text-rose-600' : '' ?>"><?= cockpit_n($r['mu1']) ?></b></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <script>
+  function ckSim(d) {
+    return Object.assign(d, {
+      m(v) { return this.mon + ' ' + Math.round(v).toLocaleString('es-DO'); },
+      ns1() { return this.nsb * (1 + this.a / 100); },
+      m1() { return this.mu1 * (1 + this.a / 100); },
+      dif() { return this.m1() - this.m0; },
+      veredicto() {
+        const d = this.dif(), s = this.m(Math.abs(d));
+        if (this.mu1 <= 0) return 'Con este precio cada unidad se vende por debajo del costo: la promoción pierde ' + s + ' de margen y cuanto más venda, más pierde.';
+        return d >= 0 ? 'La promoción gana ' + s + ' de margen frente a no hacerla.'
+          : 'La promoción pierde ' + s + ' de margen' + (this.eq !== null ? ': necesita que las unidades suban al menos ' + Math.ceil(this.eq) + '%.' : '.');
+      },
+      pintar() {
+        const el = this.$refs.graf && this.$refs.graf.querySelector('[id^="graf"]');
+        const g = el && window.echarts && echarts.getInstanceByDom(el);
+        if (!g) return;
+        const data = [{ xAxis: this.a, name: 'Esperado', lineStyle: { color: '#2a78d6' }, label: { formatter: 'Esperado' } }];
+        if (this.eq !== null && this.eq <= 200) data.push({ xAxis: Math.round(this.eq * 10) / 10, name: 'Equilibrio', lineStyle: { color: '#d97706' }, label: { formatter: 'Equilibrio' } });
+        g.setOption({ series: [{ id: 'con', markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed' }, label: { position: 'insideEndTop', fontSize: 11 }, data: data } }] });
+        const campo = document.getElementById('s_aum'); if (campo) campo.value = this.a;
+      }
+    });
+  }
+  </script>
+  <?php endif; ?>
 <?php endif; ?>
 
 <?php if (can('productos.editar')): ?>
