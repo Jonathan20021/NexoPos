@@ -80,7 +80,10 @@ promoción. Desde la P39, `registrarVentaPOS()` guarda en cada línea:
 - `precio_lista` — el precio de catálogo al vender.
 - `promocion_id` — la promoción que ganó (sin FK: borrar una promo vieja no puede fallar).
 
-y en la factura `ventas.descuento_motivo` — por qué el cajero hizo el descuento manual
+Los pedidos de la tienda online hacen lo mismo en `pedido_detalles` al crearse (ahí se
+calcula su promoción) y lo pasan a la venta cuando se facturan en `modules/pos/pedidos.php`.
+
+Y en la factura `ventas.descuento_motivo` — por qué el cajero hizo el descuento manual
 (empleado, fidelidad, cortesía, liquidación, otro). El POS muestra el selector «Motivo» en
 cuanto se escribe un descuento; un valor que no está en el catálogo cae en «manual».
 
