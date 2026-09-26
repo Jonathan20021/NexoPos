@@ -15,15 +15,21 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
  * Genera y descarga un .xlsx con cabecera de marca, encabezados con estilo y autoancho.
  * @param array $filas  Lista de filas; cada fila es un arreglo en el orden de $headers.
  */
-function exportExcel(string $nombre, array $headers, array $filas, ?string $titulo = null): void
+/** Nombre de hoja válido para Excel (31 caracteres, sin \\ / ? * [ ] :). */
+function excel_nombre_hoja(string $t): string
 {
-    while (ob_get_level() > 0) ob_end_clean();
-    $titulo = $titulo ?: ucfirst(str_replace('_', ' ', $nombre));
-    $emp = $GLOBALS['empresa'] ?? [];
+    return mb_substr(preg_replace('/[\\\\\/\?\*\[\]:]/', '', $t), 0, 31) ?: 'Datos';
+}
 
-    $ss = new Spreadsheet();
-    $sheet = $ss->getActiveSheet();
-    $sheet->setTitle(mb_substr(preg_replace('/[\\\\\/\?\*\[\]:]/', '', $titulo), 0, 31) ?: 'Datos');
+/**
+ * Llena una hoja con la cabecera de marca, encabezados con estilo, datos,
+ * bordes, autoancho y el encabezado congelado. La comparten el Excel de una
+ * tabla y el libro de varias hojas.
+ */
+function excel_llenar_hoja($sheet, string $titulo, array $headers, array $filas, string $nombreHoja = ''): void
+{
+    $emp = $GLOBALS['empresa'] ?? [];
+    $sheet->setTitle(excel_nombre_hoja($nombreHoja !== '' ? $nombreHoja : $titulo));
 
     $n = max(1, count($headers));
     $lastCol = Coordinate::stringFromColumnIndex($n);
@@ -77,6 +83,42 @@ function exportExcel(string $nombre, array $headers, array $filas, ?string $titu
         $sheet->getColumnDimension(Coordinate::stringFromColumnIndex($i))->setAutoSize(true);
     }
     $sheet->freezePane('A' . ($hr + 1));
+}
+
+/**
+ * Un libro con varias hojas, cada una con el formato de exportExcel(), y una
+ * portada opcional (pares etiqueta => valor: periodo, filtros, moneda…).
+ * @param array $hojas [[nombre de hoja, título, encabezados, filas], …]
+ */
+function exportExcelLibro(string $nombre, array $hojas, array $portada = [], string $tituloPortada = ''): void
+{
+    while (ob_get_level() > 0) ob_end_clean();
+    $ss = new Spreadsheet();
+    $primera = true;
+    if ($portada) {
+        excel_llenar_hoja($ss->getActiveSheet(), $tituloPortada ?: 'Portada', ['Dato', 'Valor'],
+            array_map(fn($k, $v) => [$k, (string) $v], array_keys($portada), $portada), 'Portada');
+        $primera = false;
+    }
+    foreach ($hojas as [$nombreHoja, $titulo, $headers, $filas]) {
+        $sheet = $primera ? $ss->getActiveSheet() : $ss->createSheet();
+        $primera = false;
+        excel_llenar_hoja($sheet, $titulo, $headers, $filas, $nombreHoja);
+    }
+    $ss->setActiveSheetIndex(0);
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $nombre . '_' . date('Ymd_His') . '.xlsx"');
+    header('Cache-Control: max-age=0');
+    (new Xlsx($ss))->save('php://output');
+    exit;
+}
+
+function exportExcel(string $nombre, array $headers, array $filas, ?string $titulo = null): void
+{
+    while (ob_get_level() > 0) ob_end_clean();
+    $titulo = $titulo ?: ucfirst(str_replace('_', ' ', $nombre));
+    $ss = new Spreadsheet();
+    excel_llenar_hoja($ss->getActiveSheet(), $titulo, $headers, $filas);
 
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $nombre . '_' . date('Ymd_His') . '.xlsx"');

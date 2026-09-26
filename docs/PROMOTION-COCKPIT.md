@@ -183,7 +183,14 @@ Retail = el resto. Si la marca lo define distinto, se cambia ahí.
 5. **Efectividad** — ¿funcionó cada promoción? (ver abajo).
 6. **Simulador** — ¿qué pasaría con una promoción que aún no existe? (ver abajo).
 
-Cada pestaña exporta su tabla a Excel y PDF.
+Cada pestaña exporta su tabla a Excel y PDF. **Excel completo** junta en un libro una portada
+(periodo, comparación, sucursal, canal, marca, segmento, línea, moneda, las cifras clave y
+los objetivos) y una hoja por pestaña: Resumen, Detallado, Producto, Efectividad y Sell-out,
+cada una idéntica a la exportación de su pestaña (`exportExcelLibro()` en includes/excel.php).
+
+**¿Cómo se lee?** abre un glosario en la propia pantalla: qué es venta bruta, tasa de
+descuento, puntos perdidos, cada efecto sobre el margen, stacking, efectividad, equilibrio y
+objetivos, para quien no tiene este documento a mano.
 
 ## Efectividad de cada promoción
 

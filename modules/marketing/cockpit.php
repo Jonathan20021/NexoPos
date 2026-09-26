@@ -115,9 +115,12 @@ $TY = $f['ty']; $LY = $f['ly'];
 $tipos = cockpit_tipos();
 $x = cockpit_expr();
 
+// «Excel completo»: todas las pestañas en un libro, con los mismos filtros.
+$libro = quiere_excel() && get('libro') === '1';
+
 // En el resumen los totales son la suma de los tipos, que ya se consultan:
 // dos barridos del periodo menos (≈0,4 s con 60.000 ventas).
-if ($tab === 'resumen') {
+if ($tab === 'resumen' || $libro) {
     $res = cockpit_resumen_datos($f);
     ['tot_ty' => $totTY, 'tot_ly' => $totLY] = $res;
 } else {
@@ -188,7 +191,7 @@ $etqMeses = array_map(fn($ym) => mesNombre((int) substr($ym, 5, 2), true), $mese
  *  Datos por pestaña
  * ============================================================ */
 $filasTipo = [];
-if ($tab === 'resumen') {
+if ($tab === 'resumen' || $libro) {
     ['filas' => $filasTipo, 'total' => $filaTotal, 'sin' => $filaSin, 'promo' => $filaPromo] = $res;
 
     $menTY = cockpit_mensual($f, $TY);
@@ -209,7 +212,7 @@ if ($tab === 'resumen') {
     $regalos = fn(array $t, array $porTipo) => $t['gs'] > 0 ? (($porTipo['muestra']['gs'] ?? 0)) / $t['gs'] * 100 : 0.0;
 }
 
-if ($tab === 'detalle') {
+if ($tab === 'detalle' || $libro) {
     $stTY = cockpit_stacking($f, $TY);
     $stLY = cockpit_stacking($f, $LY);
     $vista = get('vista') === 'menos' ? 'menos' : 'todas';
@@ -232,7 +235,7 @@ if ($tab === 'detalle') {
     $pctPromo = fn(array $por, string $campo, float $tot) => $tot > 0 ? (float) ($por['1'][$campo] ?? 0) / $tot * 100 : 0.0;
 }
 
-if ($tab === 'producto') {
+if ($tab === 'producto' || $libro) {
     $heroes = cockpit_por($f, $TY, 'COALESCE(pr.es_heroe,0)');
     $incluirSin = get('sin') === '1';
     [$w, $p] = cockpit_where($f, $TY);
@@ -259,7 +262,7 @@ if ($tab === 'producto') {
     $nombreMec = fn(string $m) => $m === 'sin' ? 'Sin promoción' : ($mecInfo[$m]['nombre'] ?? $m);
 }
 
-if ($tab === 'sellout') {
+if ($tab === 'sellout' || $libro) {
     $dims = [
         'sucursal' => ['Sucursal', 'store'],
         'canal'    => ['Canal', 'megaphone'],
@@ -290,7 +293,7 @@ if ($tab === 'sellout') {
 /* ============================================================
  *  Exportación (la tabla principal de la pestaña)
  * ============================================================ */
-if ($tab === 'efectividad') {
+if ($tab === 'efectividad' || $libro) {
     $efec = cockpit_efectividad($f, $TY);
     // Primero las que se pueden juzgar; dentro de cada grupo, las que más descuento regalaron.
     usort($efec, fn($a, $b) => [$a['margen_incremental'] === null, -$a['costo_desc']] <=> [$b['margen_incremental'] === null, -$b['costo_desc']]);
@@ -348,7 +351,16 @@ if (export_solicitado()) {
     $n2 = fn($v) => number_format((float) $v, 2, '.', '');
     $p1 = fn($v) => number_format((float) $v, 1, '.', '');
     $sufijo = $TY[0] . '_' . $TY[1];
-    if ($tab === 'resumen') {
+    // Una pestaña: su tabla y listo. El libro: se juntan las hojas y se
+    // escriben al final, con una portada que dice qué se está mirando.
+    $hojas = [];
+    $salida = function (string $nombre, array $headers, array $filas, string $titulo) use (&$hojas, $libro) {
+        if (!$libro) export_tabla($nombre, $headers, $filas, $titulo);
+        $clave = preg_replace('/^cockpit_([a-z]+)_.*$/', '$1', $nombre);
+        $hojas[] = [['resumen' => 'Resumen', 'detalle' => 'Detallado', 'producto' => 'Producto', 'sellout' => 'Sell-out',
+                     'efectividad' => 'Efectividad'][$clave] ?? ucfirst($clave), $titulo, $headers, $filas];
+    };
+    if ($tab === 'resumen' || $libro) {
         $filas = [];
         $emitir = function (string $nombre, array $r) use (&$filas, $n2, $p1) {
             $t = $r['ty'];
@@ -361,33 +373,33 @@ if (export_solicitado()) {
         $emitir('SIN PROMOCIÓN', $filaSin);
         $emitir('EN PROMOCIÓN', $filaPromo);
         foreach ($filasTipo as $k => $r) if ($k !== 'sin') $emitir(cockpit_tipo_label($k), $r);
-        export_tabla('cockpit_resumen_' . $sufijo,
+        $salida('cockpit_resumen_' . $sufijo,
             ['Tipo de descuento', 'Venta bruta', '% VB', 'Margen % VB', 'Descuentos', 'Desc %', 'Venta neta', 'Costo', 'Margen VN', 'Margen % VN', 'Pts perdidos',
              'VB año ant.', 'VN año ant.', 'Desc % año ant.', 'Efecto volumen', 'Efecto tasa desc.', 'Efecto mezcla', 'Efecto mezcla producto', 'Efecto total'],
             $filas, 'Promotion Cockpit — resumen por tipo de descuento');
     }
-    if ($tab === 'detalle') {
+    if ($tab === 'detalle' || $libro) {
         $filas = [];
         foreach ($mec as $r) {
             $filas[] = [cockpit_tipo_label($r['tipo']), $r['nombre'], (int) $r['act'], $n2($r['atv_ticket']), $n2($r['gs']), $p1($r['margen_gs']),
                         $p1($r['peso_gs']), $n2($r['desc']), $p1($r['desc_pct']), $p1($r['desc'] / $descTot * 100), $n2($r['ns']), $n2($r['costo']),
                         $p1($r['margen_ns']), $p1($r['pts'])];
         }
-        export_tabla('cockpit_detalle_' . $sufijo,
+        $salida('cockpit_detalle_' . $sufijo,
             ['Tipo', 'Descuento o promoción', 'Activaciones', 'Ticket medio', 'Venta bruta', 'Margen % VB', 'Peso VB', 'Descuentos', 'Desc %', 'Peso desc.', 'Venta neta', 'Costo', 'Margen % VN', 'Pts perdidos'],
             $filas, 'Promotion Cockpit — detalle por descuento');
     }
-    if ($tab === 'producto') {
+    if ($tab === 'producto' || $libro) {
         $filas = [];
         foreach ($rows as $r) {
             $filas[] = [cockpit_tipo_label($r['tipo']), $nombreMec($r['mec']), $r['codigo'], $r['nombre'], qty($r['qty']), $n2($r['costo']),
                         $n2($r['gs']), $n2($r['gs'] - $r['ns']), $p1($r['gs'] > 0 ? ($r['gs'] - $r['ns']) / $r['gs'] * 100 : 0), $n2($r['ns'])];
         }
-        export_tabla('cockpit_producto_' . $sufijo,
+        $salida('cockpit_producto_' . $sufijo,
             ['Tipo', 'Descuento', 'SKU', 'Producto', 'Cantidad', 'Costo', 'Venta bruta', 'Descuentos', 'Desc %', 'Venta neta'],
             $filas, 'Promotion Cockpit — detalle por producto');
     }
-    if ($tab === 'efectividad') {
+    if ($tab === 'efectividad' || $libro) {
         $filas = [];
         foreach ($efec as $r) {
             $filas[] = [$r['nombre'], cockpit_tipo_label($r['tipo']), $r['ventana'][0] . ' a ' . $r['ventana'][1], $r['dias'], $r['productos'],
@@ -395,12 +407,12 @@ if (export_solicitado()) {
                 $r['margen_incremental'] === null ? '—' : $n2($r['margen_incremental']), $n2($r['costo_desc']),
                 $r['retorno'] === null ? '—' : $n2($r['retorno']), $r['veredicto'][1] . ($r['motivo'] ? ' (' . $r['motivo'] . ')' : '')];
         }
-        export_tabla('cockpit_efectividad_' . $sufijo,
+        $salida('cockpit_efectividad_' . $sufijo,
             ['Promoción', 'Tipo', 'Vigencia analizada', 'Días', 'Productos', 'Unid./día antes', 'Unid./día durante', 'Aumento %',
              'Margen incremental', 'Costo del descuento', 'Retorno', 'Veredicto'],
             $filas, 'Promotion Cockpit — efectividad de cada promoción');
     }
-    if ($tab === 'simulador') {
+    if ($tab === 'simulador' && !$libro) {
         $filas = [];
         foreach ($simRes['productos'] ?? [] as $r) {
             $filas[] = [$r['codigo'], $r['nombre'], $n2($r['u_dia']), $n2($r['lista']), $n2($r['p0']), $n2($r['p1']), $n2($r['c']), $n2($r['mu0']), $n2($r['mu1'])];
@@ -418,9 +430,32 @@ if (export_solicitado()) {
                         $n2($v['ly']), $p1($v['ly'] / $totL * 100), ($d = rep_delta($v['ty'], $v['ly'])) === null ? '—' : $p1($d)];
         }
     }
-    export_tabla('cockpit_sellout_' . $sufijo,
+    $salida('cockpit_sellout_' . $sufijo,
         ['Dimensión', 'Valor', 'Venta neta', 'Participación %', 'Venta neta año ant.', 'Participación año ant. %', 'Crecimiento %'],
         $filas, 'Promotion Cockpit — sell-out');
+
+    if ($libro) {
+        $marcaNombre = $f['marca'] ? (string) qVal("SELECT nombre FROM marcas WHERE id = ?", [$f['marca']]) : 'Todas';
+        [$monCod, $monSim, $monTasa] = cockpit_moneda();
+        $objD = cockpit_objetivo('tasa_desc_objetivo'); $objP = cockpit_objetivo('venta_promo_objetivo');
+        exportExcelLibro('promotion_cockpit_' . $sufijo, $hojas, [
+            'Periodo (este año)'     => fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]),
+            'Comparado con'          => fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ($f['ly_modo'] === 'semana' ? ' (mismo día de la semana)' : ''),
+            'Sucursal'               => rep_alcance_sucursal(),
+            'Canal'                  => $f['canal'] ? (cockpit_canales()[$f['canal']] ?? $f['canal']) : 'Todos',
+            'Marca del producto'     => $marcaNombre,
+            'Segmento'               => $f['segmento'] ?? 'Todos',
+            'Línea'                  => $f['linea'] ?? 'Todas',
+            'Mismas tiendas'         => $f['samestore'] ? 'Sí' : 'No',
+            'Moneda'                 => $monCod === '' ? setting('moneda', 'RD$') : $monCod . ' a ' . number_format($monTasa, 2) . ' por unidad (tasa fija de reporte)',
+            'Venta bruta'            => $n2($filaTotal['ty']['gs']),
+            'Tasa de descuento'      => $p1($filaTotal['ty']['desc_pct']) . '%' . ($objD !== null ? ' (objetivo ≤ ' . $p1($objD) . '%)' : ''),
+            'Venta en promoción'     => $p1($gsTY > 0 ? $filaPromo['ty']['gs'] / $gsTY * 100 : 0) . '%' . ($objP !== null ? ' (objetivo ≤ ' . $p1($objP) . '%)' : ''),
+            'Venta neta'             => $n2($filaTotal['ty']['ns']),
+            'Margen'                 => $n2($filaTotal['ty']['margen']),
+            'Generado por'           => trim((current_user()['nombre'] ?? '') . ' ' . (current_user()['apellido'] ?? '')),
+        ], 'Promotion Cockpit — ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]));
+    }
 }
 
 /* ============================================================
@@ -485,7 +520,11 @@ if (cockpit_vistas_disponible()) {
     </div>
     <?php $vistasBtn = ob_get_clean();
 }
-$acciones = $vistasBtn . $copiar . rep_barra_titulo(can('cockpit.configurar')
+// Todo en un libro para la casa matriz: portada con los filtros + una hoja por pestaña.
+$libroBtn = '<a href="?' . e(http_build_query(array_merge($_GET, ['export' => 'excel', 'libro' => 1]))) . '" class="btn btn-ghost no-print"'
+    . ' title="Resumen, Detallado, Producto, Efectividad y Sell-out en un solo Excel, con una portada de filtros">' . icon('download', 'w-4 h-4') . ' Excel completo</a>';
+$ayudaBtn = '<button type="button" @click="$dispatch(\'ck:ayuda\')" class="btn btn-ghost no-print" title="Qué significa cada cifra">' . icon('book', 'w-4 h-4') . ' ¿Cómo se lee?</button>';
+$acciones = $vistasBtn . $ayudaBtn . $libroBtn . $copiar . rep_barra_titulo(can('cockpit.configurar')
     ? '<a href="' . e(url('modules/marketing/cockpit_config.php')) . '" class="btn btn-ghost no-print">' . icon('settings', 'w-4 h-4') . ' Configurar</a>' : '');
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
@@ -1666,6 +1705,65 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
   </script>
   <?php endif; ?>
 <?php endif; ?>
+
+<!-- ¿Cómo se lee? -->
+<div x-data="{open:false}" @ck:ayuda.window="open=true" @keydown.escape.window="open=false">
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-3xl" @click.stop role="dialog" aria-modal="true" aria-labelledby="ck_ayuda_t">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+        <h3 id="ck_ayuda_t" class="font-bold text-slate-800">¿Cómo se lee el cockpit?</h3>
+        <button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+      </div>
+      <div class="p-6 max-h-[72vh] overflow-y-auto text-sm text-slate-600 space-y-5">
+        <?php
+        $glosario = [
+            'Las cifras' => [
+                'Venta bruta (GS)' => 'Lo que se habría cobrado a precio de lista, sin ningún descuento. Las muestras y regalos cuentan a su precio de lista.',
+                'Descuento' => 'Venta bruta − venta neta: todo lo que se dejó de cobrar (promociones, descuentos en caja, precios negociados, regalos).',
+                'Venta neta (NS)' => 'Lo que de verdad se cobró, sin ITBIS.',
+                'Margen' => 'Venta neta − costo de lo vendido.',
+                'Tasa de descuento' => 'Descuento ÷ venta bruta. La cifra que más mira la casa matriz.',
+                'Pts perdidos' => 'Cuántos puntos de la venta bruta total se llevó el descuento de ese tipo. Suman la tasa de descuento.',
+                'Venta en promoción' => 'Parte de la venta bruta que llevó algún descuento.',
+            ],
+            'Contra el año anterior' => [
+                'Año anterior (LY)' => 'Las mismas fechas un año antes, o 52 semanas antes (mismo día de la semana) si así se elige en «Comparar con».',
+                'Mismas tiendas' => 'Solo las sucursales que vendieron en los dos periodos: una tienda nueva no infla el crecimiento.',
+                'Efecto volumen' => 'Margen ganado o perdido por vender más o menos en total.',
+                'Efecto tasa de descuento' => 'Por descontar más o menos hondo dentro de cada tipo.',
+                'Efecto mezcla' => 'Porque un tipo pesó más o menos en la venta que el año pasado.',
+                'Efecto mezcla de producto' => 'Porque dentro del tipo se vendieron artículos de otro costo. Los cuatro efectos suman exactamente el cambio del margen.',
+            ],
+            'Detalle y producto' => [
+                'Stacking' => 'Cuántos descuentos distintos lleva una factura (promoción, regalo, descuento en caja…).',
+                'Activaciones' => 'Facturas en que se usó ese descuento. «Menos activadas» incluye las promociones vigentes que nadie usó.',
+                'Productos héroe' => 'Los que la marca marca como tales (Configuración → Productos o la ficha del producto).',
+                'Sell-out' => 'Venta neta por sucursal, canal, tienda, segmento y línea, con su participación y crecimiento.',
+            ],
+            'Efectividad y simulador' => [
+                'Aumento' => 'Unidades por día durante la promoción contra los mismos días justo antes (hasta 28).',
+                'Margen incremental' => 'Margen por día durante − antes, por los días de la promoción. Positivo = la promoción pagó su descuento.',
+                'Retorno' => 'Margen incremental ÷ descuento regalado.',
+                'Sin base' => 'Promociones de más de 90 días o sin ventas antes: no hay un «antes» con qué comparar.',
+                'Punto de equilibrio' => 'Cuánto tienen que subir las unidades para que la promoción deje el mismo margen que no hacerla.',
+            ],
+            'Objetivos' => [
+                'obj. ≤ X%' => 'El máximo que la marca acepta (Configuración → Parámetros). En rojo cuando se pasa; el tope de cada tipo se fija en Configuración → Tipos.',
+            ],
+        ];
+        foreach ($glosario as $grupo => $items): ?>
+          <section>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-amber-600 mb-2"><?= e($grupo) ?></h4>
+            <dl class="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-x-4 gap-y-2">
+              <?php foreach ($items as $t => $d): ?><dt class="font-semibold text-slate-800"><?= e($t) ?></dt><dd><?= e($d) ?></dd><?php endforeach; ?>
+            </dl>
+          </section>
+        <?php endforeach; ?>
+        <p class="text-xs text-slate-400">Las ventas anteriores a la versión con rastro de promoción no guardan el precio de lista: en ellas solo se ve el descuento hecho en caja (el aviso ámbar lo dice cuando pesa).</p>
+      </div>
+    </div>
+  </div>
+</div>
 
 <?php if (can('productos.editar')): ?>
 <!-- Clasificación masiva -->
