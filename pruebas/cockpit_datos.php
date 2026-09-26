@@ -97,6 +97,10 @@ $mec = cockpit_mecanismos($f, $f['ty']);
 cuadra('los mecanismos suman la venta bruta en promoción', array_sum(array_column($mec, 'gs')), $res['promo']['ty']['gs']);
 $mensual = cockpit_mensual($f, $f['ty']);
 cuadra('los meses suman la venta bruta total', array_sum(array_column($mensual, 'gs')), (float) $tot['gs']);
+// El resumen saca meses y tipos de UNA pasada: tiene que dar lo mismo que la serie aparte.
+$igual = array_keys($mensual) === array_keys($res['mensual_ty']);
+foreach ($mensual as $ym => $m) foreach (['gs', 'ns', 'gs_promo'] as $k) $igual = $igual && abs($m[$k] - ($res['mensual_ty'][$ym][$k] ?? -1)) < 0.01;
+cuadra('la serie mensual del resumen (una pasada) = cockpit_mensual(), mes a mes', $igual ? 1.0 : 0.0, 1.0);
 
 /* ============================================================ */
 titulo('Moneda de reporte');

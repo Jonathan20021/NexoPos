@@ -199,8 +199,9 @@ if ($tab === 'resumen' || $libro) {
     ['filas' => $filasTipo, 'total' => $filaTotal, 'sin' => $filaSin, 'promo' => $filaPromo] = $res;
 
     // Los meses solo los pinta la pantalla; el libro no los lleva.
-    $menTY = $libro ? [] : cockpit_mensual($f, $TY);
-    $menLY = $libro ? [] : cockpit_mensual($f, $LY);
+    // La serie mensual ya vino con el resumen (misma pasada).
+    $menTY = $res['mensual_ty'];
+    $menLY = $res['mensual_ly'];
     $serie = function (array $men, array $ms, string $que) {
         $out = [];
         foreach ($ms as $ym) {

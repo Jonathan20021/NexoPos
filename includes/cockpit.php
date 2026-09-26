@@ -691,6 +691,29 @@ function cockpit_mensual(array $f, array $rango): array
 }
 
 /**
+ * Sumas por tipo de descuento y serie mensual en una sola consulta.
+ * @return array{0: array<string,array>, 1: array<string,array{gs:float,ns:float,gs_promo:float}>}
+ *         [como cockpit_por($f, $rango, tipo), como cockpit_mensual($f, $rango)]
+ */
+function cockpit_por_mes_tipo(array $f, array $rango): array
+{
+    $x = cockpit_expr();
+    [$w, $p] = cockpit_where($f, $rango);
+    $rows = qAll("SELECT DATE_FORMAT(v.fecha, '%Y-%m') k_ym, {$x['tipo']} k_tipo, " . cockpit_sumas_sql() . ' '
+                 . cockpit_from() . " WHERE $w GROUP BY k_ym, k_tipo ORDER BY k_ym", $p);
+    $porTipo = []; $mes = [];
+    foreach ($rows as $r) {
+        $t = (string) $r['k_tipo']; $ym = (string) $r['k_ym'];
+        $v = array_map('floatval', array_diff_key($r, ['k_ym' => 1, 'k_tipo' => 1]));
+        foreach ($v as $k => $n) $porTipo[$t][$k] = ($porTipo[$t][$k] ?? 0.0) + $n;
+        $mes[$ym] ??= ['gs' => 0.0, 'ns' => 0.0, 'gs_promo' => 0.0];
+        $mes[$ym]['gs'] += $v['gs']; $mes[$ym]['ns'] += $v['ns'];
+        if ($t !== 'sin') $mes[$ym]['gs_promo'] += $v['gs'];
+    }
+    return [$porTipo, $mes];
+}
+
+/**
  * Sell-out en UNA pasada: venta neta agrupada a la vez por mes, sucursal, canal,
  * tienda, segmento y línea. Salen unos cientos de filas y el reparto por cada
  * dimensión se hace en PHP. Con una consulta por dimensión y periodo la
@@ -1371,9 +1394,12 @@ function cockpit_aumento_de(array $e, ?float $profundidad): ?array
  */
 function cockpit_resumen_datos(array $f): array
 {
-    $x = cockpit_expr();
-    $porTY = cockpit_por($f, $f['ty'], $x['tipo']);
-    $porLY = cockpit_por($f, $f['ly'], $x['tipo']);
+    // Una pasada por periodo, agrupada por mes y tipo: de ahí salen los tipos
+    // (sumando los meses) y la serie mensual (sumando los tipos). Una venta cae
+    // en un solo mes, así que hasta las facturas suman exacto. Antes eran dos
+    // barridos por periodo (cockpit_por por tipo + cockpit_mensual).
+    [$porTY, $mesTY] = cockpit_por_mes_tipo($f, $f['ty']);
+    [$porLY, $mesLY] = cockpit_por_mes_tipo($f, $f['ly']);
     $totTY = cockpit_metricas(cockpit_sumar($porTY));
     $totLY = cockpit_metricas(cockpit_sumar($porLY));
     unset($totTY['tickets'], $totTY['atv'], $totLY['tickets'], $totLY['atv']);
@@ -1394,7 +1420,7 @@ function cockpit_resumen_datos(array $f): array
     };
     $promo = $agrupar(array_values(array_diff(array_keys($filas), ['sin'])));
     return [
-        'tot_ty' => $totTY, 'tot_ly' => $totLY, 'filas' => $filas,
+        'tot_ty' => $totTY, 'tot_ly' => $totLY, 'filas' => $filas, 'mensual_ty' => $mesTY, 'mensual_ly' => $mesLY,
         'total' => $agrupar(array_keys($filas)), 'sin' => $agrupar(['sin']), 'promo' => $promo,
         'pct_promo_ty' => $gsTY > 0 ? $promo['ty']['gs'] / $gsTY * 100 : 0.0,
         'pct_promo_ly' => $gsLY > 0 ? $promo['ly']['gs'] / $gsLY * 100 : 0.0,
