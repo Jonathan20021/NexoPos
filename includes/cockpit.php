@@ -790,6 +790,34 @@ function cockpit_stacking(array $f, array $rango): array
 }
 
 /**
+ * Tipo, nombre y detalle de un mecanismo ('p12', 'c:empleados', 'negociado'…)
+ * sin tocar las ventas. $promos: las promociones por 'p'.id (null = las carga).
+ * @return array{tipo:string, nombre:string, detalle:string}
+ */
+function cockpit_mecanismo_info(string $k, ?array $promos = null): array
+{
+    static $cache = null;
+    if ($promos === null) {
+        $cache ??= array_column(array_map(fn($pr) => ['k' => 'p' . $pr['id']] + $pr,
+            qAll("SELECT id, nombre, codigo, tipo_descuento, tipo, valor, fecha_inicio, fecha_fin FROM promociones")), null, 'k');
+        $promos = $cache;
+    }
+    if (isset($promos[$k])) {
+        $pr = $promos[$k];
+        return ['tipo' => $pr['tipo_descuento'] ?: 'promocion', 'nombre' => ($pr['codigo'] ? $pr['codigo'] . ' - ' : '') . $pr['nombre'],
+                'detalle' => ($pr['tipo'] === 'porcentaje' ? rtrim(rtrim(number_format((float) $pr['valor'], 2), '0'), '.') . '%' : money((float) $pr['valor']))
+                           . ' · ' . fechaCorta($pr['fecha_inicio']) . ' al ' . fechaCorta($pr['fecha_fin'])];
+    }
+    if (str_starts_with($k, 'p')) return ['tipo' => 'promocion', 'nombre' => 'Promoción eliminada #' . substr($k, 1), 'detalle' => ''];
+    if (str_starts_with($k, 'c:')) {
+        // Todos los motivos, activos o no: uno ya apagado sigue teniendo nombre en su historia.
+        $motivo = substr($k, 2);
+        return ['tipo' => $motivo, 'nombre' => 'Descuento en caja · ' . (cockpit_motivos_caja_todos()[$motivo] ?? $motivo), 'detalle' => 'Manual, en la factura'];
+    }
+    return ['tipo' => $k, 'nombre' => cockpit_tipo_label($k), 'detalle' => ''];
+}
+
+/**
  * Detalle por mecanismo de descuento (cada promoción, cada motivo de caja…).
  *
  * `activaciones` son las facturas en que se usó; `atv` el ticket neto medio de
@@ -829,24 +857,9 @@ function cockpit_mecanismos(array $f, array $rango, bool $incluirInactivas = fal
         }
     }
 
-    $motivos = cockpit_motivos_caja();
     $out = [];
     foreach ($filas as $k => $r) {
-        if (isset($promos[$k])) {
-            $pr = $promos[$k];
-            $tipo = $pr['tipo_descuento'] ?: 'promocion';
-            $nombre = ($pr['codigo'] ? $pr['codigo'] . ' - ' : '') . $pr['nombre'];
-            $detalle = ($pr['tipo'] === 'porcentaje' ? rtrim(rtrim(number_format((float) $pr['valor'], 2), '0'), '.') . '%' : money((float) $pr['valor']))
-                     . ' · ' . fechaCorta($pr['fecha_inicio']) . ' al ' . fechaCorta($pr['fecha_fin']);
-        } elseif (str_starts_with($k, 'p')) {
-            $tipo = 'promocion'; $nombre = 'Promoción eliminada #' . substr($k, 1); $detalle = '';
-        } elseif (str_starts_with($k, 'c:')) {
-            $tipo = substr($k, 2);
-            $nombre = 'Descuento en caja · ' . ($motivos[$tipo] ?? $tipo);
-            $detalle = 'Manual, en la factura';
-        } else {
-            $tipo = $k; $nombre = cockpit_tipo_label($k); $detalle = '';
-        }
+        ['tipo' => $tipo, 'nombre' => $nombre, 'detalle' => $detalle] = cockpit_mecanismo_info($k, $promos);
         $out[$k] = $r + [
             'tipo' => $tipo, 'nombre' => $nombre, 'detalle' => $detalle,
             'act' => $act[$k]['act'] ?? 0.0,

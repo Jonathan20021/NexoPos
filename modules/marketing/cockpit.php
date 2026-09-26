@@ -256,8 +256,6 @@ if ($tab === 'producto' || $libro) {
         $p
     );
     $rows = array_map(fn($r) => ['tipo' => $r['k_tipo'], 'mec' => $r['k_mec'], 'pid' => $r['k_pid']] + $r, $rows);
-    // En el libro el Detallado ya los trajo todos: no se vuelven a consultar.
-    $mecInfo = $libro && isset($mecTodos) ? $mecTodos : cockpit_mecanismos($f, $TY);
     $arbol = [];
     foreach ($rows as $r) {
         $t = $r['tipo']; $m = $r['mec'];
@@ -266,7 +264,8 @@ if ($tab === 'producto' || $libro) {
         $arbol[$t]['mec'][$m]['prod'][] = $r;
     }
     uasort($arbol, fn($a, $b) => $b['tot']['gs'] <=> $a['tot']['gs']);
-    $nombreMec = fn(string $m) => $m === 'sin' ? 'Sin promoción' : ($mecInfo[$m]['nombre'] ?? $m);
+    // Solo hacen falta los nombres: salen del catálogo, sin volver a barrer las ventas.
+    $nombreMec = fn(string $m) => $m === 'sin' ? 'Sin promoción' : cockpit_mecanismo_info($m)['nombre'];
 }
 
 if ($tab === 'sellout' || $libro) {
@@ -476,9 +475,9 @@ if (cockpit_vistas_disponible()) {
     $qActual = cockpit_vista_query($_GET);
     $conCorreo = cockpit_resumen_disponible();
     ob_start(); ?>
-    <div class="relative no-print" x-data="Object.assign(ckMenu(320), {guardar:false})" @keydown.escape.window="open=false" @click.outside="open=false">
-      <button type="button" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
-      <div x-show="open" x-transition x-cloak :class="lado" class="absolute mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
+    <div class="relative no-print" x-data="Object.assign(ckMenu(320), {guardar:false})" @keydown.escape.window="if (open) cerrar(true)" @click.outside="open=false">
+      <button type="button" id="ck_vistas" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()" aria-haspopup="true"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
+      <div x-show="open" x-ref="panel" x-transition x-cloak :class="lado" class="absolute mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
         <?php if (!$vistas): ?><p class="text-sm text-slate-400 px-2 py-3">Aún no hay vistas. Guarda esta combinación de pestaña y filtros para volver con un clic.</p><?php endif; ?>
         <ul class="max-h-72 overflow-y-auto">
           <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
@@ -539,14 +538,23 @@ $masItems = '<button type="button" role="menuitem" @click="open=false; $dispatch
     . '<div class="my-1 border-t border-slate-100"></div>'
     . (can('cockpit.configurar') ? $item('settings', 'Configurar el cockpit', 'href="' . e(url('modules/marketing/cockpit_config.php')) . '"') : '')
     . $item('grid', 'Centro de reportes', 'href="' . e(url('modules/reportes/index.php')) . '"');
-$mas = '<div class="relative no-print" x-data="ckMenu(256)" @keydown.escape.window="open=false" @click.outside="open=false">'
-    . '<button type="button" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()" aria-haspopup="menu">' . icon('menu', 'w-4 h-4') . ' Más</button>'
-    . '<div x-show="open" x-transition x-cloak role="menu" :class="lado" class="absolute mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-1.5">' . $masItems . '</div></div>'
+$mas = '<div class="relative no-print" x-data="ckMenu(256)" @keydown.escape.window="if (open) cerrar(true)" @click.outside="open=false">'
+    . '<button type="button" id="ck_mas" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()" aria-haspopup="menu">' . icon('menu', 'w-4 h-4') . ' Más</button>'
+    . '<div x-show="open" x-ref="panel" x-transition x-cloak role="menu" aria-label="Más acciones" :class="lado" @keydown.arrow-down.prevent="mover(1)" @keydown.arrow-up.prevent="mover(-1)"'
+    . ' @keydown.home.prevent="mover(0, true)" @keydown.end.prevent="mover(-1, true)"'
+    . ' class="absolute mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-1.5">' . $masItems . '</div></div>'
     // Un menú se abre hacia donde cabe: anclado siempre al mismo lado, en el
     // teléfono se salía de la pantalla por un lado o por el otro según dónde
     // cayera el botón al partirse la fila.
-    . '<script>function ckMenu(ancho) { return { open: false, lado: "right-0", abrir(b) {'
-    . ' const r = b.getBoundingClientRect(); this.lado = r.right - ancho >= 8 ? "right-0" : "left-0"; this.open = !this.open; } }; }</script>';
+    // Con teclado: al abrir, el foco va al primer elemento; flechas, Inicio y
+    // Fin se mueven por el menú; Escape lo cierra y devuelve el foco al botón.
+    . '<script>function ckMenu(ancho) { return { open: false, lado: "right-0", boton: null,'
+    . ' abrir(b) { this.boton = b; const r = b.getBoundingClientRect(); this.lado = r.right - ancho >= 8 ? "right-0" : "left-0";'
+    . '   this.open = !this.open; if (this.open) this.$nextTick(() => { const i = this.items(); if (i[0]) i[0].focus(); }); },'
+    . ' cerrar(volver) { this.open = false; if (volver && this.boton) this.boton.focus(); },'
+    . ' items() { return [...this.$refs.panel.querySelectorAll("a[href],button:not([disabled]),input,select")].filter(e => e.offsetParent !== null); },'
+    . ' mover(d, abs) { const i = this.items(); if (!i.length) return; const k = i.indexOf(document.activeElement);'
+    . '   const n = abs ? (d < 0 ? i.length - 1 : 0) : (k + d + i.length) % i.length; i[n].focus(); } }; }</script>';
 $acciones = $vistasBtn . $libroBtn . $mas;
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
@@ -1729,12 +1737,14 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
 <?php endif; ?>
 
 <!-- ¿Cómo se lee? -->
-<div x-data="{open:false}" @ck:ayuda.window="open=true" @keydown.escape.window="open=false">
+<div x-data="{open:false, antes:null}" @ck:ayuda.window="antes = document.activeElement; open = true; $nextTick(() => $refs.cerrar.focus())"
+     x-effect="if (!open && antes) { const a = antes; antes = null; (a.offsetParent !== null ? a : document.getElementById('ck_mas'))?.focus(); }"
+     @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-3xl" @click.stop role="dialog" aria-modal="true" aria-labelledby="ck_ayuda_t">
       <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
         <h3 id="ck_ayuda_t" class="font-bold text-slate-800">¿Cómo se lee el cockpit?</h3>
-        <button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+        <button type="button" x-ref="cerrar" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
       </div>
       <div class="p-6 max-h-[72vh] overflow-y-auto text-sm text-slate-600 space-y-5">
         <?php
