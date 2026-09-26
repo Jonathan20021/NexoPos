@@ -251,6 +251,13 @@ if (isPost()) {
                         case 'canal':  if (!array_key_exists($v, cockpit_canales())) throw new RuntimeException('El canal por defecto tiene que ser un canal activo.'); break;
                         case 'lineas':
                             $lineas = array_values(array_unique(array_filter(array_map(fn($l) => mb_substr(trim($l), 0, 40), preg_split('/\R/', $v)), fn($l) => $l !== '')));
+                            if ($k === 'tasas_reporte') {
+                                // Solo quedan las líneas CÓDIGO=tasa válidas; lo demás se descarta con aviso.
+                                $validas = array_values(array_filter($lineas, fn($l) => preg_match('/^[A-Za-z]{3}\s*[=:]\s*[0-9]+([.,][0-9]+)?$/', $l)));
+                                if (count($validas) < count($lineas)) flash('warning', 'Algunas tasas no tenían la forma USD=59.50 y se descartaron.');
+                                $v = implode("\n", array_map(fn($l) => strtoupper(substr($l, 0, 3)) . substr($l, 3), $validas));
+                                break;
+                            }
                             if (!$lineas) throw new RuntimeException('Deja al menos un canal de captación: el POS lo necesita para vender.');
                             $v = implode("\n", $lineas);
                             break;

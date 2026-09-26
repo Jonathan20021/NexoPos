@@ -158,3 +158,32 @@ entrenamiento (asistentes, encuesta, completitud, productividad), rotación del 
 **Excel de la marca**: el botón genera el libro con las hojas `SKUS REPORT`, `GLOBAL KPIs`,
 `DAILY` (la hoja Black Friday), `INVESTMENT` y `KPIs`, con los encabezados en inglés del
 archivo original, listo para enviar a la casa matriz.
+
+
+## Lectura rápida, monedas y comparaciones
+
+- **Lo más importante** (arriba del Resumen): frases generadas con los datos del periodo —
+  cuánto cambió la tasa de descuento y el margen, qué tipo cuesta más, cuál descuenta más
+  hondo que el año pasado, qué movió el margen y qué promociones vigentes nadie usó—, cada
+  una con su enlace al detalle. `cockpit_hallazgos()`; no consulta nada nuevo.
+- **Moneda de reporte**: el cockpit se puede ver en USD, EUR u otra moneda. Siempre a una
+  **tasa fija** (Configuración → Parámetros → «Tasas fijas de reporte», `USD=59.50`), nunca
+  a la del día: si no hay tasa fija se ofrece la del catálogo de monedas avisando que es la
+  del día. Los porcentajes no cambian con la moneda.
+- **Comparar con**: mismas fechas del año anterior o **mismo día de la semana** (52 semanas
+  antes: el Black Friday contra el Black Friday). Si alguien fija a mano las fechas del año
+  anterior se respetan; si no, siguen a las de este año.
+- **Copiar enlace**: los filtros viven en la URL; el botón copia la vista exacta.
+- En el teléfono los filtros se pliegan.
+
+## Campañas: proyección, comparativo y avisos
+
+- **Proyección al cierre** (campañas en curso): lo vendido hasta ayer escalado con la **forma
+  del año anterior** (qué parte de su venta llevaba a esa altura), no con una línea recta.
+  Sin año anterior útil, promedio diario. Barra contra la meta.
+- **Listado = comparativo**: venta neta, crecimiento, % de meta y MER de cada campaña, y un
+  gráfico con todas lado a lado.
+- **Notificaciones** (campana del sistema): promoción vigente hace una semana que nadie usó
+  (a quien puede editar promociones) y campaña en curso que cerraría por debajo del 85% de su
+  meta (a quien ve campañas).
+- El formulario de campaña tiene «Alinear por día de la semana» para el periodo comparable.

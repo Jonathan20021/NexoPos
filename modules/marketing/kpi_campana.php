@@ -362,6 +362,46 @@ echo rep_kpis([
 ]);
 ?>
 
+<?php
+// Campaña en curso: a qué ritmo va y dónde cerraría.
+$proy = kpi_proyeccion($diasTY, $diasLY, date('Y-m-d'));
+if ($proy):
+    $metaP = $R['meta'] > 0 ? $proy['proyeccion'] / $R['meta'] * 100 : null;
+    $avance = $proy['transcurridos'] / max(1, $proy['total']) * 100;
+?>
+  <section class="card p-4 mb-5">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <h3 class="font-bold text-slate-800">Proyección al cierre</h3>
+      <span class="badge badge-amber">En curso · día <?= (int) $proy['transcurridos'] ?> de <?= (int) $proy['total'] ?></span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+      <div>
+        <p class="text-sm text-slate-500">Vendido hasta ayer</p>
+        <p class="text-2xl font-extrabold text-slate-800 tabular-nums"><?= ck_money_kpi($proy['ns_hoy']) ?></p>
+      </div>
+      <div>
+        <p class="text-sm text-slate-500">Cerraría en</p>
+        <p class="text-2xl font-extrabold text-slate-800 tabular-nums"><?= ck_money_kpi($proy['proyeccion']) ?></p>
+        <p class="text-xs text-slate-400">Según la <?= e($proy['metodo']) ?><?= $L['ns'] > 0 ? ' · año anterior cerró en ' . ck_money_kpi($L['ns']) : '' ?></p>
+      </div>
+      <div>
+        <?php if ($metaP !== null): ?>
+          <p class="text-sm text-slate-500">Contra la meta de <?= ck_money_kpi($R['meta']) ?></p>
+          <div class="h-3 rounded-full bg-slate-100 overflow-hidden mt-2" role="img" aria-label="Proyección: <?= number_format($metaP, 0) ?>% de la meta">
+            <div class="h-full rounded-full <?= $metaP >= 100 ? 'bg-emerald-500' : ($metaP >= 85 ? 'bg-amber-400' : 'bg-rose-500') ?>" style="width:<?= min(100, $metaP) ?>%"></div>
+          </div>
+          <p class="text-sm font-semibold mt-1 <?= $metaP >= 100 ? 'text-emerald-600' : ($metaP >= 85 ? 'text-amber-600' : 'text-rose-600') ?>">
+            <?= number_format($metaP, 0) ?>% de la meta<?= $metaP < 100 ? ' · faltarían ' . ck_money_kpi($R['meta'] - $proy['proyeccion']) : '' ?>
+          </p>
+        <?php else: ?>
+          <p class="text-sm text-slate-400">Pon una meta a la campaña para ver si llega.</p>
+        <?php endif; ?>
+        <p class="text-xs text-slate-400 mt-1">Tiempo transcurrido: <?= number_format($avance, 0) ?>%</p>
+      </div>
+    </div>
+  </section>
+<?php endif; ?>
+
 <?php if ($c['notas']): ?>
   <div class="card p-4 mb-5 text-sm text-slate-600 whitespace-pre-line"><?= e($c['notas']) ?></div>
 <?php endif; ?>

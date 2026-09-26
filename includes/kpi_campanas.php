@@ -263,6 +263,52 @@ function kpi_resumen(array $c): array
     ];
 }
 
+/**
+ * Proyección al cierre de una campaña en curso.
+ *
+ * No es una línea recta: se usa la FORMA del año anterior. Si al día 10 de 30
+ * el año pasado se llevaba el 20% de su venta (porque el pico era el final),
+ * lo vendido hoy se escala con ese 20%, no con el 33% del calendario. Sin año
+ * anterior útil se cae a la proporción de días.
+ *
+ * @param array $diasTY 'Y-m-d' => ['ns'=>…] de la campaña
+ * @param array $diasLY lista (por posición) del periodo comparable
+ * @return array{transcurridos:int,total:int,ns_hoy:float,proyeccion:float,metodo:string}|null  null si no está en curso
+ */
+function kpi_proyeccion(array $diasTY, array $diasLY, string $hoy): ?array
+{
+    $fechas = array_keys($diasTY);
+    if (!$fechas || $hoy < $fechas[0] || $hoy > end($fechas)) return null;
+    $total = count($fechas);
+    // Hoy todavía no termina: se cuentan los días cerrados (al menos uno).
+    $cerrados = max(1, (int) array_search($hoy, $fechas, true));
+    $nsHoy = 0.0; $lyHasta = 0.0; $lyTotal = 0.0;
+    foreach ($fechas as $i => $d) {
+        if ($i < $cerrados) $nsHoy += $diasTY[$d]['ns'];
+        $v = (float) ($diasLY[$i]['ns'] ?? 0);
+        $lyTotal += $v;
+        if ($i < $cerrados) $lyHasta += $v;
+    }
+    // Si al año anterior no le queda venta en los días que faltan (el histórico
+    // no llega hasta ahí, o ese local estaba cerrado), su forma diría «no se
+    // vende nada más»: ahí manda el promedio diario.
+    $lyRestoSinVenta = $cerrados < $total && $lyTotal - $lyHasta <= 0.005;
+    if ($lyHasta > 0 && $lyTotal > 0 && !$lyRestoSinVenta) {
+        return ['transcurridos' => $cerrados, 'total' => $total, 'ns_hoy' => $nsHoy,
+                'proyeccion' => $nsHoy / ($lyHasta / $lyTotal), 'metodo' => 'forma del año anterior'];
+    }
+    return ['transcurridos' => $cerrados, 'total' => $total, 'ns_hoy' => $nsHoy,
+            'proyeccion' => $nsHoy / $cerrados * $total, 'metodo' => 'promedio diario'];
+}
+
+/** Venta neta y facturas de la campaña en un rango (liviano, para listados). */
+function kpi_ventas_rango(array $c, string $ini, string $fin): array
+{
+    [$w, $p] = kpi_where($c, $ini, $fin);
+    $r = qOne("SELECT COALESCE(SUM(v.subtotal - v.descuento),0) ns, COUNT(*) tickets FROM ventas v WHERE $w", $p) ?: [];
+    return ['ns' => (float) ($r['ns'] ?? 0), 'tickets' => (float) ($r['tickets'] ?? 0)];
+}
+
 /** División segura. */
 function kpi_div(float $a, float $b): ?float
 {

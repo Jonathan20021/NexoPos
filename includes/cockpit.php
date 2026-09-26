@@ -115,6 +115,7 @@ function cockpit_parametros_def(): array
         'menos_activadas'   => ['Cuántas promociones mostrar en «menos activadas»', 'int', '', '30'],
         'top_skus'          => ['SKUs a mostrar cuando la campaña no tiene SKUs foco', 'int', '', '20'],
         'dias_max'          => ['Máximo de días en el detalle diario de una campaña', 'int', '', '93'],
+        'tasas_reporte'     => ['Tasas fijas de reporte (una por línea: USD=59.50)', 'lineas', 'Pesos por unidad. El cockpit puede verse en esas monedas; siempre a esta tasa fija, nunca a la del día.', ''],
         'canales_captacion' => ['Canales de captación del POS (uno por línea)', 'lineas', 'Las opciones que el cajero elige al vender. Lo que quites no se borra de las ventas viejas.', "Mostrador\nInstagram\nWhatsApp\nFacebook\nReferido\nOtro"],
     ];
 }
@@ -309,11 +310,15 @@ function cockpit_expr(): array
     $negociado = "(vd.promocion_id IS NULL AND vd.es_muestra = 0 AND vd.precio_lista IS NOT NULL
                    AND vd.precio_lista * vd.cantidad > vd.subtotal + 0.005)";
     $motivo = "COALESCE(NULLIF(v.descuento_motivo,''),'manual')";
+    // Moneda de reporte: todo importe pasa por aquí, así tablas, gráficos y
+    // exportaciones salen en la misma moneda sin convertir nada más.
+    $d = cockpit_divisor();
+    $m = fn(string $sql) => $d == 1.0 ? $sql : "($sql / $d)";
     return [
-        'gs'        => $gs,
-        'caja'      => $caja,
-        'ns'        => "(vd.subtotal - $caja)",
-        'costo'     => "(vd.cantidad * vd.costo_unitario)",
+        'gs'        => $m($gs),
+        'caja'      => $m($caja),
+        'ns'        => $m("(vd.subtotal - $caja)"),
+        'costo'     => $m("(vd.cantidad * vd.costo_unitario)"),
         'negociado' => $negociado,
         'tipo'      => "(CASE WHEN vd.es_muestra = 1 THEN 'muestra'
                               WHEN vd.promocion_id IS NOT NULL THEN COALESCE(NULLIF(pm.tipo_descuento,''),'promocion')
@@ -366,8 +371,15 @@ function cockpit_filtros(): array
     $tyD = $fecha('ty_desde', $defD);
     $tyH = $fecha('ty_hasta', $defH);
     if ($tyD > $tyH) [$tyD, $tyH] = [$tyH, $tyD];
-    $lyD = $fecha('ly_desde', cockpit_un_anio_antes($tyD));
-    $lyH = $fecha('ly_hasta', cockpit_un_anio_antes($tyH));
+    // Retail compara sábado con sábado: «semana» mueve el año anterior 364 días
+    // (52 semanas exactas) en vez de la misma fecha del calendario.
+    $modo = get('ly_modo') === 'semana' ? 'semana' : 'fecha';
+    $atras = fn(string $d) => $modo === 'semana' ? date('Y-m-d', strtotime($d . ' -364 days')) : cockpit_un_anio_antes($d);
+    // El año anterior solo se respeta si alguien lo fijó a mano: si no, sigue a
+    // las fechas de este año (cambiar TY o el modo lo recalcula).
+    $manual = get('ly_manual') === '1' || (get('ly_manual') === '' && trim((string) get('ly_desde')) !== '');
+    $lyD = $manual ? $fecha('ly_desde', $atras($tyD)) : $atras($tyD);
+    $lyH = $manual ? $fecha('ly_hasta', $atras($tyH)) : $atras($tyH);
     if ($lyD > $lyH) [$lyD, $lyH] = [$lyH, $lyD];
 
     $canal = (string) get('canal');
@@ -379,6 +391,8 @@ function cockpit_filtros(): array
         'segmento'  => trim((string) get('segmento')) ?: null,
         'linea'     => trim((string) get('linea')) ?: null,
         'samestore' => get('samestore') === '1',
+        'ly_modo'   => $modo,
+        'ly_manual' => $manual,
     ];
 }
 
@@ -708,7 +722,7 @@ function cockpit_mecanismos(array $f, array $rango, bool $incluirInactivas = fal
          ) t JOIN ventas v2 ON v2.id = t.vid WHERE t.m <> 'sin' GROUP BY t.m",
         $p
     ) as $r) {
-        $act[$r['m']] = ['act' => (float) $r['act'], 'neto' => (float) $r['neto']];
+        $act[$r['m']] = ['act' => (float) $r['act'], 'neto' => (float) $r['neto'] / cockpit_divisor()];
     }
 
     $promos = [];
@@ -748,6 +762,158 @@ function cockpit_mecanismos(array $f, array $rango, bool $incluirInactivas = fal
         ];
     }
     return $out;
+}
+
+/* ============================================================
+ *  Hallazgos automáticos
+ * ============================================================ */
+
+/**
+ * Lo que una persona tendría que ver primero, en frases.
+ *
+ * Solo lee lo ya calculado para el resumen (no consulta nada): la tasa de
+ * descuento, el margen, el tipo que más margen se lleva, el que más subió su
+ * descuento y lo que más movió el margen. Cada hallazgo trae su tono (bueno,
+ * malo, neutro) y, si aplica, el tipo al que lleva al tocarlo. Se ordenan por
+ * cuánto pesan y se devuelven los $max más fuertes.
+ *
+ * @param array $total  ['ty'=>metricas, 'ly'=>metricas, 'ef'=>efectos] del total
+ * @param array $tipos  clave => la misma estructura, por tipo de descuento
+ * @return array<int,array{tono:string,texto:string,tipo:?string,peso:float}>
+ */
+function cockpit_hallazgos(array $total, array $tipos, float $promoTY, float $promoLY, int $max = 5): array
+{
+    $h = [];
+    $t = $total['ty']; $l = $total['ly'];
+    $hayLy = ($l['gs'] ?? 0) > 0;
+    $pts = fn(float $v) => ($v >= 0 ? '+' : '−') . number_format(abs($v), 1) . ' pts';
+    $pc = fn(float $v) => number_format($v, 1) . '%';
+
+    if ($hayLy) {
+        $d = $t['desc_pct'] - $l['desc_pct'];
+        if (abs($d) >= 0.3) {
+            $h[] = ['tono' => $d > 0 ? 'malo' : 'bueno', 'tipo' => null, 'peso' => abs($d) * 3,
+                'texto' => 'La tasa de descuento ' . ($d > 0 ? 'subió' : 'bajó') . ' a <b>' . $pc($t['desc_pct']) . '</b> (' . $pts($d) . ' contra el año anterior).'];
+        }
+        $dm = $t['margen_ns'] - $l['margen_ns'];
+        if (abs($dm) >= 0.3) {
+            $h[] = ['tono' => $dm > 0 ? 'bueno' : 'malo', 'tipo' => null, 'peso' => abs($dm) * 3,
+                'texto' => 'El margen sobre la venta neta ' . ($dm > 0 ? 'mejoró' : 'empeoró') . ' a <b>' . $pc($t['margen_ns']) . '</b> (' . $pts($dm) . ').'];
+        }
+        $dp = $promoTY - $promoLY;
+        if (abs($dp) >= 2) {
+            $h[] = ['tono' => $dp > 0 ? 'malo' : 'bueno', 'tipo' => null, 'peso' => abs($dp),
+                'texto' => 'Se vende más ' . ($dp > 0 ? '<b>en</b>' : '<b>sin</b>') . ' promoción: ' . $pc($promoTY) . ' de la venta bruta va con descuento (' . $pts($dp) . ').'];
+        }
+        // Lo que más movió el margen, en dinero.
+        $ef = $total['ef'] ?? [];
+        $nombres = ['volumen' => 'el volumen de venta', 'mezcla' => 'la mezcla entre tipos de descuento',
+                    'tasa' => 'la profundidad de los descuentos', 'producto' => 'la mezcla de productos (su costo)'];
+        $mayor = null;
+        foreach ($nombres as $k => $_) if ($mayor === null || abs($ef[$k] ?? 0) > abs($ef[$mayor] ?? 0)) $mayor = $k;
+        if ($mayor !== null && abs($ef['total'] ?? 0) >= 1 && abs($ef[$mayor]) >= 1) {
+            $h[] = ['tono' => ($ef['total'] ?? 0) >= 0 ? 'bueno' : 'malo', 'tipo' => null, 'peso' => 5,
+                'texto' => 'El margen ' . (($ef['total'] ?? 0) >= 0 ? 'ganó' : 'perdió') . ' <b>' . number_format(abs($ef['total']), 0) . '</b> contra el año anterior; lo que más pesó fue '
+                    . $nombres[$mayor] . ' (' . (($ef[$mayor] >= 0) ? '+' : '−') . number_format(abs($ef[$mayor]), 0) . ').'];
+        }
+    }
+
+    // El tipo que más margen se lleva y el que más subió su descuento.
+    $conDesc = array_filter($tipos, fn($r, $k) => $k !== 'sin' && ($r['ty']['desc'] ?? 0) > 0, ARRAY_FILTER_USE_BOTH);
+    if ($conDesc) {
+        uasort($conDesc, fn($a, $b) => $b['ty']['pts'] <=> $a['ty']['pts']);
+        $k = array_key_first($conDesc); $r = $conDesc[$k]['ty'];
+        $share = $t['desc'] > 0 ? $r['desc'] / $t['desc'] * 100 : 0;
+        $h[] = ['tono' => 'neutro', 'tipo' => $k, 'peso' => $r['pts'] * 2,
+            'texto' => '<b>' . e(cockpit_tipo_label($k)) . '</b> es el tipo que más cuesta: ' . $pc($share) . ' de todo el descuento y '
+                . number_format($r['pts'], 1) . ' pts de la venta bruta, con un descuento medio de ' . $pc($r['desc_pct']) . '.'];
+        if ($hayLy) {
+            $subidas = [];
+            foreach ($conDesc as $k => $r) {
+                if (($r['ty']['peso_gs'] ?? 0) < 1 || ($r['ly']['gs'] ?? 0) <= 0) continue;
+                $subidas[$k] = $r['ty']['desc_pct'] - $r['ly']['desc_pct'];
+            }
+            if ($subidas) {
+                arsort($subidas);
+                $k = array_key_first($subidas);
+                if ($subidas[$k] >= 1) {
+                    $h[] = ['tono' => 'malo', 'tipo' => $k, 'peso' => $subidas[$k] * 1.5,
+                        'texto' => '<b>' . e(cockpit_tipo_label($k)) . '</b> descuenta más hondo que el año pasado: ' . $pc($conDesc[$k]['ty']['desc_pct'])
+                            . ' (' . $pts($subidas[$k]) . ').'];
+                }
+            }
+        }
+    }
+
+    usort($h, fn($a, $b) => $b['peso'] <=> $a['peso']);
+    return array_slice($h, 0, $max);
+}
+
+/**
+ * Promociones que estuvieron vigentes en el rango y nadie usó (sin filtros de
+ * sucursal: una promoción es de toda la empresa). @return array<int,array{id:int,nombre:string,codigo:?string}>
+ */
+function cockpit_promos_sin_uso(string $desde, string $hasta): array
+{
+    return qAll(
+        "SELECT p.id, p.nombre, p.codigo FROM promociones p
+          WHERE p.activo = 1 AND p.fecha_inicio <= ? AND p.fecha_fin >= ?
+            AND NOT EXISTS (SELECT 1 FROM venta_detalles vd JOIN ventas v ON v.id = vd.venta_id
+                             WHERE vd.promocion_id = p.id AND v.fecha BETWEEN ? AND ?)
+          ORDER BY p.fecha_inicio",
+        [$hasta, $desde, $desde . ' 00:00:00', $hasta . ' 23:59:59']
+    );
+}
+
+/* ============================================================
+ *  Moneda de reporte
+ * ============================================================ */
+
+/**
+ * Monedas en que se puede ver el cockpit: código => [símbolo, pesos por unidad, nota].
+ *
+ * La contabilidad vive en pesos y nunca se convierte al vuelo con la tasa del
+ * día (el pasado cambiaría con el dólar). Por eso la tasa es FIJA: la que la
+ * marca configura como tasa de reporte (la del presupuesto, típicamente). Si no
+ * la configuró, se ofrece la del catálogo de monedas y se avisa que es la del día.
+ */
+function cockpit_monedas(): array
+{
+    $base = (string) (function_exists('setting') ? setting('moneda', 'RD$') : 'RD$');
+    $out = ['' => [$base, 1.0, '']];
+    $fijas = [];
+    foreach (preg_split('/\R/', (string) cockpit_param('tasas_reporte', '')) as $l) {
+        if (preg_match('/^\s*([A-Za-z]{3})\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*$/', $l, $m) && (float) str_replace(',', '.', $m[2]) > 0) {
+            $fijas[strtoupper($m[1])] = (float) str_replace(',', '.', $m[2]);
+        }
+    }
+    $simbolos = ['USD' => 'US$', 'EUR' => '€'];
+    foreach ($fijas as $cod => $tasa) $out[$cod] = [$simbolos[$cod] ?? $cod, $tasa, 'tasa de reporte fija'];
+    if (function_exists('mon_disponible') && mon_disponible()) {
+        foreach (monedas() as $mo) {
+            if (!empty($mo['es_base']) || isset($out[$mo['codigo']]) || (float) $mo['tasa'] <= 0) continue;
+            $out[$mo['codigo']] = [$mo['simbolo'] ?: $mo['codigo'], (float) $mo['tasa'], 'tasa del día (configura una fija)'];
+        }
+    }
+    return $out;
+}
+
+/** La moneda elegida en la URL (?moneda=USD) o la base. [código, símbolo, tasa, nota] */
+function cockpit_moneda(): array
+{
+    static $m = null;
+    if ($m !== null) return $m;
+    $cod = strtoupper((string) (function_exists('get') ? get('moneda') : ''));
+    $monedas = cockpit_monedas();
+    if (!isset($monedas[$cod])) $cod = '';
+    [$sim, $tasa, $nota] = $monedas[$cod];
+    return $m = [$cod, $sim, $tasa, $nota];
+}
+
+/** Pesos por unidad de la moneda de reporte (1 = moneda base). */
+function cockpit_divisor(): float
+{
+    return function_exists('get') && get('moneda') !== '' ? cockpit_moneda()[2] : 1.0;
 }
 
 /** Opciones de segmento que existen (producto o, si falta, categoría). */

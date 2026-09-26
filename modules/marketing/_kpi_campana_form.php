@@ -39,7 +39,14 @@ $kcSucursales = sucursales_visibles();
             <div><label class="label" for="kc_lyi">Desde (año anterior)</label><input id="kc_lyi" type="date" name="ly_inicio" x-model="f.ly_inicio" class="input"></div>
             <div><label class="label" for="kc_lyf">Hasta (año anterior)</label><input id="kc_lyf" type="date" name="ly_fin" x-model="f.ly_fin" class="input"></div>
           </div>
-          <p class="text-xs text-slate-400 -mt-2">Si dejas vacío el año anterior, se comparan las mismas fechas un año antes. Para un Black Friday conviene poner el viernes del año pasado.</p>
+          <div class="flex flex-wrap items-center gap-2 -mt-2">
+            <p class="text-xs text-slate-400 flex-1 min-w-[220px]">Si dejas vacío el año anterior, se comparan las mismas fechas un año antes. Para un Black Friday conviene el mismo día de la semana.</p>
+            <button type="button" class="btn btn-soft btn-sm"
+                    @click="const a = d => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() - 364); return x.toISOString().slice(0, 10); };
+                            f.ly_inicio = a(f.fecha_inicio); f.ly_fin = a(f.fecha_fin);">
+              <?= icon('calendar', 'w-3.5 h-3.5') ?> Alinear por día de la semana
+            </button>
+          </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="label" for="kc_suc">Sucursal</label>

@@ -306,6 +306,63 @@ function notif_generar(): void
     notif_gen_ecf();
     notif_gen_ponche();
     notif_gen_antiguedad();
+    notif_gen_promociones();
+}
+
+/**
+ * Promociones y campañas (Promotion Cockpit).
+ *
+ *   · Promoción vigente desde hace una semana que nadie ha usado: o está mal
+ *     configurada (alcance, canal, producto equivocado) o no le interesa a
+ *     nadie. En los dos casos alguien tiene que mirarla.
+ *   · Campaña en curso que, al ritmo del año anterior, cerraría por debajo
+ *     del 85% de su meta: todavía hay tiempo de reaccionar.
+ */
+function notif_gen_promociones(): void
+{
+    if (!function_exists('cockpit_capturando') || !cockpit_capturando()) return;
+
+    $hoy = date('Y-m-d');
+    $items = [];
+    foreach (qAll(
+        "SELECT p.id, p.nombre, p.codigo, p.fecha_inicio, p.fecha_fin FROM promociones p
+          WHERE p.activo = 1 AND p.fecha_inicio <= ? AND p.fecha_fin >= ?
+            AND NOT EXISTS (SELECT 1 FROM venta_detalles vd JOIN ventas v ON v.id = vd.venta_id
+                             WHERE vd.promocion_id = p.id AND v.fecha >= p.fecha_inicio)
+          ORDER BY p.fecha_inicio LIMIT 20",
+        [date('Y-m-d', strtotime('-7 days')), $hoy]
+    ) as $p) {
+        $dias = (int) floor((strtotime($hoy) - strtotime($p['fecha_inicio'])) / 86400);
+        $items[] = [
+            'clave' => 'promo_sin_uso:' . (int) $p['id'], 'categoria' => 'ventas', 'prioridad' => $dias >= 21 ? 'alta' : 'media',
+            'titulo' => 'Promoción sin uso: ' . ($p['codigo'] ? $p['codigo'] . ' ' : '') . $p['nombre'],
+            'mensaje' => 'Lleva ' . $dias . ' días vigente y ninguna venta la ha usado. Revisa a qué aplica o retírala.',
+            'url' => 'modules/marketing/cockpit.php?tab=detalle&vista=menos', 'icono' => 'percent', 'color' => 'amber',
+            'permiso' => 'promociones.editar', 'referencia_tipo' => 'promocion', 'referencia_id' => (int) $p['id'],
+        ];
+    }
+    notif_sync('promo_sin_uso', $items);
+
+    $items = [];
+    if (function_exists('kpi_proyeccion') && cockpit_disponible()) {
+        foreach (qAll("SELECT * FROM kpi_campanas WHERE fecha_inicio < ? AND fecha_fin >= ?", [$hoy, $hoy]) as $c) {
+            $meta = (float) $c['meta_ventas'] ?: (float) qVal("SELECT COALESCE(SUM(meta),0) FROM kpi_campana_metas WHERE campana_id = ?", [$c['id']]);
+            if ($meta <= 0) continue;
+            $p = kpi_proyeccion(kpi_por_dia($c, $c['fecha_inicio'], $c['fecha_fin']), array_values(kpi_por_dia($c, $c['ly_inicio'], $c['ly_fin'])), $hoy);
+            if (!$p || $p['transcurridos'] < 3) continue;   // con dos días no hay tendencia que valga
+            $pct = $p['proyeccion'] / $meta * 100;
+            if ($pct >= 85) continue;
+            $items[] = [
+                'clave' => 'campana_bajo_meta:' . (int) $c['id'], 'categoria' => 'ventas', 'prioridad' => $pct < 70 ? 'alta' : 'media',
+                'titulo' => 'Campaña por debajo de la meta: ' . $c['nombre'],
+                'mensaje' => 'Al ritmo actual cerraría en ' . number_format($pct, 0) . '% de su meta (día ' . $p['transcurridos'] . ' de ' . $p['total'] . ').',
+                'url' => 'modules/marketing/kpi_campana.php?id=' . (int) $c['id'], 'icono' => 'target', 'color' => 'rose',
+                'sucursal_id' => $c['sucursal_id'] ? (int) $c['sucursal_id'] : null,
+                'permiso' => 'kpi_campanas.ver', 'referencia_tipo' => 'kpi_campana', 'referencia_id' => (int) $c['id'],
+            ];
+        }
+    }
+    notif_sync('campana_bajo_meta', $items);
 }
 
 /**

@@ -84,6 +84,36 @@ titulo('Fechas');
 comprueba('un año antes', cockpit_un_anio_antes('2026-09-23'), '2025-09-23');
 comprueba('29 de febrero cae en el 28', cockpit_un_anio_antes('2024-02-29'), '2023-02-28');
 
+titulo('Hallazgos');
+if (!function_exists('e')) { function e($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); } }
+$tot = fn(array $ty, array $ly) => ['ty' => cockpit_metricas($ty, $ty['gs']), 'ly' => cockpit_metricas($ly, $ly['gs']),
+    'ef' => cockpit_efectos($ty, $ly, $ty['gs'], $ly['gs'])];
+$T = $tot($fila(10000, 8500, 5000), $fila(10000, 9000, 5000));
+$tiposH = ['gwp' => ['ty' => cockpit_metricas($fila(3000, 2000, 1500), 10000), 'ly' => cockpit_metricas($fila(3000, 2500, 1500), 10000)],
+           'sin' => ['ty' => cockpit_metricas($fila(7000, 7000, 3500), 10000), 'ly' => cockpit_metricas($fila(7000, 7000, 3500), 10000)]];
+$hz = cockpit_hallazgos($T, $tiposH, 30.0, 30.0);
+$textos = implode(' | ', array_column($hz, 'texto'));
+comprueba('avisa que la tasa de descuento subió', str_contains($textos, 'tasa de descuento subió'), true);
+comprueba('señala el tipo que más cuesta', str_contains($textos, 'es el tipo que más cuesta'), true);
+comprueba('el aviso de tasa sale en rojo', $hz[array_search(true, array_map(fn($x) => str_contains($x['texto'], 'tasa de descuento'), $hz))]['tono'], 'malo');
+comprueba('nunca más de los pedidos', count(cockpit_hallazgos($T, $tiposH, 30.0, 10.0, 2)), 2);
+comprueba('sin año anterior no inventa comparaciones', count(array_filter(cockpit_hallazgos($tot($fila(100, 90, 50), $fila(0, 0, 0)), [], 0.0, 0.0), fn($x) => str_contains($x['texto'], 'pts'))), 0);
+
+titulo('Proyección de campaña');
+require_once dirname(__DIR__) . '/includes/kpi_campanas.php';
+$dias = fn(array $v, string $ini) => array_combine(array_map(fn($i) => date('Y-m-d', strtotime("$ini +$i day")), array_keys($v)), array_map(fn($x) => ['ns' => (float) $x], $v));
+// El año pasado el pico fue al final: 10+10 los dos primeros días de 4 (20 de 100).
+$ly = array_values($dias([10, 10, 30, 50], '2025-11-01'));
+$ty = $dias([12, 12, 0, 0], '2026-11-01');
+$pr = kpi_proyeccion($ty, $ly, '2026-11-03');
+comprueba('proyecta con la forma del año anterior', $pr['proyeccion'], 120.0);
+comprueba('cuenta solo los días cerrados', $pr['transcurridos'], 2);
+$pr = kpi_proyeccion($dias([10, 10, 0, 0], '2026-11-01'), [], '2026-11-03');
+comprueba('sin año anterior, promedio diario', $pr['proyeccion'], 40.0);
+$pr = kpi_proyeccion($dias([10, 10, 0, 0], '2026-11-01'), [['ns' => 5], ['ns' => 5], ['ns' => 0], ['ns' => 0]], '2026-11-03');
+comprueba('año anterior sin venta en lo que falta: promedio diario', [$pr['proyeccion'], $pr['metodo']], [40.0, 'promedio diario']);
+comprueba('fuera de las fechas no proyecta', kpi_proyeccion($ty, $ly, '2026-12-01'), null);
+
 titulo('Catálogos');
 comprueba('todo motivo de caja tiene su tipo en el cockpit', array_diff(array_keys(cockpit_motivos_caja()), array_keys(cockpit_tipos())), []);
 comprueba('toda familia de promoción tiene su tipo', array_diff(array_keys(cockpit_tipos_promocion()), array_keys(cockpit_tipos())), []);

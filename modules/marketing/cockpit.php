@@ -68,8 +68,20 @@ $TY = $f['ty']; $LY = $f['ly'];
 $tipos = cockpit_tipos();
 $x = cockpit_expr();
 
-$totTY = cockpit_metricas(cockpit_totales($f, $TY));
-$totLY = cockpit_metricas(cockpit_totales($f, $LY));
+// En el resumen los totales son la suma de los tipos, que ya se consultan:
+// dos barridos del periodo menos (≈0,4 s con 60.000 ventas).
+if ($tab === 'resumen') {
+    $porTipoTY = cockpit_por($f, $TY, $x['tipo']);
+    $porTipoLY = cockpit_por($f, $LY, $x['tipo']);
+    $totTY = cockpit_metricas(cockpit_sumar($porTipoTY));
+    $totLY = cockpit_metricas(cockpit_sumar($porTipoLY));
+    // Las facturas NO se pueden sumar por tipo (una factura con líneas de dos
+    // tipos contaría dos veces): se quitan para que nadie lea un dato falso.
+    unset($totTY['tickets'], $totTY['atv'], $totLY['tickets'], $totLY['atv']);
+} else {
+    $totTY = cockpit_metricas(cockpit_totales($f, $TY));
+    $totLY = cockpit_metricas(cockpit_totales($f, $LY));
+}
 $gsTY = (float) $totTY['gs']; $gsLY = (float) $totLY['gs'];
 
 /** URL de esta pantalla con parámetros cambiados. */
@@ -100,8 +112,11 @@ function ck_var(float $ty, float $ly, bool $esTasa, bool $invertir = false): str
 /** Importe entero con símbolo: en una tarjeta los centavos solo estorban. */
 function ck_money(float $v): string
 {
-    return e(setting('moneda', 'RD$')) . ' ' . cockpit_n($v);
+    return e(cockpit_moneda()[1]) . ' ' . cockpit_n($v);
 }
+
+// Los gráficos escriben sus importes en la moneda elegida.
+$GLOBALS['graficos_moneda'] = cockpit_moneda()[1];
 
 /** Tarjeta compacta del cockpit: valor TY, LY y variación. */
 function ck_tile(string $titulo, string $valorTY, string $valorLY, string $var, string $extra = ''): string
@@ -122,8 +137,6 @@ $etqMeses = array_map(fn($ym) => mesNombre((int) substr($ym, 5, 2), true), $mese
  * ============================================================ */
 $filasTipo = [];
 if ($tab === 'resumen') {
-    $porTipoTY = cockpit_por($f, $TY, $x['tipo']);
-    $porTipoLY = cockpit_por($f, $LY, $x['tipo']);
     $claves = array_unique(array_merge(array_keys($porTipoTY), array_keys($porTipoLY)));
     foreach ($claves as $k) {
         $ty = $porTipoTY[$k] ?? cockpit_vacio();
@@ -307,7 +320,12 @@ if (export_solicitado()) {
 /* ============================================================
  *  Pantalla
  * ============================================================ */
-$acciones = rep_barra_titulo(can('cockpit.configurar')
+// Copiar la vista: los filtros viven en la URL, así que compartir el enlace
+// es compartir exactamente lo que uno está mirando.
+$copiar = '<button type="button" x-data="{ok:false}" @click="navigator.clipboard.writeText(location.href).then(() => { ok = true; setTimeout(() => ok = false, 1800); })"'
+    . ' class="btn btn-ghost no-print" title="Copia el enlace con todos los filtros">' . icon('file', 'w-4 h-4')
+    . ' <span x-text="ok ? \'¡Copiado!\' : \'Copiar enlace\'">Copiar enlace</span></button>';
+$acciones = $copiar . rep_barra_titulo(can('cockpit.configurar')
     ? '<a href="' . e(url('modules/marketing/cockpit_config.php')) . '" class="btn btn-ghost no-print">' . icon('settings', 'w-4 h-4') . ' Configurar</a>' : '');
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
@@ -385,12 +403,30 @@ $nFiltros = count(array_filter([get('sucursal_id'), get('tienda_id'), $f['canal'
     </div>
     <div>
       <label class="label" for="ck_lyd">Año anterior (LY)</label>
-      <input id="ck_lyd" type="date" name="ly_desde" value="<?= e($LY[0]) ?>" class="input">
+      <input type="hidden" name="ly_manual" id="ck_lyman" value="<?= $f['ly_manual'] ? '1' : '0' ?>">
+      <input id="ck_lyd" type="date" name="ly_desde" value="<?= e($LY[0]) ?>" class="input" oninput="document.getElementById('ck_lyman').value='1'">
     </div>
     <div>
       <label class="label" for="ck_lyh">&nbsp;<span class="sr-only">Hasta</span></label>
-      <input id="ck_lyh" type="date" name="ly_hasta" value="<?= e($LY[1]) ?>" class="input" aria-label="Año anterior hasta">
+      <input id="ck_lyh" type="date" name="ly_hasta" value="<?= e($LY[1]) ?>" class="input" aria-label="Año anterior hasta" oninput="document.getElementById('ck_lyman').value='1'">
     </div>
+    <div class="col-span-2 md:col-span-1">
+      <label class="label" for="ck_lym">Comparar con</label>
+      <select id="ck_lym" name="ly_modo" class="select" onchange="document.getElementById('ck_lyman').value='0'">
+        <option value="fecha" <?= $f['ly_modo'] === 'fecha' ? 'selected' : '' ?>>Mismas fechas</option>
+        <option value="semana" <?= $f['ly_modo'] === 'semana' ? 'selected' : '' ?>>Mismo día de la semana</option>
+      </select>
+    </div>
+    <?php if (count(cockpit_monedas()) > 1): ?>
+    <div class="col-span-2 md:col-span-1">
+      <label class="label" for="ck_mon">Moneda</label>
+      <select id="ck_mon" name="moneda" class="select">
+        <?php foreach (cockpit_monedas() as $cod => [$sim, $tasa, $nota]): ?>
+          <option value="<?= e($cod) ?>" <?= cockpit_moneda()[0] === $cod ? 'selected' : '' ?>><?= e($cod === '' ? $sim . ' (base)' : $cod . ' · ' . $sim) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <?php endif; ?>
     <label class="col-span-2 md:col-span-1 flex items-center gap-2 text-sm text-slate-600 min-h-[44px]" title="Solo las sucursales que vendieron en los dos periodos">
       <input type="checkbox" name="samestore" value="1" <?= $f['samestore'] ? 'checked' : '' ?> class="rounded border-slate-300 text-blue-600">
       Mismas tiendas
@@ -402,13 +438,24 @@ $nFiltros = count(array_filter([get('sucursal_id'), get('tienda_id'), $f['canal'
   <div class="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-slate-100">
     <span class="text-xs text-slate-400 mr-1">Rápido:</span>
     <?php foreach ($presets as $lbl => [$d, $h]): ?>
-      <a href="<?= e(ck_url(['ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => null, 'ly_hasta' => null])) ?>"
+      <a href="<?= e(ck_url(['ty_desde' => $d, 'ty_hasta' => $h, 'ly_desde' => null, 'ly_hasta' => null, 'ly_manual' => null])) ?>"
          class="px-2.5 py-1 rounded-lg text-xs font-semibold <?= $TY === [$d, $h] ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100' ?>"><?= e($lbl) ?></a>
     <?php endforeach; ?>
-    <span class="text-xs text-slate-400 ml-auto">El año anterior se toma, por defecto, en las mismas fechas.</span>
+    <span class="text-xs text-slate-400 ml-auto"><?= $f['ly_modo'] === 'semana'
+        ? 'El año anterior se toma 52 semanas antes: cada día contra el mismo día de la semana.'
+        : 'El año anterior se toma, por defecto, en las mismas fechas.' ?></span>
   </div>
   </div>
 </div>
+
+<?php [$monCod, $monSim, $monTasa, $monNota] = cockpit_moneda(); if ($monCod !== ''): ?>
+  <div class="card p-3 mb-5 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+    <?= icon('coins', 'w-4 h-4 text-slate-400') ?>
+    Cifras en <strong><?= e($monCod) ?></strong> a <strong><?= e(setting('moneda', 'RD$')) ?> <?= e(number_format($monTasa, 2)) ?></strong> por <?= e($monSim) ?> (<?= e($monNota) ?>).
+    Los porcentajes no cambian con la moneda.
+    <a href="<?= e(ck_url(['moneda' => null])) ?>" class="ml-auto text-blue-600 hover:underline">Ver en <?= e(setting('moneda', 'RD$')) ?></a>
+  </div>
+<?php endif; ?>
 
 <?php
 // Honestidad con el histórico: antes de esta versión la venta no guardaba el
@@ -435,6 +482,31 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
   $dirTY = $directo($totTY, $porTipoTyPlano); $dirLY = $directo($totLY, $porTipoLyPlano);
   $regTY = $regalos($totTY, $porTipoTyPlano); $regLY = $regalos($totLY, $porTipoLyPlano);
 ?>
+  <?php
+  $hallazgos = cockpit_hallazgos($filaTotal, $filasTipo, $pPromoTY, $pPromoLY);
+  $sinUso = cockpit_promos_sin_uso($TY[0], $TY[1]);
+  if ($sinUso) {
+      $nombresSU = array_map(fn($p) => ($p['codigo'] ? $p['codigo'] . ' ' : '') . $p['nombre'], array_slice($sinUso, 0, 3));
+      array_unshift($hallazgos, ['tono' => 'malo', 'tipo' => null, 'peso' => 99, 'url' => ck_url(['tab' => 'detalle', 'vista' => 'menos']),
+          'texto' => '<b>' . count($sinUso) . ' promoción(es) vigente(s) que nadie usó</b> en el periodo: ' . e(implode(', ', $nombresSU)) . (count($sinUso) > 3 ? '…' : '') . '.']);
+  }
+  $tonos = ['bueno' => ['text-emerald-600 bg-emerald-50', 'arrow-up'], 'malo' => ['text-rose-600 bg-rose-50', 'alert'], 'neutro' => ['text-blue-600 bg-blue-50', 'target']];
+  ?>
+  <?php if ($hallazgos): ?>
+  <section class="card p-4 mb-5" aria-labelledby="hallazgos_t">
+    <h3 id="hallazgos_t" class="text-xs font-bold uppercase tracking-wider text-amber-600 mb-3">Lo más importante</h3>
+    <ul class="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-2.5">
+      <?php foreach ($hallazgos as $hz):
+        [$cls, $ico] = $tonos[$hz['tono']];
+        $url = $hz['url'] ?? ($hz['tipo'] ? ck_url(['tab' => 'detalle', 'tipo' => $hz['tipo']]) : null); ?>
+        <li class="flex items-start gap-3 text-sm text-slate-600">
+          <span class="w-7 h-7 rounded-lg <?= $cls ?> flex items-center justify-center shrink-0" aria-hidden="true"><?= icon($ico, 'w-3.5 h-3.5') ?></span>
+          <span class="pt-1"><?= $hz['texto'] ?><?php if ($url): ?> <a href="<?= e($url) ?>" class="text-blue-600 hover:underline whitespace-nowrap">Ver detalle →</a><?php endif; ?></span>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  </section>
+  <?php endif; ?>
   <div class="grid grid-cols-1 xl:grid-cols-12 gap-4 mb-5">
     <!-- Ventas y margen -->
     <section class="card p-4 xl:col-span-4">
@@ -505,7 +577,7 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
     </section>
     <section class="card p-4">
       <h3 class="font-bold text-slate-800">Cuánto cuesta cada tipo de descuento</h3>
-      <p class="text-sm text-slate-400 mb-2">Descuento en <?= e(setting('moneda', 'RD$')) ?> · toca una barra para ver sus promociones</p>
+      <p class="text-sm text-slate-400 mb-2">Descuento en <?= e(cockpit_moneda()[1]) ?> · toca una barra para ver sus promociones</p>
       <?php
       $cats = array_map(fn($k) => cockpit_tipo_label($k), array_keys($tiposGraf));
       $dTy = []; $dLy = [];

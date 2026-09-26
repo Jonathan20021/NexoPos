@@ -107,10 +107,58 @@ $campanas = qAll(
 );
 $hoy = date('Y-m-d');
 
+// Resultado de cada campaña: dos consultas livianas por campaña (este año y el
+// comparable). La meta es la de la campaña o la suma de sus metas por canal.
+$metasCanal = array_column(qAll("SELECT campana_id, SUM(meta) m FROM kpi_campana_metas GROUP BY campana_id"), 'm', 'campana_id');
+foreach ($campanas as &$c) {
+    $c['r_ty'] = kpi_ventas_rango($c, $c['fecha_inicio'], $c['fecha_fin']);
+    $c['r_ly'] = kpi_ventas_rango($c, $c['ly_inicio'], $c['ly_fin']);
+    $c['meta'] = (float) $c['meta_ventas'] > 0 ? (float) $c['meta_ventas'] : (float) ($metasCanal[$c['id']] ?? 0);
+}
+unset($c);
+$fmtCrec = function (?float $d): string {
+    if ($d === null) return '<span class="text-slate-300">—</span>';
+    return '<span class="font-semibold ' . ($d >= 0 ? 'text-emerald-600' : 'text-rose-600') . '">' . ($d >= 0 ? '+' : '−') . number_format(abs($d), 1) . '%</span>';
+};
+
 $acciones = (can('cockpit.configurar') ? '<a href="' . e(url('modules/marketing/cockpit_config.php?tab=kpis')) . '" class="btn btn-ghost">' . icon('settings', 'w-4 h-4') . ' Configurar KPIs y rubros</a>' : '')
     . (can('kpi_campanas.crear') ? btn_nuevo('kc:new', 'Nueva campaña') : '');
 layout_start('KPIs de campañas', 'Holiday, Black Friday y cada activación: venta por canal y por día, SKUs foco, inversión y retorno', $acciones);
 ?>
+
+<?php
+// Comparativo entre campañas (las 12 más recientes que ya tienen venta).
+$conVenta = array_slice(array_filter($campanas, fn($c) => $c['r_ty']['ns'] > 0 || $c['r_ly']['ns'] > 0), 0, 12);
+if (count($conVenta) >= 2):
+    $conVenta = array_reverse($conVenta);
+    $cats = []; $a = []; $b = []; $m = [];
+    foreach ($conVenta as $c) {
+        $cats[] = $c['nombre'];
+        $url = url('modules/marketing/kpi_campana.php?id=' . (int) $c['id']);
+        $tip = '<b>' . e($c['nombre']) . '</b><br>Venta neta: <b>' . e(money($c['r_ty']['ns'])) . '</b><br>Año anterior: ' . e(money($c['r_ly']['ns']))
+            . ($c['meta'] > 0 ? '<br>Meta: ' . e(money($c['meta'])) . ' (' . number_format($c['r_ty']['ns'] / $c['meta'] * 100, 0) . '%)' : '')
+            . ((float) $c['inversion'] > 0 ? '<br>MER: <b>' . number_format($c['r_ty']['ns'] / (float) $c['inversion'], 2) . 'x</b>' : '');
+        $a[] = ['value' => round($c['r_ty']['ns']), 'url' => $url, 'tip' => $tip];
+        $b[] = ['value' => round($c['r_ly']['ns']), 'url' => $url, 'tip' => $tip];
+        $m[] = $c['meta'] > 0 ? round($c['meta']) : null;
+    }
+?>
+  <section class="card p-4 mb-5">
+    <h3 class="font-bold text-slate-800">Campañas lado a lado</h3>
+    <p class="text-sm text-slate-400 mb-2">Venta neta de cada campaña contra su periodo comparable y su meta · toca una barra para abrirla</p>
+    <?= grafico([
+        'legend' => ['data' => ['Este año', 'Año anterior', 'Meta']],
+        'tooltip' => ['trigger' => 'item'],
+        'xAxis' => ['type' => 'category', 'data' => $cats, 'axisLabel' => ['interval' => 0, 'width' => 110, 'overflow' => 'truncate']],
+        'yAxis' => ['type' => 'value'],
+        'series' => [
+            ['name' => 'Este año', 'type' => 'bar', 'data' => $a, 'barMaxWidth' => 30, 'itemStyle' => ['color' => GRAF_TY, 'borderRadius' => [4, 4, 0, 0]]],
+            ['name' => 'Año anterior', 'type' => 'bar', 'data' => $b, 'barMaxWidth' => 30, 'itemStyle' => ['color' => GRAF_LY, 'borderRadius' => [4, 4, 0, 0]]],
+            ['name' => 'Meta', 'type' => 'scatter', 'data' => $m, 'symbol' => 'rect', 'symbolSize' => [44, 3], 'itemStyle' => ['color' => '#0f172a'], 'z' => 5],
+        ],
+    ], ['formato' => 'money0', 'titulo' => 'Campañas lado a lado'], '300px') ?>
+  </section>
+<?php endif; ?>
 
 <div class="card overflow-hidden">
   <?= toolbar(search_box('Buscar campaña...'), toolbar_conteo(count($campanas), 'campaña')) ?>
@@ -120,7 +168,7 @@ layout_start('KPIs de campañas', 'Holiday, Black Friday y cada activación: ven
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Campaña</th><th>Este año</th><th>Comparable</th><th>Alcance</th><th class="text-right">Meta</th><th class="text-right">Inversión</th><th class="text-center">Estado</th><th class="text-right">Acciones</th></tr></thead>
+        <thead><tr><th>Campaña</th><th>Este año</th><th>Comparable</th><th>Alcance</th><th class="text-right">Venta neta</th><th class="text-right">vs. año ant.</th><th class="text-right">Meta</th><th class="text-right">Inversión</th><th class="text-right" title="Venta neta ÷ inversión">MER</th><th class="text-center">Estado</th><th class="text-right">Acciones</th></tr></thead>
         <tbody>
         <?php foreach ($campanas as $c):
           [$et, $col] = $c['fecha_fin'] < $hoy ? ['Cerrada', 'slate'] : ($c['fecha_inicio'] > $hoy ? ['Programada', 'amber'] : ['En curso', 'emerald']); ?>
@@ -132,8 +180,11 @@ layout_start('KPIs de campañas', 'Holiday, Black Friday y cada activación: ven
             <td class="text-sm text-slate-600 whitespace-nowrap"><?= e(fechaCorta($c['fecha_inicio'])) ?> — <?= e(fechaCorta($c['fecha_fin'])) ?></td>
             <td class="text-sm text-slate-400 whitespace-nowrap"><?= e(fechaCorta($c['ly_inicio'])) ?> — <?= e(fechaCorta($c['ly_fin'])) ?></td>
             <td class="text-sm text-slate-500"><?= e($c['sucursal'] ?: 'Todas las sucursales') ?><?= $c['tienda_id'] ? ' · ' . e(tiendas_opciones()[(int) $c['tienda_id']] ?? '') : '' ?></td>
-            <td class="text-right tabular-nums"><?= (float) $c['meta_ventas'] > 0 ? money($c['meta_ventas']) : '<span class="text-slate-300">—</span>' ?></td>
-            <td class="text-right tabular-nums"><?= (float) $c['inversion'] > 0 ? money($c['inversion']) : '<span class="text-slate-300">—</span>' ?></td>
+            <td class="text-right tabular-nums font-semibold whitespace-nowrap"><?= $c['r_ty']['ns'] > 0 ? money($c['r_ty']['ns']) : '<span class="text-slate-300">—</span>' ?></td>
+            <td class="text-right"><?= $fmtCrec(kpi_crec($c['r_ty']['ns'], $c['r_ly']['ns'])) ?></td>
+            <td class="text-right tabular-nums whitespace-nowrap"><?= $c['meta'] > 0 ? money($c['meta']) . '<p class="text-xs ' . ($c['r_ty']['ns'] >= $c['meta'] ? 'text-emerald-600' : 'text-slate-400') . '">' . number_format($c['r_ty']['ns'] / $c['meta'] * 100, 0) . '% logrado</p>' : '<span class="text-slate-300">—</span>' ?></td>
+            <td class="text-right tabular-nums whitespace-nowrap"><?= (float) $c['inversion'] > 0 ? money($c['inversion']) : '<span class="text-slate-300">—</span>' ?></td>
+            <td class="text-right tabular-nums"><?= (float) $c['inversion'] > 0 && $c['r_ty']['ns'] > 0 ? number_format($c['r_ty']['ns'] / (float) $c['inversion'], 2) . 'x' : '<span class="text-slate-300">—</span>' ?></td>
             <td class="text-center"><?= badge($et, $col) ?></td>
             <td>
               <div class="flex items-center justify-end gap-1">

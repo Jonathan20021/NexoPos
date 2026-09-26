@@ -22,6 +22,12 @@ const GRAF_LY = '#c3c2b7';
 const GRAF_BUENO = '#0ca30c';
 const GRAF_MALO = '#d03b3b';
 
+/** Símbolo con que se escriben los importes (la página puede reportar en otra moneda). */
+function graficos_moneda(): string
+{
+    return (string) ($GLOBALS['graficos_moneda'] ?? setting('moneda', 'RD$'));
+}
+
 /** Carga las librerías una sola vez por página. */
 function graficos_script(): string
 {
@@ -30,7 +36,7 @@ function graficos_script(): string
     $hecho = true;
     return '<script src="' . e(asset('js/vendor/echarts.min.js')) . '"></script>'
         . '<script src="' . e(asset('js/nexo-graficos.js')) . '"></script>'
-        . '<script>NexoGraficos.moneda=' . json_encode((string) setting('moneda', 'RD$')) . ';</script>';
+        . '<script>NexoGraficos.moneda=' . json_encode(graficos_moneda()) . ';</script>';
 }
 
 /**
@@ -116,7 +122,7 @@ function grafico_cascada(string $etqIni, float $ini, array $pasos, string $etqFi
     }
     $cats[] = $etqFin; $base[] = 0; $vals[] = ['value' => round($fin, 2), 'itemStyle' => ['color' => GRAF_TY]];
     // El tooltip enseña el efecto con su signo, no la altura de la barra.
-    $moneda = (string) setting('moneda', 'RD$');
+    $moneda = graficos_moneda();
     foreach ($vals as $i => &$d) {
         $real = $d['real'] ?? $d['value'];
         $d['tip'] = '<b>' . e($cats[$i]) . '</b><br>' . ($i > 0 && $i < count($vals) - 1 ? ($real >= 0 ? '+' : '−') : '')
