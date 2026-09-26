@@ -207,8 +207,21 @@ layout_start('Promociones', 'Descuentos automáticos por temporada, categoría, 
 <!-- Modal crear/editar -->
 <?php $promoVacia = ['id' => 0, 'nombre' => '', 'descripcion' => '', 'codigo' => '', 'tipo_descuento' => '', 'tipo' => 'porcentaje', 'valor' => 0,
                     'alcance' => 'todos', 'objetivo_id' => '', 'canal' => 'ambos',
-                    'fecha_inicio' => $hoy, 'fecha_fin' => $hoy, 'prioridad' => 0, 'activo' => 1]; ?>
-<div x-data="{open:false, f:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>, vacio:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>}"
+                    'fecha_inicio' => $hoy, 'fecha_fin' => $hoy, 'prioridad' => 0, 'activo' => 1];
+// Desde el simulador del cockpit: el formulario se abre ya lleno con lo simulado.
+$promoPrellenada = null;
+if (get('nueva') === '1' && can('promociones.crear')) {
+    $dias = min(120, max(1, (int) get('dias', 14)));
+    $promoPrellenada = array_merge($promoVacia, [
+        'nombre'      => mb_substr(trim((string) get('nombre')), 0, 120),
+        'tipo'        => array_key_exists((string) get('tipo'), $tipos) ? (string) get('tipo') : 'porcentaje',
+        'valor'       => round(max(0, (float) get('valor')), 2),
+        'alcance'     => array_key_exists((string) get('alcance'), $alcances) ? (string) get('alcance') : 'todos',
+        'objetivo_id' => (string) (int) get('objetivo') ?: '',
+        'fecha_fin'   => date('Y-m-d', strtotime($hoy . ' +' . ($dias - 1) . ' days')),
+    ]);
+} ?>
+<div x-data="{open:<?= $promoPrellenada ? 'true' : 'false' ?>, f:<?= htmlspecialchars(json_encode($promoPrellenada ?? $promoVacia), ENT_QUOTES) ?>, vacio:<?= htmlspecialchars(json_encode($promoVacia), ENT_QUOTES) ?>}"
      @promo:new.window="f=JSON.parse(JSON.stringify(vacio)); open=true"
      @promo:edit.window="f=$event.detail; open=true"
      @keydown.escape.window="open=false">

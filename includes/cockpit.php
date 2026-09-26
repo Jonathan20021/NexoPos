@@ -458,6 +458,9 @@ function cockpit_where(array $f, array $rango, bool $porLinea = true): array
         [$wt, $pt] = tiendaScope('v.tienda_id');
         $w[] = $wt; $p = array_merge($p, $pt);
     }
+    // Alcance fijo de quien llama (una campaña de una sucursal o una tienda).
+    if (!empty($f['sucursal_fija'])) { $w[] = 'v.sucursal_id = ?'; $p[] = (int) $f['sucursal_fija']; }
+    if (!empty($f['tienda_fija']))   { $w[] = 'v.tienda_id = ?';   $p[] = (int) $f['tienda_fija']; }
     if ($f['canal']) {
         $w[] = cockpit_canal_sql('v') . ' = ?';
         $p[] = $f['canal'];
@@ -921,16 +924,11 @@ function cockpit_efectividad(array $f, array $rango, int $maxBase = 28, int $top
         $promos[(int) $pr['id']] = $pr;
     }
 
-    $suma = function (array $prods, string $ini, string $fin) use ($f, $x) {
-        [$w, $p] = cockpit_where($f, [$ini, $fin]);
-        $r = qOne("SELECT COALESCE(SUM(vd.cantidad),0) qty, COALESCE(SUM({$x['ns']}),0) ns, COALESCE(SUM({$x['costo']}),0) costo "
-                  . cockpit_from() . " WHERE $w AND vd.es_muestra = 0 AND vd.producto_id IN (" . implode(',', $prods) . ")", $p) ?: [];
-        return ['qty' => (float) ($r['qty'] ?? 0), 'ns' => (float) ($r['ns'] ?? 0), 'margen' => (float) ($r['ns'] ?? 0) - (float) ($r['costo'] ?? 0)];
-    };
-
     // Antes del primer día con ventas no hay «antes» que valga.
     $primeraVenta = (string) (qVal("SELECT MIN(fecha) FROM ventas WHERE " . rep_estados_venta('ventas')) ?? '');
-    $out = [];
+    // Primero las ventanas de cada promoción; después UNA consulta producto × día
+    // que cubre todas (antes era una por ventana: 1,4 s con 60.000 ventas).
+    $plan = [];
     foreach ($porPromo as $id => $d) {
         $pr = $promos[$id] ?? null;
         if (!$pr) continue;
@@ -941,12 +939,40 @@ function cockpit_efectividad(array $f, array $rango, int $maxBase = 28, int $top
         $diasBase = min($dias, $maxBase);
         $bFin = date('Y-m-d', strtotime($pr['fecha_inicio'] . ' -1 day'));
         $bIni = date('Y-m-d', strtotime($bFin . ' -' . ($diasBase - 1) . ' days'));
-        $prods = array_values(array_unique($d['prods']));
-        $dur = $suma($prods, $ini, $fin);
         // Una promoción de meses no tiene un «antes» comparable: es el precio
         // normal de ese periodo. Tampoco si la base cae antes de que hubiera ventas.
         $larga = (strtotime($pr['fecha_fin']) - strtotime($pr['fecha_inicio'])) / 86400 > 90;
-        $sinHistoria = $primeraVenta === '' || $bIni . ' 00:00:00' < substr($primeraVenta, 0, 10) . ' 00:00:00';
+        $sinHistoria = $primeraVenta === '' || $bIni < substr($primeraVenta, 0, 10);
+        $plan[$id] = compact('pr', 'ini', 'fin', 'dias', 'diasBase', 'bIni', 'bFin', 'larga', 'sinHistoria') + ['prods' => array_values(array_unique($d['prods']))];
+    }
+    if (!$plan) return [];
+    $desde = min(array_map(fn($v) => $v['larga'] || $v['sinHistoria'] ? $v['ini'] : min($v['ini'], $v['bIni']), $plan));
+    $hasta = max(array_column($plan, 'fin'));
+    $todos = array_values(array_unique(array_merge(...array_column($plan, 'prods'))));
+    [$w, $p] = cockpit_where($f, [$desde, $hasta]);
+    $cubo = [];
+    foreach (qAll("SELECT vd.producto_id k_prod, DATE(v.fecha) k_dia, SUM(vd.cantidad) qty, SUM({$x['ns']}) ns, SUM({$x['costo']}) costo "
+                  . cockpit_from() . " WHERE $w AND vd.es_muestra = 0 AND vd.producto_id IN (" . implode(',', array_map('intval', $todos)) . ")
+                   GROUP BY k_prod, k_dia", $p) as $r) {
+        $cubo[(int) $r['k_prod']][$r['k_dia']] = [(float) $r['qty'], (float) $r['ns'], (float) $r['ns'] - (float) $r['costo']];
+    }
+    $suma = function (array $prods, string $ini, string $fin) use ($cubo) {
+        $t = ['qty' => 0.0, 'ns' => 0.0, 'margen' => 0.0];
+        foreach ($prods as $pid) {
+            foreach ($cubo[$pid] ?? [] as $dia => [$q, $n, $m]) {
+                if ($dia < $ini || $dia > $fin) continue;
+                $t['qty'] += $q; $t['ns'] += $n; $t['margen'] += $m;
+            }
+        }
+        return $t;
+    };
+
+    $out = [];
+    foreach ($plan as $id => $v) {
+        ['pr' => $pr, 'ini' => $ini, 'fin' => $fin, 'dias' => $dias, 'diasBase' => $diasBase, 'bIni' => $bIni, 'bFin' => $bFin,
+         'larga' => $larga, 'sinHistoria' => $sinHistoria, 'prods' => $prods] = $v;
+        $d = $porPromo[$id];
+        $dur = $suma($prods, $ini, $fin);
         $base = ($larga || $sinHistoria) ? ['qty' => 0.0, 'ns' => 0.0, 'margen' => 0.0] : $suma($prods, $bIni, $bFin);
         $hayBase = $base['qty'] > 0;
         $motivo = $larga ? 'Promoción de más de 90 días: no hay un «antes» comparable'
@@ -1069,7 +1095,7 @@ function cockpit_simular(array $f, array $cfg): array
           GROUP BY k_prod HAVING SUM(vd.cantidad) > 0 ORDER BY SUM({$x['ns']}) DESC",
         array_merge($p, $pa)
     );
-    return ['base' => [$desde, $hasta, $diasBase]] + cockpit_sim_calcular($rows, $cfg, $diasBase, cockpit_divisor());
+    return ['base' => [$desde, $hasta, $diasBase], 'filas' => $rows, 'divisor' => cockpit_divisor()] + cockpit_sim_calcular($rows, $cfg, $diasBase, cockpit_divisor());
 }
 
 /**
@@ -1112,6 +1138,26 @@ function cockpit_sim_calcular(array $rows, array $cfg, int $diasBase, float $d =
             'profundidad' => $tot['ns0'] > 0 ? (1 - $tot['nsb'] / $tot['ns0']) * 100 : null, 'curva' => $curva, 'margen_sin' => $tot['m0']];
 }
 
+/**
+ * La misma promoción a varias profundidades. Cada una con su equilibrio y el
+ * margen si las unidades subieran lo que subieron promociones parecidas (o lo
+ * esperado, si no hay historia a esa profundidad).
+ */
+function cockpit_sim_escenarios(array $sim, array $cfg, array $valores, callable $aumentoPara): array
+{
+    $out = [];
+    foreach ($valores as $v) {
+        $c = ['valor' => $v, 'aumento' => 0] + $cfg;
+        $r0 = cockpit_sim_calcular($sim['filas'], $c, $sim['base'][2], $sim['divisor']);
+        [$aum, $deHistoria] = $aumentoPara($r0['profundidad']);
+        $r = cockpit_sim_calcular($sim['filas'], ['aumento' => $aum] + $c, $sim['base'][2], $sim['divisor']);
+        $out[] = ['valor' => $v, 'profundidad' => $r0['profundidad'], 'equilibrio' => $r0['equilibrio'], 'pierde' => $r0['pierde_por_unidad'],
+                  'aumento' => $aum, 'de_historia' => $deHistoria, 'ns' => $r['tot']['ns1'], 'margen' => $r['tot']['m1'],
+                  'dif' => $r['tot']['m1'] - $r['tot']['m0'], 'regalo' => $r['tot']['regalo']];
+    }
+    return $out;
+}
+
 /** WHERE del alcance de una promoción simulada. */
 function cockpit_sim_alcance(string $alcance, $objetivo): array
 {
@@ -1131,7 +1177,16 @@ function cockpit_sim_alcance(string $alcance, $objetivo): array
  */
 function cockpit_aumento_historico(array $f, ?float $profundidad): ?array
 {
-    $e = array_filter(cockpit_efectividad($f, [date('Y-m-d', strtotime('-365 days')), date('Y-m-d')]), fn($r) => $r['aumento'] !== null);
+    // El año de efectividad se calcula una vez por página (el simulador lo pide por escenario).
+    static $cache = [];
+    $clave = md5(serialize($f));
+    $cache[$clave] ??= array_values(array_filter(cockpit_efectividad($f, [date('Y-m-d', strtotime('-365 days')), date('Y-m-d')]), fn($r) => $r['aumento'] !== null));
+    return cockpit_aumento_de($cache[$clave], $profundidad);
+}
+
+/** Mediana del aumento de las promociones medidas, las de profundidad parecida si las hay. */
+function cockpit_aumento_de(array $e, ?float $profundidad): ?array
+{
     if ($profundidad !== null) {
         $cerca = array_filter($e, fn($r) => $r['profundidad'] !== null && abs($r['profundidad'] - $profundidad) <= 5);
         if ($cerca) $e = $cerca;
@@ -1139,7 +1194,8 @@ function cockpit_aumento_historico(array $f, ?float $profundidad): ?array
     if (!$e) return null;
     $v = array_column($e, 'aumento');
     sort($v);
-    $mediana = $v[intdiv(count($v), 2)];
+    $m = intdiv(count($v), 2);
+    $mediana = count($v) % 2 ? $v[$m] : ($v[$m - 1] + $v[$m]) / 2;
     return ['aumento' => $mediana, 'n' => count($v), 'parecidas' => isset($cerca) && $cerca];
 }
 

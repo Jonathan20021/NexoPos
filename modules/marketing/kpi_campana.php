@@ -172,6 +172,14 @@ $kpi = [
     'recurr'     => [$R['rec_ty']['clientes'] > 0 ? $R['rec_ty']['recurrentes'] / $R['rec_ty']['clientes'] * 100 : null, null],
 ];
 
+// Qué promociones movieron la campaña: las mismas cuentas que la pestaña
+// Efectividad del cockpit, dentro de las fechas y el alcance de la campaña.
+$fCamp = ['ty' => [$c['fecha_inicio'], $c['fecha_fin']], 'ly' => [$c['ly_inicio'], $c['ly_fin']], 'canal' => null, 'marca' => null,
+          'segmento' => null, 'linea' => null, 'samestore' => false, 'ly_modo' => 'fecha', 'ly_manual' => true,
+          'sucursal_fija' => $c['sucursal_id'] ?? null, 'tienda_fija' => $c['tienda_id'] ?? null];
+$promosCamp = $c['fecha_inicio'] <= date('Y-m-d') ? cockpit_efectividad($fCamp, [$c['fecha_inicio'], $c['fecha_fin']]) : [];
+usort($promosCamp, fn($a, $b) => $b['gs_promo'] <=> $a['gs_promo']);
+
 /* ============================================================
  *  Excel: el libro de la marca
  * ============================================================ */
@@ -317,6 +325,22 @@ if (quiere_excel()) {
     $sh->getColumnDimension('A')->setWidth(26); $sh->getColumnDimension('B')->setWidth(40);
     foreach (['C', 'D', 'E'] as $col) $sh->getColumnDimension($col)->setWidth(16);
     $sh->getColumnDimension('F')->setWidth(50);
+
+    // --- Promociones de la campaña ---
+    $sh = $ss->createSheet()->setTitle('PROMOTIONS');
+    $sh->fromArray(['Promotion', 'Discount type', 'Gross sales with promo', 'Discount given', 'Units/day before', 'Units/day during', 'Uplift', 'Incremental margin', 'Verdict'], null, 'A1');
+    $cab($sh, 'A1:I1', $azul);
+    $f = 2;
+    foreach ($promosCamp as $r) {
+        $sh->fromArray([$r['nombre'], cockpit_tipo_label($r['tipo']), $r['gs_promo'], $r['costo_desc'], $r['ud_dia_base'], $r['ud_dia'],
+            $r['aumento'] === null ? null : $r['aumento'] / 100, $r['margen_incremental'], $r['veredicto'][1] . ($r['motivo'] ? ' (' . $r['motivo'] . ')' : '')], null, 'A' . $f);
+        $f++;
+    }
+    $sh->getStyle("C2:F$f")->getNumberFormat()->setFormatCode($numFmt);
+    $sh->getStyle("H2:H$f")->getNumberFormat()->setFormatCode($numFmt);
+    $sh->getStyle("G2:G$f")->getNumberFormat()->setFormatCode($pctFmt);
+    $sh->getColumnDimension('A')->setWidth(36); $sh->getColumnDimension('B')->setWidth(30); $sh->getColumnDimension('I')->setWidth(50);
+    foreach (['C', 'D', 'E', 'F', 'G', 'H'] as $col) $sh->getColumnDimension($col)->setWidth(16);
 
     $ss->setActiveSheetIndex(1);
     $nombre = preg_replace('/[^A-Za-z0-9_-]+/', '_', $c['nombre']) . '_KPIs.xlsx';
@@ -613,6 +637,44 @@ foreach ($diasTY as $d => $a) {
         <td class="text-right px-4 tabular-nums"><?= ($sumA['ns'] - $sumB['ns'] >= 0 ? '+' : '−') . $n0(abs($sumA['ns'] - $sumB['ns'])) ?></td>
         <td class="text-right px-4"><?= $fmtCrec(kpi_crec($sumA['ns'], $sumB['ns'])) ?></td><td class="text-right px-4 tabular-nums"><?= e(cockpit_pts($pa - $pb)) ?></td>
       </tr></tfoot>
+    </table>
+  </div>
+  <?php endif; ?>
+</section>
+
+<section id="promociones" class="card overflow-hidden mb-5">
+  <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+    <div>
+      <h3 class="font-bold text-slate-800">Promociones de la campaña</h3>
+      <p class="text-sm text-slate-400">Las que se usaron entre el <?= e(fechaCorta($c['fecha_inicio'])) ?> y el <?= e(fechaCorta($c['fecha_fin'])) ?>, con su resultado contra los días previos a cada una.</p>
+    </div>
+    <?php if (can('cockpit.ver')): ?>
+      <a class="btn btn-ghost btn-sm" href="<?= e(url('modules/marketing/cockpit.php') . '?' . http_build_query(['tab' => 'efectividad', 'ty_desde' => $c['fecha_inicio'], 'ty_hasta' => min($c['fecha_fin'], date('Y-m-d')),
+          'ly_desde' => $c['ly_inicio'], 'ly_hasta' => $c['ly_fin'], 'ly_manual' => 1, 'sucursal_id' => $c['sucursal_id'] ?: null, 'tienda_id' => $c['tienda_id'] ?: null])) ?>">
+        <?= icon('percent', 'w-3.5 h-3.5') ?> Ver en el cockpit</a>
+    <?php endif; ?>
+  </div>
+  <?php if (!$promosCamp): ?>
+    <div class="p-6"><?= empty_state('Ninguna promoción usada todavía', $c['fecha_inicio'] > date('Y-m-d') ? 'La campaña aún no empieza.' : 'Ninguna venta de la campaña registró una promoción.', 'percent') ?></div>
+  <?php else: $totDesc = array_sum(array_column($promosCamp, 'costo_desc')); ?>
+  <div class="overflow-x-auto">
+    <table class="data-table text-[13px] whitespace-nowrap">
+      <thead><tr><th>Promoción</th><th class="text-right">Venta bruta con la promo</th><th class="text-right">Descuento regalado</th><th class="text-right">Peso en el descuento</th>
+        <th class="text-right">Aumento de unidades</th><th class="text-right">Margen incremental</th><th>Veredicto</th></tr></thead>
+      <tbody>
+      <?php foreach ($promosCamp as $r): ?>
+        <tr>
+          <td class="max-w-[280px]"><p class="font-semibold text-slate-700 truncate"><?= e($r['nombre']) ?></p>
+            <p class="text-xs text-slate-400"><span class="inline-block w-2 h-2 rounded-full mr-1 align-middle" style="background:<?= e(cockpit_tipo_color($r['tipo'])) ?>"></span><?= e(cockpit_tipo_label($r['tipo'])) ?></p></td>
+          <td class="text-right tabular-nums"><?= cockpit_n($r['gs_promo']) ?></td>
+          <td class="text-right tabular-nums"><?= cockpit_n($r['costo_desc']) ?></td>
+          <td class="text-right tabular-nums"><?= $totDesc > 0 ? cockpit_pct($r['costo_desc'] / $totDesc * 100, 0) : '—' ?></td>
+          <td class="text-right"><?= $r['aumento'] === null ? '<span class="text-slate-300">—</span>' : '<span class="font-semibold ' . ($r['aumento'] >= 0 ? 'text-emerald-600' : 'text-rose-600') . '">' . ($r['aumento'] >= 0 ? '+' : '−') . number_format(abs($r['aumento']), 0) . '%</span>' ?></td>
+          <td class="text-right"><?= $r['margen_incremental'] === null ? '<span class="text-slate-300">—</span>' : cockpit_celda_efecto($r['margen_incremental']) ?></td>
+          <td><?= badge($r['veredicto'][1], $r['veredicto'][2]) ?><?php if ($r['motivo']): ?><p class="text-[11px] text-slate-400 mt-0.5"><?= e($r['motivo']) ?></p><?php endif; ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
     </table>
   </div>
   <?php endif; ?>

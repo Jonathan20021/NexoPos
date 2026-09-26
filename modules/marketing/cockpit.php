@@ -310,7 +310,7 @@ if ($tab === 'simulador') {
         $sim['objetivo_id'] = $simProducto['id'] ?? 0;
     }
     $simListo = $sim['alcance'] === 'todos' || ($sim['alcance'] === 'producto' ? $simProducto !== null : $sim['objetivo'] !== '');
-    $simRes = $simHist = null;
+    $simRes = $simHist = null; $simEsc = [];
     if ($simListo) {
         $cfgSim = $sim + ['aumento' => 0];
         $cfgSim['objetivo'] = $sim['alcance'] === 'producto' ? $sim['objetivo_id'] : $sim['objetivo'];
@@ -322,6 +322,16 @@ if ($tab === 'simulador') {
             : ($simHist ? round($simHist['aumento']) : 0.0);
         $sim['aumento_propuesto'] = $aumentoGet === null || $aumentoGet === '';
         if ($sim['aumento'] != 0) $simRes = cockpit_simular($f, ['aumento' => $sim['aumento']] + $cfgSim);
+        // La misma promoción, más suave y más fuerte.
+        if ($simRes['productos']) {
+            $valores = $sim['tipo'] === 'porcentaje' ? [10, 15, 20, 25, 30, 40] : array_map(fn($k) => round($sim['valor'] * $k, 2), [0.5, 0.75, 1.25, 1.5, 2]);
+            $valores = array_values(array_unique(array_merge($valores, [$sim['valor']])));
+            sort($valores);
+            $simEsc = cockpit_sim_escenarios($simRes, $cfgSim, $valores, function (?float $prof) use ($f, $sim) {
+                $h = cockpit_aumento_historico($f, $prof);
+                return $h && $h['parecidas'] ? [round($h['aumento']), true] : [(float) $sim['aumento'], false];
+            });
+        }
     }
 }
 
@@ -1462,7 +1472,28 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         <input id="s_slider" type="range" min="-50" max="200" step="1" x-model.number="a" class="flex-1 min-w-[180px] accent-blue-600">
         <span class="text-lg font-extrabold tabular-nums w-20 text-right" x-text="(a >= 0 ? '+' : '−') + Math.abs(a) + '%'"></span>
       </div>
-      <p class="mt-3 text-sm font-semibold rounded-lg px-3 py-2" :class="dif() >= 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'" x-text="veredicto()"></p>
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <p class="flex-1 min-w-[240px] text-sm font-semibold rounded-lg px-3 py-2" :class="dif() >= 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'" x-text="veredicto()"></p>
+        <?php
+        // Las promociones del sistema se definen por categoría, marca o producto; segmento y línea no.
+        $simCrear = can('promociones.crear') && in_array($sim['alcance'], ['todos', 'categoria', 'marca', 'producto'], true) && cockpit_moneda()[0] === '';
+        if ($simCrear):
+          $objetivoNombre = match ($sim['alcance']) {
+              'categoria' => (string) qVal("SELECT nombre FROM categorias WHERE id = ?", [(int) $sim['objetivo']]),
+              'marca'     => (string) qVal("SELECT nombre FROM marcas WHERE id = ?", [(int) $sim['objetivo']]),
+              'producto'  => (string) ($simProducto['nombre'] ?? ''),
+              default     => 'todo',
+          };
+          $crear = url('modules/marketing/promociones.php') . '?' . http_build_query([
+              'nueva' => 1, 'tipo' => $sim['tipo'], 'valor' => $sim['valor'], 'alcance' => $sim['alcance'],
+              'objetivo' => $sim['alcance'] === 'producto' ? ($simProducto['id'] ?? '') : ($sim['alcance'] === 'todos' ? '' : $sim['objetivo']),
+              'dias' => $sim['dias'],
+              'nombre' => ($sim['tipo'] === 'porcentaje' ? number_format($sim['valor'], 0) . '%' : setting('moneda', 'RD$') . ' ' . number_format($sim['valor'], 0)) . ' en ' . $objetivoNombre,
+          ]);
+        ?>
+          <a href="<?= e($crear) ?>" class="btn btn-soft" title="Abre el alta de promoción con estos datos; revisa y guarda allí"><?= icon('plus', 'w-4 h-4') ?> Crear esta promoción</a>
+        <?php endif; ?>
+      </div>
     </div>
 
     <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
@@ -1521,6 +1552,39 @@ if ($sinLista > 0.5 || $sinListaLY > 0.5): ?>
         <p class="text-xs text-slate-400">No incluye tráfico extra a otros productos, ni la venta que se adelanta y luego falta (compras que igual se iban a hacer). Úsalo como orden de magnitud, no como presupuesto.</p>
       </section>
     </div>
+
+    <?php if ($simEsc):
+      $mejor = array_reduce($simEsc, fn($c, $r) => $c === null || $r['dif'] > $c['dif'] ? $r : $c);
+      $fmtValor = fn($v) => $sim['tipo'] === 'porcentaje' ? number_format($v, 0) . '%' : ck_money($v);
+    ?>
+    <section class="card overflow-hidden mb-5">
+      <div class="p-4 border-b border-slate-100">
+        <h3 class="font-bold text-slate-800">La misma promoción, más suave o más fuerte</h3>
+        <p class="text-sm text-slate-400">El aumento de cada fila es el que dieron promociones de esa profundidad (±5 pts) en el último año; sin historia a esa profundidad, se usa el que elegiste arriba.
+          Clic en una fila para simularla.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data-table text-[13px] whitespace-nowrap">
+          <thead><tr><th>Descuento</th><th class="text-right">Rebaja real</th><th class="text-right">Equilibrio</th><th class="text-right">Aumento supuesto</th>
+            <th class="text-right">Venta neta</th><th class="text-right">Descuento regalado</th><th class="text-right">Margen vs. no hacerla</th></tr></thead>
+          <tbody>
+          <?php foreach ($simEsc as $r): $actual = abs($r['valor'] - $sim['valor']) < 0.001; ?>
+            <tr class="<?= $actual ? 'bg-blue-50/70' : 'hover:bg-slate-50' ?> cursor-pointer" onclick="location.href=<?= e(json_encode(ck_url(['s_valor' => $r['valor'], 's_aum' => null]))) ?>">
+              <td class="font-semibold text-slate-700"><a href="<?= e(ck_url(['s_valor' => $r['valor'], 's_aum' => null])) ?>" class="hover:text-blue-600"><?= e($fmtValor($r['valor'])) ?></a>
+                <?= $actual ? ' <span class="badge badge-blue">la tuya</span>' : '' ?><?= $r === $mejor && $r['dif'] > 0 ? ' <span class="badge badge-emerald">mejor margen</span>' : '' ?></td>
+              <td class="text-right tabular-nums"><?= $r['profundidad'] !== null ? cockpit_pct($r['profundidad']) : '—' ?></td>
+              <td class="text-right tabular-nums"><?= $r['pierde'] ? '<span class="text-rose-600 font-semibold">bajo costo</span>' : ($r['equilibrio'] === null ? '—' : '+' . number_format($r['equilibrio'], 0) . '%') ?></td>
+              <td class="text-right tabular-nums"><?= ($r['aumento'] >= 0 ? '+' : '−') . number_format(abs($r['aumento']), 0) ?>%<?= $r['de_historia'] ? ' <span class="text-[11px] text-slate-400">histórico</span>' : '' ?></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['ns']) ?></td>
+              <td class="text-right tabular-nums"><?= cockpit_n($r['regalo']) ?></td>
+              <td class="text-right"><?= cockpit_celda_efecto($r['dif']) ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <?php endif; ?>
 
     <section class="card overflow-hidden mb-5">
       <div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">

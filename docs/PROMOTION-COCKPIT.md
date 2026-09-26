@@ -172,6 +172,14 @@ bajo el costo, no hay equilibrio y lo dice.
   profundidad parecida (±5 pts) medidas en Efectividad durante el último año.
 - El control deslizante recalcula al instante tarjetas, veredicto y la marca en el gráfico
   (margen según el aumento de unidades, contra la línea sin promoción).
+- **Más suave o más fuerte**: la misma promoción a 10, 15, 20, 25, 30 y 40% (o a la mitad,
+  ¾, 1¼, 1½ y el doble del monto), cada una con su equilibrio y el margen que dejaría con el
+  aumento que dieron promociones de esa profundidad (o el elegido, si no hay historia). Se
+  marca la de mejor margen; un clic la simula.
+- **Crear esta promoción**: abre Marketing → Promociones con el formulario ya lleno (tipo,
+  valor, alcance, objetivo y vigencia de los días simulados). Se revisa y se guarda allí.
+  Solo para alcances que existen en promociones (todo, categoría, marca, producto) y con el
+  cockpit en la moneda base.
 - No incluye tráfico a otros productos ni la venta que solo se adelanta: orden de magnitud,
   no presupuesto. La cuenta vive en `cockpit_sim_calcular()` y la cubren las pruebas.
 
@@ -230,3 +238,9 @@ archivo original, listo para enviar a la casa matriz.
   (a quien puede editar promociones) y campaña en curso que cerraría por debajo del 85% de su
   meta (a quien ve campañas).
 - El formulario de campaña tiene «Alinear por día de la semana» para el periodo comparable.
+- **Promociones de la campaña**: en el tablero, las promociones usadas dentro de sus fechas y
+  su alcance (sucursal/tienda), con venta, descuento, peso en el descuento y el veredicto de
+  Efectividad; enlace al cockpit con esas fechas. También sale en el Excel (hoja PROMOTIONS).
+
+Rendimiento: la efectividad lee las ventas en una sola pasada producto × día para todas las
+ventanas (antes una consulta por promoción): 1,3 s → 0,4 s con 60.000 ventas.
