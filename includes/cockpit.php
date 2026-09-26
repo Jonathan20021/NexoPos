@@ -30,24 +30,41 @@
  *  Disponibilidad (el código puede llegar antes que la migración)
  * ============================================================ */
 
-/** ¿Ya existen las columnas de rastro de la P39? Se consulta una vez por petición. */
+/**
+ * ¿Ya existen las columnas de rastro de la P39 en la VENTA? Las tres que se
+ * escriben al facturar. Si la P39 se quedó a medias, mejor no escribir ninguna
+ * que tumbar cada venta del POS.
+ *
+ * Va en el camino de cada venta, así que un «sí» se recuerda en la sesión: las
+ * columnas no desaparecen, y así el POS no consulta information_schema en cada
+ * cobro. Un «no» se vuelve a mirar (la migración puede correr en cualquier momento).
+ */
 function cockpit_capturando(): bool
 {
     static $ok = null;
-    if ($ok === null) {
-        try {
-            // Las cinco columnas que se escriben al vender. Si la P39 se quedó a
-            // medias, mejor no escribir ninguna que tumbar cada venta del POS.
-            $ok = (int) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS
-                               WHERE TABLE_SCHEMA = DATABASE() AND (
-                                     (TABLE_NAME = 'venta_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id'))
-                                  OR (TABLE_NAME = 'ventas' AND COLUMN_NAME = 'descuento_motivo')
-                                  OR (TABLE_NAME = 'pedido_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id')))") === 5;
-        } catch (Throwable $e) {
-            $ok = false;
-        }
-    }
+    if ($ok !== null) return $ok;
+    if (!empty($_SESSION['cockpit_capturando'])) return $ok = true;
+    $ok = cockpit_columnas("(TABLE_NAME = 'venta_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id'))
+                            OR (TABLE_NAME = 'ventas' AND COLUMN_NAME = 'descuento_motivo')", 3);
+    if ($ok && session_status() === PHP_SESSION_ACTIVE) $_SESSION['cockpit_capturando'] = 1;
     return $ok;
+}
+
+/** Lo mismo para los pedidos de la tienda en línea (instalaciones sin tienda no las tienen). */
+function cockpit_capturando_pedidos(): bool
+{
+    static $ok = null;
+    return $ok ??= cockpit_columnas("TABLE_NAME = 'pedido_detalles' AND COLUMN_NAME IN ('precio_lista','promocion_id')", 2);
+}
+
+/** ¿Existen exactamente $n columnas que cumplen $cond en esta base? */
+function cockpit_columnas(string $cond, int $n): bool
+{
+    try {
+        return (int) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND ($cond)") === $n;
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 /** ¿Está entera la migración P39 (columnas + tablas de campañas)? */
@@ -193,6 +210,26 @@ function cockpit_tipos_promocion(): array
 {
     $out = [];
     foreach (cockpit_tipos_def() as $k => $r) if ($r['es_promocion'] && $r['activo']) $out[$k] = $r['nombre'];
+    return $out;
+}
+
+/**
+ * Todo motivo de caja que exista, activo o no. Para VALIDAR lo que llega: una
+ * venta hecha sin conexión, o en un POS cargado antes de que alguien apagara el
+ * motivo, conserva el motivo que el cajero eligió.
+ */
+function cockpit_motivos_caja_todos(): array
+{
+    $out = ['manual' => 'Descuento manual'];
+    foreach (cockpit_tipos_def() as $k => $r) if ($r['etiqueta_caja'] !== null && $r['etiqueta_caja'] !== '') $out[$k] = $r['etiqueta_caja'];
+    return $out;
+}
+
+/** Familias de promoción que existen, activas o no (para validar al guardar). */
+function cockpit_tipos_promocion_todos(): array
+{
+    $out = [];
+    foreach (cockpit_tipos_def() as $k => $r) if ($r['es_promocion']) $out[$k] = $r['nombre'] . ($r['activo'] ? '' : ' (inactiva)');
     return $out;
 }
 

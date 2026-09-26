@@ -124,7 +124,7 @@ if (isPost() && post('accion') === 'pedido') {
                     'pedido_id' => $pedidoId, 'producto_id' => $l['pid'], 'descripcion' => $l['desc'],
                     'cantidad' => $l['cant'], 'precio_unitario' => $l['precio'],
                     'itbis' => $l['itbis'], 'subtotal' => $l['sub'],
-                ] + (cockpit_capturando() ? ['precio_lista' => $l['lista'], 'promocion_id' => $l['promo']] : []));
+                ] + (cockpit_capturando_pedidos() ? ['precio_lista' => $l['lista'], 'promocion_id' => $l['promo']] : []));
             }
             return ['id' => $pedidoId, 'token' => $token];
         });

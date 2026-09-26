@@ -91,6 +91,21 @@ cuanto se escribe un descuento; un valor que no está en el catálogo cae en «m
 con venta bruta = lo cobrado, las trata como «sin promoción» y **avisa en pantalla** qué
 porcentaje de la venta está en esa situación. No se reconstruye nada con precios de hoy.
 
+## Reglas del rastro en la venta
+
+- El motivo del descuento en caja se valida contra **todos** los motivos, activos o no: una
+  venta hecha sin conexión conserva el que eligió el cajero aunque después se apague.
+- El descuento global de una cotización facturada es **negociado**, no de caja.
+- Un canal de venta desconocido cae en «Mostrador», como antes del cockpit.
+- La venta solo necesita sus tres columnas de la P39 para registrar el rastro; los pedidos
+  de la tienda en línea tienen su propia comprobación (instalaciones sin tienda no las tienen).
+  Una vez confirmadas, se recuerda en la sesión: el POS no consulta el esquema en cada cobro.
+- Editar una promoción cuya familia se apagó no la deja sin clasificar.
+- La familia de una promoción se lee de la promoción, no se congela en la venta: reclasificar
+  una promoción cambia también su pasado en el cockpit. Es a propósito (corregir una mala
+  clasificación arregla toda su historia); si la casa matriz necesita cifras ya reportadas
+  inmutables, exportarlas al cerrar el periodo.
+
 ## Cómo se mide (includes/cockpit.php)
 
 | Concepto | Definición |

@@ -55,7 +55,9 @@ if (isPost()) {
             // Código y familia para el Promotion Cockpit (migración P39).
             if (cockpit_capturando()) {
                 $datos['codigo'] = mb_substr(trim(post('codigo')), 0, 40) ?: null;
-                $datos['tipo_descuento'] = array_key_exists(post('tipo_descuento'), cockpit_tipos_promocion())
+                // Contra todas las familias: editar una promo cuya familia se apagó
+                // (solo para alargar la fecha) no debe dejarla sin clasificar.
+                $datos['tipo_descuento'] = array_key_exists(post('tipo_descuento'), cockpit_tipos_promocion_todos())
                     ? post('tipo_descuento') : null;
             }
 
@@ -252,6 +254,10 @@ if (get('nueva') === '1' && can('promociones.crear')) {
                   <option value="">— Sin clasificar —</option>
                   <?php foreach (cockpit_tipos_promocion() as $k => $lbl): ?>
                     <option value="<?= e($k) ?>"><?= e($lbl) ?></option>
+                  <?php endforeach; ?>
+                  <?php // Una familia apagada solo aparece si la promo que se edita ya la tiene.
+                  foreach (array_diff_key(cockpit_tipos_promocion_todos(), cockpit_tipos_promocion()) as $k => $lbl): ?>
+                    <option value="<?= e($k) ?>" x-show="f.tipo_descuento === <?= e(json_encode($k)) ?>" :disabled="f.tipo_descuento !== <?= e(json_encode($k)) ?>"><?= e($lbl) ?></option>
                   <?php endforeach; ?>
                 </select>
               </div>

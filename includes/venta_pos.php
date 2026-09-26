@@ -31,8 +31,12 @@ function registrarVentaPOS(array $in, array $ctx): array
     $descuento   = max(0.0, (float) ($in['descuento'] ?? 0));
     // Por qué el cajero hizo el descuento manual. Alimenta el Promotion Cockpit;
     // un valor que no está en el catálogo cae en «manual» en vez de romper la venta.
-    $descMotivo  = array_key_exists((string) ($in['descuento_motivo'] ?? ''), cockpit_motivos_caja())
-        ? (string) $in['descuento_motivo'] : 'manual';
+    // Se valida contra TODOS los motivos, no solo los activos: la venta pudo
+    // hacerse sin conexión antes de que alguien apagara el suyo. Y el descuento
+    // global de una cotización facturada no lo decidió la caja: es negociado.
+    $descMotivo  = !empty($ctx['precios_pactados']) ? 'negociado'
+        : (array_key_exists((string) ($in['descuento_motivo'] ?? ''), cockpit_motivos_caja_todos())
+            ? (string) $in['descuento_motivo'] : 'manual');
     $clienteId   = (int) ($in['cliente_id'] ?? 1) ?: 1;
     // Se valida contra los comprobantes REALMENTE disponibles: si alguien manda
     // «gubernamental» sin secuencia E45 viva, cae a consumidor en vez de romper
@@ -40,7 +44,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     $comprobante = array_key_exists((string) ($in['comprobante'] ?? ''), ncfComprobantesDisponibles())
         ? (string) $in['comprobante'] : 'consumidor';
     $metodoId    = (int) ($in['metodo_pago_id'] ?? 1) ?: 1;
-    $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : canalesVenta()[0];
+    $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : 'Mostrador';
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
     $tasaItbis   = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
