@@ -461,11 +461,8 @@ if (export_solicitado()) {
 /* ============================================================
  *  Pantalla
  * ============================================================ */
-// Copiar la vista: los filtros viven en la URL, así que compartir el enlace
-// es compartir exactamente lo que uno está mirando.
-$copiar = '<button type="button" x-data="{ok:false}" @click="navigator.clipboard.writeText(location.href).then(() => { ok = true; setTimeout(() => ok = false, 1800); })"'
-    . ' class="btn btn-ghost no-print" title="Copia el enlace con todos los filtros">' . icon('file', 'w-4 h-4')
-    . ' <span x-text="ok ? \'¡Copiado!\' : \'Copiar enlace\'">Copiar enlace</span></button>';
+// Los filtros viven en la URL: «Copiar enlace» (en «Más») comparte exactamente
+// lo que uno está mirando.
 // Vistas guardadas: el mismo enlace, con nombre y sin tener que guardarlo en otro lado.
 $vistasBtn = '';
 if (cockpit_vistas_disponible()) {
@@ -476,7 +473,7 @@ if (cockpit_vistas_disponible()) {
     ob_start(); ?>
     <div class="relative no-print" x-data="{open:false, guardar:false}" @keydown.escape.window="open=false" @click.outside="open=false">
       <button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
-      <div x-show="open" x-transition x-cloak class="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
+      <div x-show="open" x-transition x-cloak class="absolute left-0 sm:left-auto sm:right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
         <?php if (!$vistas): ?><p class="text-sm text-slate-400 px-2 py-3">Aún no hay vistas. Guarda esta combinación de pestaña y filtros para volver con un clic.</p><?php endif; ?>
         <ul class="max-h-72 overflow-y-auto">
           <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
@@ -523,9 +520,24 @@ if (cockpit_vistas_disponible()) {
 // Todo en un libro para la casa matriz: portada con los filtros + una hoja por pestaña.
 $libroBtn = '<a href="?' . e(http_build_query(array_merge($_GET, ['export' => 'excel', 'libro' => 1]))) . '" class="btn btn-ghost no-print"'
     . ' title="Resumen, Detallado, Producto, Efectividad y Sell-out en un solo Excel, con una portada de filtros">' . icon('download', 'w-4 h-4') . ' Excel completo</a>';
-$ayudaBtn = '<button type="button" @click="$dispatch(\'ck:ayuda\')" class="btn btn-ghost no-print" title="Qué significa cada cifra">' . icon('book', 'w-4 h-4') . ' ¿Cómo se lee?</button>';
-$acciones = $vistasBtn . $ayudaBtn . $libroBtn . $copiar . rep_barra_titulo(can('cockpit.configurar')
-    ? '<a href="' . e(url('modules/marketing/cockpit_config.php')) . '" class="btn btn-ghost no-print">' . icon('settings', 'w-4 h-4') . ' Configurar</a>' : '');
+// Lo demás, en un menú: ocho botones sueltos partían la cabecera en dos filas.
+$item = fn(string $ico, string $txt, string $attrs) => '<a ' . $attrs . ' role="menuitem" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none">'
+    . icon($ico, 'w-4 h-4 text-slate-400') . $txt . '</a>';
+$masItems = '<button type="button" role="menuitem" @click="open=false; $dispatch(\'ck:ayuda\')" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none">'
+        . icon('book', 'w-4 h-4 text-slate-400') . '¿Cómo se lee?</button>'
+    . '<button type="button" role="menuitem" x-data="{ok:false}" @click="navigator.clipboard.writeText(location.href).then(() => { ok = true; setTimeout(() => ok = false, 1800); })"'
+        . ' class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none" title="Copia el enlace con todos los filtros">'
+        . icon('file', 'w-4 h-4 text-slate-400') . '<span x-text="ok ? \'¡Copiado!\' : \'Copiar enlace\'">Copiar enlace</span></button>'
+    . '<div class="my-1 border-t border-slate-100"></div>'
+    . $item('download', 'Excel de esta pestaña', 'href="' . e(rep_url_export('excel')) . '"')
+    . $item('file', 'PDF de esta pestaña', 'href="' . e(rep_url_export('pdf')) . '" target="_blank" rel="noopener"')
+    . '<div class="my-1 border-t border-slate-100"></div>'
+    . (can('cockpit.configurar') ? $item('settings', 'Configurar el cockpit', 'href="' . e(url('modules/marketing/cockpit_config.php')) . '"') : '')
+    . $item('grid', 'Centro de reportes', 'href="' . e(url('modules/reportes/index.php')) . '"');
+$mas = '<div class="relative no-print" x-data="{open:false}" @keydown.escape.window="open=false" @click.outside="open=false">'
+    . '<button type="button" class="btn btn-ghost" @click="open=!open" :aria-expanded="open.toString()" aria-haspopup="menu">' . icon('menu', 'w-4 h-4') . ' Más</button>'
+    . '<div x-show="open" x-transition x-cloak role="menu" class="absolute left-0 sm:left-auto sm:right-0 mt-2 w-64 bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-1.5">' . $masItems . '</div></div>';
+$acciones = $vistasBtn . $libroBtn . $mas;
 layout_start('Promotion Cockpit', 'Del global al detalle · ' . fechaCorta($TY[0]) . ' al ' . fechaCorta($TY[1]) . ' contra ' . fechaCorta($LY[0]) . ' al ' . fechaCorta($LY[1]) . ' · ' . rep_alcance_sucursal(), $acciones);
 echo rep_encabezado_impresion('Promotion Cockpit · ' . $tabs[$tab], ['desde' => $TY[0], 'hasta' => $TY[1]]);
 ?>
