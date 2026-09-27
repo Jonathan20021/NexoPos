@@ -102,6 +102,62 @@ function kpi_campana(int $id): ?array
     return qOne("SELECT * FROM kpi_campanas WHERE id = ?", [$id]);
 }
 
+/**
+ * Fechas de la misma campaña el año que viene.
+ *   semana  52 semanas después: cae el mismo día de la semana (Black Friday,
+ *           fines de semana), a costa de moverse un día del calendario.
+ *   fecha   las mismas fechas del calendario (Día de las Madres, Navidad);
+ *           un 29 de febrero pasa al 28.
+ * @return array{0:string,1:string}
+ */
+function kpi_duplicar_fechas(string $ini, string $fin, string $modo): array
+{
+    $mas = $modo === 'semana'
+        ? fn(string $d) => date('Y-m-d', strtotime($d . ' +364 days'))
+        : function (string $d): string {
+            [$y, $m, $dd] = array_map('intval', explode('-', $d));
+            return sprintf('%04d-%02d-%02d', $y + 1, $m, min($dd, (int) date('t', mktime(0, 0, 0, $m, 1, $y + 1))));
+        };
+    return [$mas($ini), $mas($fin)];
+}
+
+/**
+ * «Black Friday 2026» → «Black Friday 2027»; «Holiday 2025-2026» → «Holiday
+ * 2026-2027». Sin año en el nombre, se le añade el de la campaña nueva.
+ */
+function kpi_nombre_siguiente(string $nombre, int $anio): string
+{
+    $nuevo = preg_replace_callback('/\b(19|20)\d{2}\b/', fn($m) => (string) ((int) $m[0] + 1), $nombre, -1, $n);
+    return mb_substr($n ? $nuevo : trim($nombre) . ' ' . $anio, 0, 120);
+}
+
+/**
+ * Copia una campaña para el año que viene: mismas SKUs foco, alcance y tasa;
+ * metas (global y por canal) con el crecimiento pedido; y como «año anterior»
+ * las fechas REALES de la original, así la comparación es contra lo que pasó.
+ * La inversión y los KPIs capturados no se copian: son resultados, no plan.
+ * @return int id de la campaña nueva
+ */
+function kpi_duplicar_campana(array $c, string $modo, float $crecimientoPct, string $nombre, int $usuarioId): int
+{
+    [$ini, $fin] = kpi_duplicar_fechas($c['fecha_inicio'], $c['fecha_fin'], $modo);
+    $f = 1 + $crecimientoPct / 100;
+    return tx(function () use ($c, $ini, $fin, $f, $nombre, $usuarioId) {
+        $id = dbInsert('kpi_campanas', [
+            'nombre' => $nombre, 'descripcion' => $c['descripcion'],
+            'fecha_inicio' => $ini, 'fecha_fin' => $fin, 'ly_inicio' => $c['fecha_inicio'], 'ly_fin' => $c['fecha_fin'],
+            'sucursal_id' => $c['sucursal_id'], 'tienda_id' => $c['tienda_id'],
+            'meta_ventas' => round((float) $c['meta_ventas'] * $f, 2),   // 0 sigue siendo «sin meta»
+            'tasa_eur' => $c['tasa_eur'], 'notas' => null, 'created_by' => $usuarioId,
+        ]);
+        q("INSERT INTO kpi_campana_productos (campana_id, producto_id, orden)
+           SELECT ?, producto_id, orden FROM kpi_campana_productos WHERE campana_id = ?", [$id, $c['id']]);
+        q("INSERT INTO kpi_campana_metas (campana_id, canal, meta)
+           SELECT ?, canal, ROUND(meta * ?, 2) FROM kpi_campana_metas WHERE campana_id = ?", [$id, $f, $c['id']]);
+        return $id;
+    });
+}
+
 /** WHERE de las ventas de la campaña en un rango. @return array{0:string,1:array} */
 function kpi_where(array $c, string $ini, string $fin, string $v = 'v'): array
 {

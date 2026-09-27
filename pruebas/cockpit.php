@@ -179,6 +179,16 @@ comprueba('mensual: el mes anterior completo', cockpit_resumen_periodo('mensual'
 comprueba('mensual en enero: diciembre del año anterior', cockpit_resumen_periodo('mensual', '2026-01-15'), ['2025-12-01', '2025-12-31']);
 comprueba('sin frecuencia no hay periodo', cockpit_resumen_periodo('', '2026-01-15'), null);
 
+titulo('Duplicar una campaña');
+comprueba('mismo día de la semana: el viernes de Black Friday sigue siendo viernes',
+    array_map(fn($d) => date('D Y-m-d', strtotime($d)), kpi_duplicar_fechas('2025-11-28', '2025-12-01', 'semana')), ['Fri 2026-11-27', 'Mon 2026-11-30']);
+comprueba('mismas fechas del calendario', kpi_duplicar_fechas('2026-05-01', '2026-05-31', 'fecha'), ['2027-05-01', '2027-05-31']);
+comprueba('un 29 de febrero pasa al 28', kpi_duplicar_fechas('2024-02-29', '2024-03-10', 'fecha'), ['2025-02-28', '2025-03-10']);
+comprueba('el año del nombre avanza', kpi_nombre_siguiente('Black Friday 2026', 2027), 'Black Friday 2027');
+comprueba('todos los años del nombre avanzan', kpi_nombre_siguiente('Holiday 2025-2026', 2026), 'Holiday 2026-2027');
+comprueba('sin año, se le añade', kpi_nombre_siguiente('Día de las Madres', 2027), 'Día de las Madres 2027');
+comprueba('un número que no es año no se toca', kpi_nombre_siguiente('Promo 3x2 1500', 2027), 'Promo 3x2 1500 2027');
+
 titulo('Catálogos');
 comprueba('todo motivo de caja tiene su tipo en el cockpit', array_diff(array_keys(cockpit_motivos_caja()), array_keys(cockpit_tipos())), []);
 comprueba('toda familia de promoción tiene su tipo', array_diff(array_keys(cockpit_tipos_promocion()), array_keys(cockpit_tipos())), []);

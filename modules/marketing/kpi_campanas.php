@@ -76,6 +76,19 @@ if (isPost()) {
             flash('success', 'Campaña creada. Ahora añade sus SKUs foco, metas e inversión.');
             redirect('modules/marketing/kpi_campana.php?id=' . $id);
         }
+        if ($accion === 'duplicar') {
+            require_perm('kpi_campanas.crear');
+            $c = kpi_campana(postInt('id'));
+            if (!kpi_campana_accesible($c)) throw new RuntimeException('Campaña no encontrada.');
+            $modo = post('modo') === 'fecha' ? 'fecha' : 'semana';
+            $crec = max(-90.0, min(500.0, postNum('crecimiento')));
+            $nombre = mb_substr(trim((string) post('nombre')), 0, 120) ?: kpi_nombre_siguiente($c['nombre'], (int) substr($c['fecha_inicio'], 0, 4) + 1);
+            $id = kpi_duplicar_campana($c, $modo, $crec, $nombre, (int) current_user()['id']);
+            audit('kpi_campanas', 'crear', "Campaña duplicada de «{$c['nombre']}»: $nombre", ['tabla' => 'kpi_campanas', 'registro_id' => $id]);
+            flash('success', "Campaña «{$nombre}» creada a partir de «{$c['nombre']}»: mismas SKUs foco, metas "
+                . ($crec >= 0 ? '+' : '') . number_format($crec, 0) . '% y comparada contra las fechas reales de la original. Registra la inversión cuando la tengas.');
+            redirect('modules/marketing/kpi_campana.php?id=' . $id);
+        }
         if ($accion === 'eliminar') {
             require_perm('kpi_campanas.eliminar');
             $id = postInt('id');
@@ -193,6 +206,11 @@ if (count($conVenta) >= 2):
                   <button onclick="<?= jsEvent('kc:edit', array_intersect_key($c, array_flip(['id', 'nombre', 'descripcion', 'fecha_inicio', 'fecha_fin', 'ly_inicio', 'ly_fin', 'sucursal_id', 'tienda_id', 'meta_ventas', 'tasa_eur', 'notas']))) ?>"
                           class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                 <?php endif; ?>
+                <?php if (can('kpi_campanas.crear')): ?>
+                  <button type="button" onclick="<?= jsEvent('kc:duplicar', ['id' => (int) $c['id'], 'nombre' => $c['nombre'], 'ini' => $c['fecha_inicio'], 'fin' => $c['fecha_fin'],
+                          'sugerido' => kpi_nombre_siguiente($c['nombre'], (int) substr($c['fecha_inicio'], 0, 4) + 1)]) ?>"
+                          class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Duplicar para el año que viene"><?= icon('calendar', 'w-4 h-4') ?></button>
+                <?php endif; ?>
                 <?php if (can('kpi_campanas.eliminar')): ?>
                   <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar la campaña «' . $c['nombre'] . '» con su inversión y sus KPIs capturados? Las ventas no se tocan.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                     <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
@@ -210,5 +228,49 @@ if (count($conVenta) >= 2):
 </div>
 
 <?php require __DIR__ . '/_kpi_campana_form.php'; ?>
+
+<?php if (can('kpi_campanas.crear')): ?>
+<!-- Duplicar para el año que viene -->
+<div x-data="{open:false, c:{}, modo:'semana', nombre:'', crec:10,
+              mas(d) { if (!d) return ''; const x = new Date(d + 'T12:00:00');
+                       if (this.modo === 'semana') x.setDate(x.getDate() + 364);
+                       else { const m = x.getMonth(); x.setFullYear(x.getFullYear() + 1); if (x.getMonth() !== m) x.setDate(0); }
+                       return x.toLocaleDateString('es-DO', {weekday:'short', day:'2-digit', month:'2-digit', year:'numeric'}); }}"
+     @kc:duplicar.window="c = $event.detail; nombre = c.sugerido; modo = 'semana'; crec = 10; open = true; $nextTick(() => $refs.nom.focus())"
+     @keydown.escape.window="open=false">
+  <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
+    <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-lg" @click.stop role="dialog" aria-modal="true" aria-labelledby="kc_dup_t">
+      <form method="post">
+        <?= csrf_field() ?><input type="hidden" name="accion" value="duplicar"><input type="hidden" name="id" :value="c.id">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 id="kc_dup_t" class="font-bold text-slate-800">Duplicar para el año que viene</h3>
+          <button type="button" @click="open=false" aria-label="Cerrar" class="text-slate-400 hover:text-slate-700 p-1 -m-1"><?= icon('x', 'w-5 h-5') ?></button>
+        </div>
+        <div class="p-6 space-y-4">
+          <p class="text-sm text-slate-500">A partir de <b class="text-slate-700" x-text="c.nombre"></b>. Se copian las SKUs foco, el alcance y las metas; la nueva se compara contra las fechas reales de esta. La inversión y los KPIs capturados no se copian.</p>
+          <div><label class="label" for="kc_dup_n">Nombre</label><input id="kc_dup_n" x-ref="nom" name="nombre" x-model="nombre" maxlength="120" required class="input"></div>
+          <fieldset>
+            <legend class="label">Fechas</legend>
+            <label class="flex items-start gap-2 text-sm text-slate-700 py-1"><input type="radio" name="modo" value="semana" x-model="modo" class="mt-1">
+              <span><b>Mismo día de la semana</b> (52 semanas después). Para Black Friday, fines de semana y todo lo que depende del día.</span></label>
+            <label class="flex items-start gap-2 text-sm text-slate-700 py-1"><input type="radio" name="modo" value="fecha" x-model="modo" class="mt-1">
+              <span><b>Mismas fechas</b> del calendario. Para Día de las Madres, Navidad, aniversarios.</span></label>
+            <p class="text-xs text-slate-500 mt-1 bg-slate-50 rounded-lg px-3 py-2">Quedaría del <b x-text="mas(c.ini)"></b> al <b x-text="mas(c.fin)"></b>.</p>
+          </fieldset>
+          <div>
+            <label class="label" for="kc_dup_g">Crecimiento de las metas</label>
+            <div class="relative w-40"><input id="kc_dup_g" type="number" name="crecimiento" x-model.number="crec" min="-90" max="500" step="1" class="input pr-8"><span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span></div>
+            <p class="text-xs text-slate-400 mt-1">Se aplica a la meta global y a la de cada canal. Después puedes ajustarlas una por una.</p>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button type="button" @click="open=false" class="btn btn-ghost">Cancelar</button>
+          <button class="btn btn-primary"><?= icon('calendar', 'w-4 h-4') ?> Crear campaña</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php layout_end(); ?>

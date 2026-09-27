@@ -318,6 +318,12 @@ archivo original, listo para enviar a la casa matriz.
   (a quien puede editar promociones) y campaña en curso que cerraría por debajo del 85% de su
   meta (a quien ve campañas).
 - El formulario de campaña tiene «Alinear por día de la semana» para el periodo comparable.
+- **Duplicar para el año que viene** (icono de calendario en el listado): copia la campaña con
+  las mismas SKUs foco, alcance y tasa, y las metas (global y por canal) con el crecimiento que
+  se pida. Fechas: mismo día de la semana (+52 semanas, para Black Friday) o mismas fechas del
+  calendario (para Día de las Madres; un 29 de febrero pasa al 28). La nueva se compara contra
+  las fechas **reales** de la original. La inversión y los KPIs capturados no se copian: son
+  resultados, no plan. El año del nombre avanza solo («Holiday 2025-2026» → «Holiday 2026-2027»).
 - **Promociones de la campaña**: en el tablero, las promociones usadas dentro de sus fechas y
   su alcance (sucursal/tienda), con venta, descuento, peso en el descuento y el veredicto de
   Efectividad; enlace al cockpit con esas fechas. También sale en el Excel (hoja PROMOTIONS).
