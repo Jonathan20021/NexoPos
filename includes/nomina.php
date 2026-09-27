@@ -373,6 +373,9 @@ function nominaExportarExcel(array $nomina, array $lineas): void
     while (ob_get_level() > 0) ob_end_clean();
 
     $cols = nominaColumnasExcel();
+    // Departamentos, puestos y nombres los escriben usuarios: nada que empiece
+    // por «=» se abre como fórmula en el Excel de la nómina.
+    if (function_exists('excel_sin_formulas')) excel_sin_formulas();
     $ss = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
     $sh = $ss->getActiveSheet();
     $sh->setTitle(mb_substr(preg_replace('/[\\\\\/\?\*\[\]:]/', '', $nomina['descripcion']), 0, 31) ?: 'Nomina');

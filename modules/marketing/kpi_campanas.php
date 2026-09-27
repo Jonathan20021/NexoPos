@@ -82,7 +82,7 @@ if (isPost()) {
             if (!kpi_campana_accesible($c)) throw new RuntimeException('Campaña no encontrada.');
             $modo = post('modo') === 'fecha' ? 'fecha' : 'semana';
             $crec = max(-90.0, min(500.0, postNum('crecimiento')));
-            $nombre = mb_substr(trim((string) post('nombre')), 0, 120) ?: kpi_nombre_siguiente($c['nombre'], (int) substr($c['fecha_inicio'], 0, 4) + 1);
+            $nombre = mb_substr(trim((string) post('nombre')), 0, 120) ?: kpi_nombre_duplicado($c, $modo);
             $id = kpi_duplicar_campana($c, $modo, $crec, $nombre, (int) current_user()['id']);
             audit('kpi_campanas', 'crear', "Campaña duplicada de «{$c['nombre']}»: $nombre", ['tabla' => 'kpi_campanas', 'registro_id' => $id]);
             flash('success', "Campaña «{$nombre}» creada a partir de «{$c['nombre']}»: mismas SKUs foco, metas "
@@ -208,7 +208,7 @@ if (count($conVenta) >= 2):
                 <?php endif; ?>
                 <?php if (can('kpi_campanas.crear')): ?>
                   <button type="button" onclick="<?= jsEvent('kc:duplicar', ['id' => (int) $c['id'], 'nombre' => $c['nombre'], 'ini' => $c['fecha_inicio'], 'fin' => $c['fecha_fin'],
-                          'sugerido' => kpi_nombre_siguiente($c['nombre'], (int) substr($c['fecha_inicio'], 0, 4) + 1)]) ?>"
+                          'sugerido' => kpi_nombre_duplicado($c, 'semana')]) ?>"
                           class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Duplicar para el año que viene"><?= icon('calendar', 'w-4 h-4') ?></button>
                 <?php endif; ?>
                 <?php if (can('kpi_campanas.eliminar')): ?>

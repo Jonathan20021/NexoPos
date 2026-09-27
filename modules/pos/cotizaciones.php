@@ -367,7 +367,7 @@ echo kpis([
                     </form>
                   <?php endif; ?>
                   <?php if (can('cotizaciones.eliminar') && $c['estado'] !== 'facturada'): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la cotización <?= e($c['numero']) ?>?')">
+                    <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar la cotización ' . ($c['numero']) . '?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                       <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                     </form>

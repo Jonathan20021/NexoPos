@@ -205,7 +205,6 @@ $filasTipo = [];
 if ($tab === 'resumen' || $libro) {
     ['filas' => $filasTipo, 'total' => $filaTotal, 'sin' => $filaSin, 'promo' => $filaPromo] = $res;
 
-    // Los meses solo los pinta la pantalla; el libro no los lleva.
     // La serie mensual ya vino con el resumen (misma pasada).
     $menTY = $res['mensual_ty'];
     $menLY = $res['mensual_ly'];
@@ -273,7 +272,7 @@ if ($tab === 'producto' || $libro) {
     }
     uasort($arbol, fn($a, $b) => $b['tot']['gs'] <=> $a['tot']['gs']);
     // Solo hacen falta los nombres: salen del catálogo, sin volver a barrer las ventas.
-    $nombreMec = fn(string $m) => $m === 'sin' ? 'Sin promoción' : cockpit_mecanismo_info($m)['nombre'];
+    $nombreMec = fn(string $m) => cockpit_mecanismo_nombre($m);
 }
 
 if ($tab === 'sellout' || $libro) {
@@ -485,7 +484,10 @@ if (cockpit_vistas_disponible()) {
     ob_start(); ?>
     <div class="relative no-print" x-data="Object.assign(ckMenu(320), {guardar:false})" @keydown.escape.window="if (open) cerrar(true)" @click.outside="open=false">
       <button type="button" id="ck_vistas" class="btn btn-ghost" @click="abrir($el)" :aria-expanded="open.toString()" aria-haspopup="true"><?= icon('list', 'w-4 h-4') ?> Vistas<?= $vistas ? ' <span class="badge badge-blue">' . count($vistas) . '</span>' : '' ?></button>
-      <div x-show="open" x-ref="panel" x-transition x-cloak :class="lado" class="absolute mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
+      <div x-show="open" x-ref="panel" x-transition x-cloak :class="lado"
+           @keydown.arrow-down="if (!['SELECT', 'INPUT'].includes($event.target.tagName)) { $event.preventDefault(); mover(1); }"
+           @keydown.arrow-up="if (!['SELECT', 'INPUT'].includes($event.target.tagName)) { $event.preventDefault(); mover(-1); }"
+           class="absolute mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-pop border border-slate-200 z-40 p-2">
         <?php if (!$vistas): ?><p class="text-sm text-slate-400 px-2 py-3">Aún no hay vistas. Guarda esta combinación de pestaña y filtros para volver con un clic.</p><?php endif; ?>
         <ul class="max-h-72 overflow-y-auto">
           <?php foreach ($vistas as $v): $esMia = (int) $v['usuario_id'] === $uidV; ?>
@@ -496,12 +498,15 @@ if (cockpit_vistas_disponible()) {
                   <span class="block text-xs text-slate-400 truncate"><?= $esMia ? ($v['compartida'] ? 'Tuya · compartida' : 'Tuya') : 'De ' . e($v['autor'] ?? '—') ?></span>
                 </a>
                 <?php if ($esMia && $conCorreo): ?>
-                <form method="post" class="flex items-center gap-1.5 px-2 pb-2">
+                <!-- Sin enviar al cambiar: con el teclado, cada flecha cambiaba el valor y
+                     recargaba la página. Se guarda con el botón, que aparece al cambiar. -->
+                <form method="post" class="flex items-center gap-1.5 px-2 pb-2" x-data="{ orig: <?= e(json_encode((string) ($v['frecuencia'] ?? ''))) ?>, val: <?= e(json_encode((string) ($v['frecuencia'] ?? ''))) ?> }">
                   <?= csrf_field() ?><input type="hidden" name="accion" value="frecuencia_vista"><input type="hidden" name="id" value="<?= (int) $v['id'] ?>">
                   <?= icon('mail', 'w-3.5 h-3.5 text-slate-400 shrink-0') ?>
-                  <select name="frecuencia" onchange="this.form.submit()" class="text-xs border-0 bg-transparent p-0 pr-5 text-slate-500 focus:ring-0 cursor-pointer" aria-label="Resumen por correo de <?= e($v['nombre']) ?>">
+                  <select name="frecuencia" x-model="val" class="text-xs border-0 bg-transparent p-0 pr-5 text-slate-500 focus:ring-0 cursor-pointer" aria-label="Resumen por correo de <?= e($v['nombre']) ?>">
                     <?php foreach (cockpit_resumen_frecuencias() as $fk => $fl): ?><option value="<?= e($fk) ?>" <?= ($v['frecuencia'] ?? '') === $fk ? 'selected' : '' ?>><?= e($fk === '' ? 'Sin resumen por correo' : 'Correo: ' . mb_strtolower($fl)) ?></option><?php endforeach; ?>
                   </select>
+                  <button x-show="val !== orig" x-cloak class="text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-md px-2 py-0.5 shrink-0">Guardar</button>
                   <a href="?vista_correo=<?= (int) $v['id'] ?>" target="_blank" rel="noopener" class="text-xs text-blue-600 hover:underline ml-auto shrink-0">Ver correo</a>
                 </form>
                 <?php endif; ?>
@@ -560,7 +565,7 @@ $mas = '<div class="relative no-print" x-data="ckMenu(256)" @keydown.escape.wind
     . ' abrir(b) { this.boton = b; const r = b.getBoundingClientRect(); this.lado = r.right - ancho >= 8 ? "right-0" : "left-0";'
     . '   this.open = !this.open; if (this.open) this.$nextTick(() => { const i = this.items(); if (i[0]) i[0].focus(); }); },'
     . ' cerrar(volver) { this.open = false; if (volver && this.boton) this.boton.focus(); },'
-    . ' items() { return [...this.$refs.panel.querySelectorAll("a[href],button:not([disabled]),input,select")].filter(e => e.offsetParent !== null); },'
+    . ' items() { return [...this.$refs.panel.querySelectorAll("a[href],button:not([disabled])")].filter(e => e.offsetParent !== null); },'
     . ' mover(d, abs) { const i = this.items(); if (!i.length) return; const k = i.indexOf(document.activeElement);'
     . '   const n = abs ? (d < 0 ? i.length - 1 : 0) : (k + d + i.length) % i.length; i[n].focus(); } }; }</script>';
 $acciones = $vistasBtn . $libroBtn . $mas;

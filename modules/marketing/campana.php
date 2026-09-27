@@ -601,7 +601,7 @@ layout_start($c['nombre'], 'Campaña ' . strtolower($etEstado) . ' · ' . ($cana
 
           <?php elseif (in_array($c['estado'], ['borrador', 'programada'], true)): ?>
             <?php if ($c['canal'] !== 'whatsapp'): ?>
-              <form method="post" onsubmit="return confirm('¿Enviar «<?= e($c['nombre']) ?>» ahora? No se puede deshacer.')">
+              <form method="post" data-confirmar="<?= e('¿Enviar «' . ($c['nombre']) . '» ahora? No se puede deshacer.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                 <?= csrf_field() ?><input type="hidden" name="accion" value="enviar">
                 <button class="btn btn-primary w-full" <?= mail_configurado() ? '' : 'disabled title="Correo no configurado"' ?>>
                   <?= icon('mail', 'w-4 h-4') ?> Enviar ahora

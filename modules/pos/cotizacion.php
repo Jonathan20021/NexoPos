@@ -388,7 +388,7 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
         </a>
 
         <?php if (can('cotizaciones.crear')): ?>
-          <form method="post" onsubmit="return confirm('¿Enviar la cotización por correo a <?= e($c['cliente_email'] ?: 'el cliente') ?>?')">
+          <form method="post" data-confirmar="<?= e('¿Enviar la cotización por correo a ' . ($c['cliente_email'] ?: 'el cliente') . '?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
             <?= csrf_field() ?><input type="hidden" name="accion" value="enviar">
             <button class="btn btn-primary w-full"
                     <?= (mail_configurado() && filter_var((string) $c['cliente_email'], FILTER_VALIDATE_EMAIL)) ? '' : 'disabled' ?>>

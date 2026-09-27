@@ -214,7 +214,7 @@ echo kpis([
                             class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('clientes.eliminar') && (int) $c['id'] !== 1): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el cliente «<?= e($c['nombre']) ?>»?')">
+                    <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar el cliente «' . ($c['nombre']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $c['id'] ?>">
                       <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                     </form>

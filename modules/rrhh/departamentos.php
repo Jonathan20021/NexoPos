@@ -250,7 +250,7 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
                                 class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                       <?php endif; ?>
                       <?php if (can('rrhh_departamentos.eliminar')): ?>
-                        <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el departamento «<?= e($d['nombre']) ?>»?')">
+                        <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar el departamento «' . ($d['nombre']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                           <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_dep"><input type="hidden" name="id" value="<?= (int) $d['id'] ?>">
                           <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                         </form>
@@ -306,7 +306,7 @@ layout_start('Departamentos y puestos', 'Organiza la estructura de tu personal')
                                 class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                       <?php endif; ?>
                       <?php if (can('rrhh_departamentos.eliminar')): ?>
-                        <form method="post" class="inline" onsubmit="return confirm('¿Eliminar el puesto «<?= e($p['nombre']) ?>»?')">
+                        <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar el puesto «' . ($p['nombre']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                           <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar_puesto"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
                           <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                         </form>

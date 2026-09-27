@@ -359,7 +359,7 @@ layout_start('Seguridad de acceso',
                     <div class="flex items-center justify-end gap-1">
                       <?php if ($puedeGestionar): ?>
                         <?php if ((int) $u['equipos'] > 0): ?>
-                          <form method="post" class="inline" onsubmit="return confirm('¿Retirar los equipos de confianza de «<?= e($u['usuario']) ?>»?')">
+                          <form method="post" class="inline" data-confirmar="<?= e('¿Retirar los equipos de confianza de «' . ($u['usuario']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                             <?= csrf_field() ?>
                             <input type="hidden" name="accion" value="revocar_equipos">
                             <input type="hidden" name="id" value="<?= (int) $u['id'] ?>">

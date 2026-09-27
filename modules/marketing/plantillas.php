@@ -183,7 +183,7 @@ layout_start('Plantillas de mensaje', 'Textos listos para reutilizar en campaña
               <button class="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" title="Duplicar"><?= icon('layers', 'w-4 h-4') ?></button>
             </form>
             <?php if (!$p['es_sistema']): ?>
-              <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la plantilla «<?= e($p['nombre']) ?>»?')">
+              <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar la plantilla «' . ($p['nombre']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                 <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $p['id'] ?>">
                 <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
               </form>

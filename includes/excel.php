@@ -32,6 +32,16 @@ if (!class_exists('ExcelSinFormulasBinder')) {
     }
 }
 
+/**
+ * Activa ExcelSinFormulasBinder para lo que se escriba con setCellValue()/
+ * fromArray() en esta petición. Llamarlo antes de armar cualquier libro con
+ * texto de usuarios (nombres, notas, departamentos…).
+ */
+function excel_sin_formulas(): void
+{
+    \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new ExcelSinFormulasBinder());
+}
+
 /** Nombre de hoja válido para Excel (31 caracteres, sin \\ / ? * [ ] :). */
 function excel_nombre_hoja(string $t): string
 {

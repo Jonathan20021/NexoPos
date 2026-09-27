@@ -240,7 +240,7 @@ layout_start('Tiendas y marcas', 'La identidad con la que se imprimen facturas y
                             class="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Editar"><?= icon('edit', 'w-4 h-4') ?></button>
                   <?php endif; ?>
                   <?php if (can('tiendas.eliminar')): ?>
-                    <form method="post" class="inline" onsubmit="return confirm('¿Eliminar la tienda «<?= e($t['nombre']) ?>»?')">
+                    <form method="post" class="inline" data-confirmar="<?= e('¿Eliminar la tienda «' . ($t['nombre']) . '»?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                       <?= csrf_field() ?><input type="hidden" name="accion" value="eliminar"><input type="hidden" name="id" value="<?= (int) $t['id'] ?>">
                       <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50" title="Eliminar"><?= icon('trash', 'w-4 h-4') ?></button>
                     </form>

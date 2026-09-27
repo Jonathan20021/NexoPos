@@ -556,7 +556,9 @@ function btn_eliminar(array $o): string
         $extra .= '<input type="hidden" name="' . e($k) . '" value="' . e($v) . '">';
     }
     $titulo = $o['titulo'] ?? 'Eliminar';
-    return '<form method="post" class="inline" onsubmit="return confirm(\'' . e($pregunta) . '\')">'
+    // La pregunta lleva nombres escritos por usuarios: va como atributo, nunca
+    // dentro del JavaScript (ver «Confirmaciones» en docs/CONVENCIONES-DEV.md).
+    return '<form method="post" class="inline" data-confirmar="' . e($pregunta) . '" onsubmit="return confirm(this.dataset.confirmar)">'
         . csrf_field()
         . '<input type="hidden" name="accion" value="' . e($o['accion'] ?? 'eliminar') . '">'
         . '<input type="hidden" name="' . e($o['campo'] ?? 'id') . '" value="' . e($o['id'] ?? '') . '">'

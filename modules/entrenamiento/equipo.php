@@ -149,7 +149,7 @@ if ($verUsuario > 0) {
         </div>
 
         <?php if (can('entrenamiento.asignar') && (int) $persona['completadas'] > 0): ?>
-          <form method="post" onsubmit="return confirm('¿Reiniciar el entrenamiento de <?= e(trim($persona['nombre'] . ' ' . $persona['apellido'])) ?>? Se borra su avance y sus evaluaciones.')">
+          <form method="post" data-confirmar="<?= e('¿Reiniciar el entrenamiento de ' . (trim($persona['nombre'] . ' ' . $persona['apellido'])) . '? Se borra su avance y sus evaluaciones.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
             <?= csrf_field() ?>
             <input type="hidden" name="accion" value="reiniciar">
             <input type="hidden" name="usuario_id" value="<?= (int) $persona['id'] ?>">

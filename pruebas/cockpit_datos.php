@@ -99,12 +99,25 @@ foreach (['gs', 'ns', 'costo', 'tickets', 'sin_lista'] as $k) {
 }
 $mec = cockpit_mecanismos($f, $f['ty']);
 cuadra('los mecanismos suman la venta bruta en promoción', array_sum(array_column($mec, 'gs')), $res['promo']['ty']['gs']);
-$mensual = cockpit_mensual($f, $f['ty']);
+// La serie mensual calculada «a la vieja», con su propia consulta: la referencia
+// contra la que se mide la de producción (que sale de la misma pasada que los tipos).
+$mensualRef = function (array $f, array $rango): array {
+    $x = cockpit_expr();
+    [$w, $p] = cockpit_where($f, $rango);
+    $out = [];
+    foreach (qAll("SELECT DATE_FORMAT(v.fecha, '%Y-%m') ym, COALESCE(SUM({$x['gs']}),0) gs, COALESCE(SUM({$x['ns']}),0) ns,
+                          COALESCE(SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['gs']} ELSE 0 END),0) gs_promo
+                     " . cockpit_from() . " WHERE $w GROUP BY ym ORDER BY ym", $p) as $r) {
+        $out[$r['ym']] = array_map('floatval', ['gs' => $r['gs'], 'ns' => $r['ns'], 'gs_promo' => $r['gs_promo']]);
+    }
+    return $out;
+};
+$mensual = $mensualRef($f, $f['ty']);
 cuadra('los meses suman la venta bruta total', array_sum(array_column($mensual, 'gs')), (float) $tot['gs']);
 // El resumen saca meses y tipos de UNA pasada: tiene que dar lo mismo que la serie aparte.
 $igual = array_keys($mensual) === array_keys($res['mensual_ty']);
 foreach ($mensual as $ym => $m) foreach (['gs', 'ns', 'gs_promo'] as $k) $igual = $igual && abs($m[$k] - ($res['mensual_ty'][$ym][$k] ?? -1)) < 0.01;
-cuadra('la serie mensual del resumen (una pasada) = cockpit_mensual(), mes a mes', $igual ? 1.0 : 0.0, 1.0);
+cuadra('la serie mensual del resumen (una pasada) = la de referencia, mes a mes', $igual ? 1.0 : 0.0, 1.0);
 
 /* ============================================================ */
 titulo('Moneda de reporte');

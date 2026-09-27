@@ -199,7 +199,7 @@ $limpiar = ($q || $estado) ? '<a href="?" class="btn btn-ghost btn-sm">Limpiar</
                   <?php endif; ?>
                   <?php if (can('sanidad.bloquear')): ?>
                     <?php if ($l['bloqueado']): ?>
-                      <form method="post" class="inline" onsubmit="return confirm('¿Liberar el lote <?= e($l['codigo']) ?>? Volverá a poder venderse.')">
+                      <form method="post" class="inline" data-confirmar="<?= e('¿Liberar el lote ' . ($l['codigo']) . '? Volverá a poder venderse.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                         <?= csrf_field() ?><input type="hidden" name="accion" value="liberar"><input type="hidden" name="id" value="<?= (int) $l['id'] ?>">
                         <button class="p-2 rounded-lg text-violet-500 hover:text-violet-700 hover:bg-violet-50" title="Liberar"><?= icon('check', 'w-4 h-4') ?></button>
                       </form>

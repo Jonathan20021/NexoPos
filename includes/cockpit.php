@@ -673,27 +673,10 @@ function cockpit_efectos(array $ty, array $ly, float $gsTotTy, float $gsTotLy): 
     return $e;
 }
 
-/** Serie mensual: venta bruta, neta y bruta en promoción. @return array<string,array> 'Y-m' => sumas */
-function cockpit_mensual(array $f, array $rango): array
-{
-    $x = cockpit_expr();
-    [$w, $p] = cockpit_where($f, $rango);
-    $rows = qAll(
-        "SELECT DATE_FORMAT(v.fecha, '%Y-%m') ym,
-                COALESCE(SUM({$x['gs']}),0) gs, COALESCE(SUM({$x['ns']}),0) ns,
-                COALESCE(SUM(CASE WHEN {$x['tipo']} <> 'sin' THEN {$x['gs']} ELSE 0 END),0) gs_promo
-           " . cockpit_from() . " WHERE $w GROUP BY ym ORDER BY ym",
-        $p
-    );
-    $out = [];
-    foreach ($rows as $r) $out[$r['ym']] = array_map('floatval', ['gs' => $r['gs'], 'ns' => $r['ns'], 'gs_promo' => $r['gs_promo']]);
-    return $out;
-}
-
 /**
  * Sumas por tipo de descuento y serie mensual en una sola consulta.
  * @return array{0: array<string,array>, 1: array<string,array{gs:float,ns:float,gs_promo:float}>}
- *         [como cockpit_por($f, $rango, tipo), como cockpit_mensual($f, $rango)]
+ *         [lo mismo que cockpit_por($f, $rango, tipo), y la serie mensual gs/ns/gs_promo]
  */
 function cockpit_por_mes_tipo(array $f, array $rango): array
 {
@@ -820,23 +803,32 @@ function cockpit_stacking(array $f, array $rango): array
             'total' => $total];
 }
 
+/** Las promociones por 'p'.id, una sola consulta por petición (la comparten el Detallado y el Producto). */
+function cockpit_promociones_por_clave(): array
+{
+    static $cache = null;
+    return $cache ??= array_column(array_map(fn($pr) => ['k' => 'p' . $pr['id']] + $pr,
+        qAll("SELECT id, nombre, codigo, tipo_descuento, tipo, valor, fecha_inicio, fecha_fin FROM promociones")), null, 'k');
+}
+
+/** Solo el nombre de un mecanismo (sin formatear importes ni fechas que no se usan). */
+function cockpit_mecanismo_nombre(string $k): string
+{
+    return $k === 'sin' ? 'Sin promoción' : cockpit_mecanismo_info($k, null, false)['nombre'];
+}
+
 /**
  * Tipo, nombre y detalle de un mecanismo ('p12', 'c:empleados', 'negociado'…)
  * sin tocar las ventas. $promos: las promociones por 'p'.id (null = las carga).
  * @return array{tipo:string, nombre:string, detalle:string}
  */
-function cockpit_mecanismo_info(string $k, ?array $promos = null): array
+function cockpit_mecanismo_info(string $k, ?array $promos = null, bool $conDetalle = true): array
 {
-    static $cache = null;
-    if ($promos === null) {
-        $cache ??= array_column(array_map(fn($pr) => ['k' => 'p' . $pr['id']] + $pr,
-            qAll("SELECT id, nombre, codigo, tipo_descuento, tipo, valor, fecha_inicio, fecha_fin FROM promociones")), null, 'k');
-        $promos = $cache;
-    }
+    $promos ??= cockpit_promociones_por_clave();
     if (isset($promos[$k])) {
         $pr = $promos[$k];
         return ['tipo' => $pr['tipo_descuento'] ?: 'promocion', 'nombre' => ($pr['codigo'] ? $pr['codigo'] . ' - ' : '') . $pr['nombre'],
-                'detalle' => ($pr['tipo'] === 'porcentaje' ? rtrim(rtrim(number_format((float) $pr['valor'], 2), '0'), '.') . '%' : money((float) $pr['valor']))
+                'detalle' => !$conDetalle ? '' : ($pr['tipo'] === 'porcentaje' ? rtrim(rtrim(number_format((float) $pr['valor'], 2), '0'), '.') . '%' : money((float) $pr['valor']))
                            . ' · ' . fechaCorta($pr['fecha_inicio']) . ' al ' . fechaCorta($pr['fecha_fin'])];
     }
     if (str_starts_with($k, 'p')) return ['tipo' => 'promocion', 'nombre' => 'Promoción eliminada #' . substr($k, 1), 'detalle' => ''];
@@ -876,10 +868,7 @@ function cockpit_mecanismos(array $f, array $rango, bool $incluirInactivas = fal
         $act[$r['m']] = ['act' => (float) $r['act'], 'neto' => (float) $r['neto'] / cockpit_divisor()];
     }
 
-    $promos = [];
-    foreach (qAll("SELECT id, nombre, codigo, tipo_descuento, tipo, valor, fecha_inicio, fecha_fin FROM promociones") as $pr) {
-        $promos['p' . $pr['id']] = $pr;
-    }
+    $promos = cockpit_promociones_por_clave();
     if ($incluirInactivas) {
         foreach ($promos as $k => $pr) {
             if (!isset($filas[$k]) && $pr['fecha_inicio'] <= $rango[1] && $pr['fecha_fin'] >= $rango[0]) {
@@ -1405,7 +1394,7 @@ function cockpit_resumen_datos(array $f): array
     // Una pasada por periodo, agrupada por mes y tipo: de ahí salen los tipos
     // (sumando los meses) y la serie mensual (sumando los tipos). Una venta cae
     // en un solo mes, así que hasta las facturas suman exacto. Antes eran dos
-    // barridos por periodo (cockpit_por por tipo + cockpit_mensual).
+    // barridos por periodo (uno por tipo y otro por mes).
     [$porTY, $mesTY] = cockpit_por_mes_tipo($f, $f['ty']);
     [$porLY, $mesLY] = cockpit_por_mes_tipo($f, $f['ly']);
     $totTY = cockpit_metricas(cockpit_sumar($porTY));

@@ -228,7 +228,7 @@ layout_start($titulo, liq_estados()[$liq['estado']]['ayuda'], $acciones);
       <p class="text-xs text-slate-400 mt-2">Aplicada el <?= fechaHora($liq['aplicada_at']) ?>.</p>
     <?php endif; ?>
     <?php if ($liq['estado'] !== 'anulada' && can('liquidaciones.anular')): ?>
-      <form method="post" class="mt-3" onsubmit="return confirm('¿Anular la liquidación <?= e($liq['numero']) ?>?<?= $liq['estado'] === 'aplicada' ? ' Se sacará del inventario lo que entró y los costos volverán a como estaban.' : '' ?>')">
+      <form method="post" class="mt-3" data-confirmar="<?= e('¿Anular la liquidación ' . $liq['numero'] . '?' . ($liq['estado'] === 'aplicada' ? ' Se sacará del inventario lo que entró y los costos volverán a como estaban.' : '')) ?>" onsubmit="return confirm(this.dataset.confirmar)">
         <?= csrf_field() ?><input type="hidden" name="accion" value="anular">
         <input type="text" name="motivo" class="input text-sm mb-2" placeholder="Motivo (opcional)">
         <button class="btn btn-danger btn-sm w-full"><?= icon('x', 'w-3.5 h-3.5') ?> Anular</button>
@@ -330,7 +330,7 @@ layout_start($titulo, liq_estados()[$liq['estado']]['ayuda'], $acciones);
                   </td>
                   <?php if ($editable): ?>
                     <td class="text-right">
-                      <form method="post" class="inline" onsubmit="return confirm('¿Quitar «<?= e($d['producto']) ?>» del embarque?')">
+                      <form method="post" class="inline" data-confirmar="<?= e('¿Quitar «' . ($d['producto']) . '» del embarque?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                         <?= csrf_field() ?><input type="hidden" name="accion" value="quitar_linea"><input type="hidden" name="linea_id" value="<?= (int) $d['id'] ?>">
                         <button class="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"><?= icon('trash', 'w-4 h-4') ?></button>
                       </form>

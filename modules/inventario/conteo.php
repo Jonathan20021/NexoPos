@@ -369,7 +369,7 @@ layout_start('Conteo ' . $c['numero'], e($c['descripcion']) . ' · ' . e($c['suc
       </a>
     <?php endif; ?>
     <?php if ($abierto && can('conteos.cancelar')): ?>
-      <form method="post" onsubmit="return confirm('¿Cancelar el conteo <?= e($c['numero']) ?>? No se tocará el inventario y no se podrá retomar.')">
+      <form method="post" data-confirmar="<?= e('¿Cancelar el conteo ' . ($c['numero']) . '? No se tocará el inventario y no se podrá retomar.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
         <?= csrf_field() ?><input type="hidden" name="accion" value="cancelar"><input type="hidden" name="id" value="<?= $id ?>">
         <button class="btn btn-ghost btn-sm"><?= icon('x', 'w-3.5 h-3.5') ?> Cancelar conteo</button>
       </form>

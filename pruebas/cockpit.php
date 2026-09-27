@@ -185,7 +185,13 @@ comprueba('mismo día de la semana: el viernes de Black Friday sigue siendo vier
 comprueba('mismas fechas del calendario', kpi_duplicar_fechas('2026-05-01', '2026-05-31', 'fecha'), ['2027-05-01', '2027-05-31']);
 comprueba('un 29 de febrero pasa al 28', kpi_duplicar_fechas('2024-02-29', '2024-03-10', 'fecha'), ['2025-02-28', '2025-03-10']);
 comprueba('el año del nombre avanza', kpi_nombre_siguiente('Black Friday 2026', 2027), 'Black Friday 2027');
-comprueba('todos los años del nombre avanzan', kpi_nombre_siguiente('Holiday 2025-2026', 2026), 'Holiday 2026-2027');
+comprueba('los años de la campaña avanzan todos', kpi_nombre_siguiente('Holiday 2025-2026', 2027, [2025, 2026]), 'Holiday 2026-2027');
+comprueba('un año que no es de la campaña no se toca', kpi_nombre_siguiente('Aniversario 1998 · edición 2026', 2027, [2026]), 'Aniversario 1998 · edición 2027');
+comprueba('un nombre largo sin año no pierde el año al recortarse', mb_substr(kpi_nombre_siguiente(str_repeat('x', 130), 2027), -5), ' 2027');
+comprueba('Año Nuevo (del 1 al 3 de enero) duplicado por semana: se llama con el año en que termina',
+    kpi_nombre_duplicado(['nombre' => 'Año Nuevo 2026', 'fecha_inicio' => '2026-01-01', 'fecha_fin' => '2026-01-03'], 'semana'), 'Año Nuevo 2027');
+comprueba('sin año en el nombre: el del fin de la campaña nueva',
+    kpi_nombre_duplicado(['nombre' => 'Navidad', 'fecha_inicio' => '2026-12-01', 'fecha_fin' => '2026-12-31'], 'fecha'), 'Navidad 2027');
 comprueba('sin año, se le añade', kpi_nombre_siguiente('Día de las Madres', 2027), 'Día de las Madres 2027');
 comprueba('un número que no es año no se toca', kpi_nombre_siguiente('Promo 3x2 1500', 2027), 'Promo 3x2 1500 2027');
 

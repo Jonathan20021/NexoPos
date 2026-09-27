@@ -123,12 +123,26 @@ function kpi_duplicar_fechas(string $ini, string $fin, string $modo): array
 
 /**
  * «Black Friday 2026» → «Black Friday 2027»; «Holiday 2025-2026» → «Holiday
- * 2026-2027». Sin año en el nombre, se le añade el de la campaña nueva.
+ * 2026-2027». Solo avanzan los años DE LA CAMPAÑA ($aniosCampana: los de sus
+ * fechas); un «Aniversario 1998» conserva su 1998. Sin año de la campaña en el
+ * nombre, se le añade $anio (el de la campaña nueva), sin que el recorte a 120
+ * caracteres se lo coma.
  */
-function kpi_nombre_siguiente(string $nombre, int $anio): string
+function kpi_nombre_siguiente(string $nombre, int $anio, array $aniosCampana = []): string
 {
-    $nuevo = preg_replace_callback('/\b(19|20)\d{2}\b/', fn($m) => (string) ((int) $m[0] + 1), $nombre, -1, $n);
-    return mb_substr($n ? $nuevo : trim($nombre) . ' ' . $anio, 0, 120);
+    $aniosCampana = array_map('intval', $aniosCampana ?: [$anio - 1]);
+    $nuevo = preg_replace_callback('/\b(19|20)\d{2}\b/',
+        fn($m) => in_array((int) $m[0], $aniosCampana, true) ? (string) ((int) $m[0] + 1) : $m[0], $nombre, -1);
+    if ($nuevo !== $nombre) return mb_substr($nuevo, 0, 120);
+    return mb_substr(trim($nombre), 0, 120 - 5) . ' ' . $anio;
+}
+
+/** El nombre propuesto al duplicar: el año nuevo es el del FIN de la campaña nueva. */
+function kpi_nombre_duplicado(array $c, string $modo): string
+{
+    [, $fin] = kpi_duplicar_fechas($c['fecha_inicio'], $c['fecha_fin'], $modo);
+    return kpi_nombre_siguiente($c['nombre'], (int) substr($fin, 0, 4),
+        array_unique([(int) substr($c['fecha_inicio'], 0, 4), (int) substr($c['fecha_fin'], 0, 4)]));
 }
 
 /**
@@ -146,7 +160,9 @@ function kpi_duplicar_campana(array $c, string $modo, float $crecimientoPct, str
         $id = dbInsert('kpi_campanas', [
             'nombre' => $nombre, 'descripcion' => $c['descripcion'],
             'fecha_inicio' => $ini, 'fecha_fin' => $fin, 'ly_inicio' => $c['fecha_inicio'], 'ly_fin' => $c['fecha_fin'],
-            'sucursal_id' => $c['sucursal_id'], 'tienda_id' => $c['tienda_id'],
+            'sucursal_id' => $c['sucursal_id'],
+            // Como al crear: una tienda que ya no está activa no se arrastra (sus KPIs saldrían en cero).
+            'tienda_id' => $c['tienda_id'] && array_key_exists((int) $c['tienda_id'], tiendas_opciones()) ? $c['tienda_id'] : null,
             'meta_ventas' => round((float) $c['meta_ventas'] * $f, 2),   // 0 sigue siendo «sin meta»
             'tasa_eur' => $c['tasa_eur'], 'notas' => null, 'created_by' => $usuarioId,
         ]);

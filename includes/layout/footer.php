@@ -98,7 +98,9 @@
  * modal. Si el formulario ya trae data-confirmar, el mensaje sale de ahí: es la
  * forma segura cuando el texto lleva datos del usuario (un nombre con comilla
  * no puede romper ningún JavaScript):
- *   <form data-confirmar="<?= e($texto) ?>" onsubmit="return confirm(this.dataset.confirmar)"> Si este script no llega a ejecutarse, el onsubmit original sigue
+ *   <form data-confirmar="(el texto, escapado con e())" onsubmit="return confirm(this.dataset.confirmar)">
+ * (Sin etiqueta PHP en este comentario: está dentro de un <script> que PHP
+ * interpreta, y una etiqueta aquí se ejecutaría en cada página.) Si este script no llega a ejecutarse, el onsubmit original sigue
  * intacto y la protección contra borrados accidentales no se pierde nunca.
  */
 (function () {

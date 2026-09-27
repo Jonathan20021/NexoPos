@@ -160,7 +160,7 @@ layout_start($ruta['titulo'], $ruta['descripcion'], $acciones);
 
     <?php if ($a['completadas'] > 0 && ent_disponible()): ?>
       <form method="post" action="<?= e(url('modules/entrenamiento/progreso.php')) ?>"
-            onsubmit="return confirm('¿Reiniciar tu avance en «<?= e($ruta['titulo']) ?>»? Se borran las lecciones completadas y las evaluaciones de esta ruta.')">
+            data-confirmar="<?= e('¿Reiniciar tu avance en «' . ($ruta['titulo']) . '»? Se borran las lecciones completadas y las evaluaciones de esta ruta.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
         <?= csrf_field() ?>
         <input type="hidden" name="accion" value="reiniciar_ruta">
         <input type="hidden" name="ruta" value="<?= e($rk) ?>">

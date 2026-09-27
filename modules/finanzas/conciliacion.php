@@ -163,7 +163,7 @@ layout_start('Conciliación bancaria', 'Cruce con el estado de cuenta · ' . e($
 
   <?php if ($r['cuadra'] && can('conciliacion.cerrar')): ?>
     <form method="post" class="mt-5 pt-5 border-t border-slate-100 flex flex-col sm:flex-row gap-3 sm:items-end"
-          onsubmit="return confirm('¿Cerrar la conciliación al <?= e($fechaCorte) ?>? Los movimientos marcados quedarán bloqueados.')">
+          data-confirmar="<?= e('¿Cerrar la conciliación al ' . ($fechaCorte) . '? Los movimientos marcados quedarán bloqueados.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
       <?= csrf_field() ?><input type="hidden" name="accion" value="cerrar">
       <div class="flex-1">
         <label class="label" for="notas">Notas del corte (opcional)</label>

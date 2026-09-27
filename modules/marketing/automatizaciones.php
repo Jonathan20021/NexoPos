@@ -210,7 +210,7 @@ echo kpis([
            class="btn btn-soft btn-sm flex-1"><?= icon('edit', 'w-3.5 h-3.5') ?> Configurar</a>
 
         <?php if ($activo): ?>
-          <form method="post" onsubmit="return confirm('¿Correr «<?= e($a['nombre']) ?>» ahora? Encolará mensajes reales a los clientes que cumplan la condición.')">
+          <form method="post" data-confirmar="<?= e('¿Correr «' . ($a['nombre']) . '» ahora? Encolará mensajes reales a los clientes que cumplan la condición.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
             <?= csrf_field() ?>
             <input type="hidden" name="accion" value="correr"><input type="hidden" name="id" value="<?= (int) $a['id'] ?>">
             <button class="btn btn-ghost btn-sm" title="Correr ahora"><?= icon('pulse', 'w-3.5 h-3.5') ?> Correr</button>

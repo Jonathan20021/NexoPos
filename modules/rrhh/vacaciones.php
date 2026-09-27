@@ -386,13 +386,13 @@ layout_start('Vacaciones y Licencias', 'Gestiona las solicitudes de vacaciones y
                 <td>
                   <div class="flex items-center justify-end gap-1">
                     <?php if ($s['estado'] === 'solicitada'): ?>
-                      <form method="post" class="inline" onsubmit="return confirm('¿Aprobar esta solicitud de <?= e($nombreEmp) ?>?')">
+                      <form method="post" class="inline" data-confirmar="<?= e('¿Aprobar esta solicitud de ' . ($nombreEmp) . '?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                         <?= csrf_field() ?>
                         <input type="hidden" name="accion" value="aprobar">
                         <input type="hidden" name="id" value="<?= (int) $s['id'] ?>">
                         <button class="btn btn-sm btn-success" title="Aprobar"><?= icon('check', 'w-4 h-4') ?> Aprobar</button>
                       </form>
-                      <form method="post" class="inline" onsubmit="return confirm('¿Rechazar esta solicitud de <?= e($nombreEmp) ?>?')">
+                      <form method="post" class="inline" data-confirmar="<?= e('¿Rechazar esta solicitud de ' . ($nombreEmp) . '?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                         <?= csrf_field() ?>
                         <input type="hidden" name="accion" value="rechazar">
                         <input type="hidden" name="id" value="<?= (int) $s['id'] ?>">

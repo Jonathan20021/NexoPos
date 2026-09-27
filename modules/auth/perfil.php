@@ -236,7 +236,7 @@ layout_start('Mi Perfil', 'Tus datos, tu acceso y tu actividad reciente', $accio
                       vence <?= e(fechaCorta($d['expira_en'])) ?>
                     </p>
                   </div>
-                  <form method="post" class="shrink-0" onsubmit="return confirm('¿Retirar «<?= e($d['nombre']) ?>» de tus equipos de confianza?')">
+                  <form method="post" class="shrink-0" data-confirmar="<?= e('¿Retirar «' . ($d['nombre']) . '» de tus equipos de confianza?') ?>" onsubmit="return confirm(this.dataset.confirmar)">
                     <?= csrf_field() ?>
                     <input type="hidden" name="accion" value="revocar_equipo">
                     <input type="hidden" name="id" value="<?= (int) $d['id'] ?>">
