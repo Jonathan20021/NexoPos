@@ -121,7 +121,7 @@ $tasaItbis = (float) setting('itbis_tasa', DEFAULT_ITBIS);
 
 // Catálogo para el buscador de productos del editor.
 $catalogo = qAll(
-    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.itbis_aplica, p.tipo,
+    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.moneda_id, p.itbis_aplica, p.tipo,
             COALESCE(st.cantidad, 0) AS stock
        FROM productos p
        LEFT JOIN inventario_stock st ON st.producto_id = p.id AND st.sucursal_id = ?
@@ -310,7 +310,8 @@ layout_start('Cotización ' . $c['numero'], $c['cliente'] . ' · ' . strtolower(
           <datalist id="catalogoProd">
             <?php foreach ($catalogo as $p): ?>
               <option value="<?= e($p['nombre']) ?>" data-id="<?= (int) $p['id'] ?>"
-                      data-precio="<?= e((string) $p['precio_venta']) ?>" data-itbis="<?= (int) $p['itbis_aplica'] ?>"></option>
+                      <?php /* En pesos: la cotización se pacta en la moneda de la factura. */ ?>
+                      data-precio="<?= e((string) mon_precio_base($p)) ?>" data-itbis="<?= (int) $p['itbis_aplica'] ?>"></option>
             <?php endforeach; ?>
           </datalist>
           <p class="text-xs text-slate-400 mt-2">

@@ -80,6 +80,60 @@ se le debe». Lo encontró la prueba del ciclo completo, no la revisión a ojo.
 
 ---
 
+### 2b. Precios de catálogo en otra moneda (P39)
+
+Un producto puede tener su precio en dólares: `productos.moneda_id`. Vacío = pesos,
+que es como se comporta el resto del catálogo y como se comportaba **todo** antes de
+la P39 — la columna se añadió sin tocar ni un precio.
+
+**La conversión ocurre al vender, y una sola vez.** `mon_precio_base()` pasa el precio
+a pesos con la tasa de venta, y a partir de ahí ya no hay monedas: lo que se calcula,
+se imprime y se guarda en `venta_detalles` son pesos **congelados**. Reimprimir esa
+factura dentro de un año da el mismo número aunque el dólar se haya ido al doble.
+
+Convertir *antes* de aplicar promociones no es un detalle de orden: un descuento de
+«RD$100 menos» sobre un precio de 29 dólares sin convertir regalaría la mercancía.
+
+Quien muestre un precio de catálogo pasa por `mon_precio_base()` / `mon_costo_base()`.
+Para sumar dentro de SQL —el inventario valorizado agrega sobre miles de filas— están
+`mon_sql_join()` y `mon_sql_precio()`, que dejan la conversión dentro de la consulta
+en vez de convertirla en un bucle de PHP.
+
+### 2c. Las DOS tasas, y por qué son dos
+
+| | Qué es | Quién la mueve |
+|---|---|---|
+| `monedas.tasa` | La **tasa de venta**. La que cobra el POS y proponen los documentos. | Una persona, a mano |
+| `monedas.tasa_mercado` | La **referencia** descargada. No cobra nada. | El sistema, cada `MON_REFRESCO_HORAS` |
+
+Son dos a propósito. El precio de góndola no puede cambiar cada mañana porque el dólar
+se movió diez centavos: una etiqueta impresa dejaría de cuadrar con la caja el mismo
+día, y el cliente que vuelve mañana vería otro precio. Así que **lo automático avisa,
+no cobra**.
+
+El riesgo de una tasa fija no es que esté mal: es que se olvide. Por eso
+`tasa_revisada_at` guarda cuándo la miró una persona por última vez —hay un botón
+«Está bien» que la sella sin cambiarla— y la campana avisa de dos cosas distintas:
+que el mercado se separó más de `MON_ALERTA_PCT`, y que nadie la revisa hace
+`MON_ALERTA_DIAS` días. Solo avisa si hay productos con el precio en esa moneda; sin
+catálogo en dólares la tasa de venta no cobra nada y el aviso sería ruido.
+
+### 2d. De dónde sale la tasa de mercado
+
+**No hay API oficial gratuita del Banco Central.** El BCRD publica en PDF y la DGII
+también. Lo único que sirve BCRD en JSON es un proveedor comercial con cuota. Así que
+las fuentes de `mon_fuentes()` son de **mercado**, no oficiales: para una referencia
+sirven, para una declaración no.
+
+Van en cascada y la primera que responda algo creíble gana. «Creíble» es literal: si
+la tasa se aleja más de `MON_TOPE_SALTO_PCT` de la última conocida, se descarta y se
+prueba la siguiente — una fuente puede cambiar de formato sin avisar, y una tasa
+absurda guardada como referencia dispararía la alerta todos los días.
+
+Se descarga con el mismo enganche que las notificaciones y el marketing
+(`mon_tick_si_toca()` en la barra superior), sin cron. Timeout corto: detrás de esa
+llamada hay alguien esperando a que cargue una página.
+
 ## 3. Cotizaciones
 
 Documento previo a la factura, con vigencia, PDF de marca y envío por correo.

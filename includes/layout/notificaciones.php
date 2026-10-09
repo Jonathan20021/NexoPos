@@ -14,6 +14,10 @@ mkt_tick_si_toca();
 // transmitirse y consulta el estado de los que están en proceso. Red de
 // seguridad por si no hay cron; ver modules/finanzas/ecf_cron.php.
 ecfTickSiToca();
+// Y la tasa de mercado del dólar: se descarga como mucho cada MON_REFRESCO_HORAS.
+// Es solo la REFERENCIA que avisa cuando se separa de la tasa de venta; nunca
+// cambia lo que cobra el POS, que es una tasa fija que se toca a mano.
+mon_tick_si_toca();
 
 $notifs     = notif_listar(['limit' => 12]);
 $noLeidas   = notif_no_leidas();
