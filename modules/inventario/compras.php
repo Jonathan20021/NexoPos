@@ -142,7 +142,12 @@ if (isPost()) {
                         $loteEntrada['registro_sanitario'] = qVal("SELECT registro_sanitario FROM productos WHERE id = ?", [$d['pid']]);
                     }
                     ajustarStock($d['pid'], $sucursalId, $d['cant'], 'compra', 'compra', $compraId, $d['costo'], 'Compra ' . $numero, $loteEntrada);
-                    q("UPDATE productos SET precio_compra = ? WHERE id = ?", [$d['costo'], $d['pid']]);
+                    // El costo de la línea está en pesos; el catálogo lo guarda en la
+                    // moneda del producto. Si es la misma de la factura, con su tasa.
+                    $monProd = mon_p39() ? qVal("SELECT moneda_id FROM productos WHERE id = ?", [$d['pid']]) : null;
+                    $monProd = $monProd ? (int) $monProd : null;
+                    q("UPDATE productos SET precio_compra = ? WHERE id = ?",
+                      [mon_costo_a_producto($d['costo'], $monProd, $monProd !== null && $monProd === $monedaId ? $tasaDoc : null), $d['pid']]);
                 }
 
                 // UNA COMPRA A CRÉDITO NO SACA DINERO HOY.
@@ -287,11 +292,12 @@ if (export_solicitado()) {
 // y poder sugerir la fecha de vencimiento a partir de la vida util del producto.
 $__colsSan = san_disponible() ? ', controla_lote, vida_util_dias' : '';
 $productosJs = array_map(fn($p) => [
-        'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'costo' => (float) $p['precio_compra'],
+        // El formulario pide el costo en pesos: el del catálogo puede estar en dólares.
+        'id' => (int) $p['id'], 'nombre' => $p['nombre'], 'costo' => mon_costo_base($p),
         'itbis' => (int) $p['itbis_aplica'],
         'lote' => (int) ($p['controla_lote'] ?? 0), 'vida' => (int) ($p['vida_util_dias'] ?? 0),
     ],
-    qAll("SELECT id, nombre, precio_compra, itbis_aplica$__colsSan FROM productos WHERE activo=1 AND tipo='producto' ORDER BY nombre"));
+    qAll("SELECT id, nombre, precio_compra, itbis_aplica$__colsSan" . (mon_p39() ? ', moneda_id' : '') . " FROM productos WHERE activo=1 AND tipo='producto' ORDER BY nombre"));
 $proveedores = qAll("SELECT id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre");
 $sucursales = sucursales_visibles();
 

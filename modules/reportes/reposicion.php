@@ -62,9 +62,10 @@ if ($q !== '') { $cond[] = '(p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barr
 if ($categoria > 0) { $cond[] = 'p.categoria_id = ?'; $par[] = $categoria; }
 
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.nombre, p.stock_minimo, p.precio_compra,
+    // El costo en pesos: el catálogo puede estar en dólares.
+    "SELECT p.id, p.codigo, p.nombre, p.stock_minimo, " . mon_sql_precio('p.precio_compra') . " AS precio_compra,
             COALESCE(c.nombre,'Sin categoría') AS categoria
-       FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
+       FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id" . mon_sql_join('p', 'mo') . "
       WHERE " . implode(' AND ', $cond) . "
       ORDER BY p.nombre", $par);
 

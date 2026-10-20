@@ -77,10 +77,14 @@ $perdidaTotal = (float) qVal(
 );
 
 /* ---------- Precios de lista sin margen ---------- */
+// Los dos en la moneda del producto se comparan bien entre sí; se enseñan en pesos.
+$compraP = mon_sql_precio('p.precio_compra');
+$ventaP  = mon_sql_precio('p.precio_venta');
 $sinMargen = qAll(
-    "SELECT nombre, codigo, precio_compra, precio_venta
-       FROM productos WHERE activo = 1 AND precio_compra > 0 AND precio_venta > 0 AND precio_venta <= precio_compra
-      ORDER BY (precio_compra - precio_venta) DESC LIMIT 20"
+    "SELECT p.nombre, p.codigo, $compraP AS precio_compra, $ventaP AS precio_venta
+       FROM productos p" . mon_sql_join('p', 'mo') . "
+      WHERE p.activo = 1 AND p.precio_compra > 0 AND p.precio_venta > 0 AND p.precio_venta <= p.precio_compra
+      ORDER BY ($compraP - $ventaP) DESC LIMIT 20"
 );
 
 /* ---------- Muestras entregadas ---------- */

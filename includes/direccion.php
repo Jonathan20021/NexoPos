@@ -196,12 +196,13 @@ function dir_inventario_costo(?int $tiendaId = null): array
     $wT = '';
     if ($tiendaId !== null) { $wT = ' AND pr.tienda_id = ?'; $p[] = $tiendaId; }
 
+    // Valorado en pesos: el catálogo puede estar en dólares.
     $r = qOne(
-        "SELECT COALESCE(SUM(s.cantidad * pr.precio_compra),0) costo,
-                COALESCE(SUM(s.cantidad * pr.precio_venta),0)  venta,
+        "SELECT COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) costo,
+                COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_venta') . "),0)  venta,
                 COALESCE(SUM(s.cantidad),0)                    unidades
            FROM inventario_stock s
-           JOIN productos pr ON pr.id = s.producto_id
+           JOIN productos pr ON pr.id = s.producto_id" . mon_sql_join('pr', 'mo') . "
           WHERE pr.activo = 1 AND s.cantidad > 0 AND $w$wT",
         $p
     ) ?: [];
@@ -224,15 +225,18 @@ function dir_inventario_costo(?int $tiendaId = null): array
 function dir_bajo_costo(string $ini, string $fin, string $scope, array $params, int $limite = 15): array
 {
     return qAll(
-        "SELECT p.id, p.nombre, p.codigo, p.precio_venta, p.precio_compra,
+        // Precio y costo de lista en pesos, como lo vendido: el catálogo puede estar en dólares.
+        "SELECT p.id, p.nombre, p.codigo,
+                MAX(" . mon_sql_precio('p.precio_venta') . ") precio_venta,
+                MAX(" . mon_sql_precio('p.precio_compra') . ") precio_compra,
                 COALESCE(SUM(vd.cantidad),0) unidades,
                 COALESCE(SUM(vd.subtotal - vd.descuento),0) ingresos,
                 COALESCE(SUM(vd.cantidad * vd.costo_unitario),0) costo
            FROM ventas v
            JOIN venta_detalles vd ON vd.venta_id = v.id
-           JOIN productos p ON p.id = vd.producto_id
+           JOIN productos p ON p.id = vd.producto_id" . mon_sql_join('p', 'mo') . "
           WHERE v.estado = 'completada' AND v.fecha BETWEEN ? AND ? AND $scope
-          GROUP BY p.id, p.nombre, p.codigo, p.precio_venta, p.precio_compra
+          GROUP BY p.id, p.nombre, p.codigo
          -- Las expresiones se repiten en vez de usar los alias: MariaDB rechaza
          -- referenciar el alias de una función de grupo dentro de HAVING.
          HAVING SUM(vd.cantidad * vd.costo_unitario) > SUM(vd.subtotal - vd.descuento)

@@ -99,6 +99,24 @@ Para sumar dentro de SQL —el inventario valorizado agrega sobre miles de filas
 `mon_sql_join()` y `mon_sql_precio()`, que dejan la conversión dentro de la consulta
 en vez de convertirla en un bucle de PHP.
 
+**Dónde se aplica.** Además del POS, la cotización y el inventario valorizado, pasan
+por la conversión: la tienda en línea (listado y checkout) y la factura de sus
+pedidos, el buscador global, las etiquetas de precio, el escáner de almacén (ficha y
+costo del kárdex), stock, conteos, el simulador del cockpit, la pantalla de
+liquidación y los informes de dirección, costos, balance, ejecutivo, ajustes,
+existencias, productos, rentabilidad, reposición, sucursales y traslados. Un
+`SELECT p.precio_venta` sin convertir en una pantalla nueva es el mismo defecto:
+enseña «RD$ 29» de algo que cuesta 29 dólares.
+
+**El camino de vuelta.** Compras y liquidaciones calculan el costo en pesos y lo
+escriben en el catálogo. `mon_costo_a_producto()` lo devuelve a la moneda del
+producto antes de guardarlo (con la tasa del documento si es la misma moneda); sin
+eso, un artículo en dólares quedaba con un costo de 690 «dólares» y margen negativo.
+
+**El importador** pregunta en qué moneda vienen los precios del archivo (o los lee de
+una columna «Moneda»), y en *Importar → ¿Cargaste precios en otra moneda?* se corrige
+de una vez lo ya cargado, por lote de importación o por marca.
+
 ### 2c. Las DOS tasas, y por qué son dos
 
 | | Qué es | Quién la mueve |

@@ -34,11 +34,12 @@ if ($categoria > 0) { $cond[] = 'p.categoria_id = ?'; $par[] = $categoria; }
 $where = implode(' AND ', $cond);
 
 /* ---------- La matriz ---------- */
+// El costo en pesos: el catálogo puede estar en dólares.
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.nombre, p.stock_minimo, p.precio_compra,
+    "SELECT p.id, p.codigo, p.nombre, p.stock_minimo, " . mon_sql_precio('p.precio_compra') . " AS precio_compra,
             COALESCE(c.nombre,'Sin categoría') AS categoria
        FROM productos p
-       LEFT JOIN categorias c ON c.id = p.categoria_id
+       LEFT JOIN categorias c ON c.id = p.categoria_id" . mon_sql_join('p', 'mo') . "
       WHERE $where
       ORDER BY c.nombre, p.nombre",
     $par

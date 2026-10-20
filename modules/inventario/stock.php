@@ -43,8 +43,12 @@ if ($q !== '') { $cond[] = "(p.nombre LIKE ? OR p.codigo LIKE ?)"; $params[] = "
 if ($soloBajo) { $cond[] = "s.cantidad <= p.stock_minimo"; }
 $where = implode(' AND ', $cond);
 
+// El costo valorado en pesos: el catálogo puede estar en dólares.
+$costoP = mon_sql_precio('p.precio_compra');
+$joinMo = mon_sql_join('p', 'mo');
+
 if (export_solicitado()) {
-    $all = qAll("SELECT p.codigo, p.nombre, c.nombre AS categoria, su.nombre AS sucursal, s.cantidad, p.stock_minimo, p.precio_compra FROM inventario_stock s JOIN productos p ON p.id=s.producto_id JOIN sucursales su ON su.id=s.sucursal_id LEFT JOIN categorias c ON c.id=p.categoria_id WHERE $where ORDER BY p.nombre", $params);
+    $all = qAll("SELECT p.codigo, p.nombre, c.nombre AS categoria, su.nombre AS sucursal, s.cantidad, p.stock_minimo, $costoP AS precio_compra FROM inventario_stock s JOIN productos p ON p.id=s.producto_id $joinMo JOIN sucursales su ON su.id=s.sucursal_id LEFT JOIN categorias c ON c.id=p.categoria_id WHERE $where ORDER BY p.nombre", $params);
     export_tabla('stock', ['Código', 'Producto', 'Categoría', 'Sucursal', 'Cantidad', 'Mínimo', 'Valor (costo)'],
         array_map(fn($r) => [$r['codigo'], $r['nombre'], $r['categoria'], $r['sucursal'], $r['cantidad'], $r['stock_minimo'], round($r['cantidad'] * $r['precio_compra'], 2)], $all));
 }
@@ -52,10 +56,10 @@ if (export_solicitado()) {
 $pg = paginar((int) qVal(
     "SELECT COUNT(*) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $where", $params), 25);
 $rows = qAll(
-    "SELECT s.id, s.cantidad, p.id AS pid, p.nombre, p.codigo, p.stock_minimo, p.precio_compra,
+    "SELECT s.id, s.cantidad, p.id AS pid, p.nombre, p.codigo, p.stock_minimo, $costoP AS precio_compra,
             c.nombre AS categoria, c.color AS cat_color, su.id AS suc_id, su.nombre AS sucursal
      FROM inventario_stock s
-     JOIN productos p ON p.id=s.producto_id
+     JOIN productos p ON p.id=s.producto_id $joinMo
      JOIN sucursales su ON su.id=s.sucursal_id
      LEFT JOIN categorias c ON c.id=p.categoria_id
      WHERE $where ORDER BY (s.cantidad<=p.stock_minimo) DESC, p.nombre
@@ -64,7 +68,7 @@ $rows = qAll(
 
 $totProd = (int) qVal("SELECT COUNT(DISTINCT s.producto_id) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $scope AND p.activo=1", $sp);
 $totBajo = (int) qVal("SELECT COUNT(*) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $scope AND p.activo=1 AND s.cantidad<=p.stock_minimo", $sp);
-$valorTotal = (float) qVal("SELECT COALESCE(SUM(s.cantidad*p.precio_compra),0) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id WHERE $scope AND p.activo=1", $sp);
+$valorTotal = (float) qVal("SELECT COALESCE(SUM(s.cantidad*$costoP),0) FROM inventario_stock s JOIN productos p ON p.id=s.producto_id $joinMo WHERE $scope AND p.activo=1", $sp);
 
 layout_start('Stock', 'Existencias por producto y sucursal', export_buttons());
 ?>

@@ -44,7 +44,8 @@ $where = implode(' AND ', $cond);
 // El costo del movimiento manda cuando existe; el ajuste a mano no lo pide y
 // llega en cero, y ahí el costo de reposición del producto es lo más cercano a
 // lo que valía la mercancía que se fue.
-$valor = "m.cantidad * COALESCE(NULLIF(m.costo_unitario, 0), pr.precio_compra, 0)";
+// El de catálogo, en pesos: puede estar en dólares.
+$valor = "m.cantidad * COALESCE(NULLIF(m.costo_unitario, 0), " . mon_sql_precio('pr.precio_compra') . ", 0)";
 
 /* ---------- Lo que salió de una tienda y nunca llegó a la otra ----------
  *
@@ -63,12 +64,12 @@ $transito = qAll(
             so.nombre AS origen, sd.nombre AS destino,
             pr.nombre AS producto, pr.codigo,
             (td.cantidad - td.cantidad_recibida) AS faltaron,
-            (td.cantidad - td.cantidad_recibida) * COALESCE(NULLIF(pr.precio_compra,0), 0) AS valor
+            (td.cantidad - td.cantidad_recibida) * COALESCE(NULLIF(" . mon_sql_precio('pr.precio_compra') . ",0), 0) AS valor
        FROM transferencia_detalles td
        JOIN transferencias t  ON t.id = td.transferencia_id
        JOIN sucursales so     ON so.id = t.sucursal_origen_id
        JOIN sucursales sd     ON sd.id = t.sucursal_destino_id
-       JOIN productos pr      ON pr.id = td.producto_id
+       JOIN productos pr      ON pr.id = td.producto_id" . mon_sql_join('pr', 'mo') . "
       WHERE t.estado = 'recibida'
         AND td.cantidad_recibida IS NOT NULL
         AND td.cantidad_recibida < td.cantidad
@@ -90,7 +91,7 @@ $r = qOne(
             COALESCE(SUM($sinNota), 0) sin_nota,
             COUNT(DISTINCT m.producto_id) productos
        FROM movimientos_inventario m
-       JOIN productos pr ON pr.id = m.producto_id
+       JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
       WHERE $where",
     $par
 ) ?: [];
@@ -113,7 +114,7 @@ $porMotivo = qAll(
             COALESCE(SUM(CASE WHEN m.cantidad > 0 THEN  m.cantidad ELSE 0 END), 0) u_aparecen,
             COALESCE(SUM($valor), 0) neto
        FROM movimientos_inventario m
-       JOIN productos pr ON pr.id = m.producto_id
+       JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
       WHERE $where
       GROUP BY motivo
       ORDER BY SUM(ABS(m.cantidad)) DESC
@@ -129,7 +130,7 @@ $porUsuario = qAll(
             COALESCE(SUM($sinNota), 0) sin_nota,
             COALESCE(SUM($valor), 0) neto
        FROM movimientos_inventario m
-       JOIN productos pr ON pr.id = m.producto_id
+       JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
        LEFT JOIN usuarios u ON u.id = m.usuario_id
       WHERE $where
       GROUP BY quien
@@ -147,7 +148,7 @@ $porProducto = qAll(
             COALESCE(SUM(CASE WHEN m.cantidad > 0 THEN  m.cantidad ELSE 0 END), 0) u_aparecen,
             COALESCE(SUM($valor), 0) neto
        FROM movimientos_inventario m
-       JOIN productos pr ON pr.id = m.producto_id
+       JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
       WHERE $where
       GROUP BY pr.id, pr.codigo, pr.nombre
       ORDER BY u_faltan DESC, n DESC
@@ -157,7 +158,7 @@ $porProducto = qAll(
 
 /* ---------- El detalle: cada movimiento con su explicación ---------- */
 $pg = paginar((int) qVal(
-    "SELECT COUNT(*) FROM movimientos_inventario m JOIN productos pr ON pr.id = m.producto_id WHERE $where", $par), 60);
+    "SELECT COUNT(*) FROM movimientos_inventario m JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . " WHERE $where", $par), 60);
 
 $movs = qAll(
     "SELECT m.id, m.created_at, m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo,
@@ -167,7 +168,7 @@ $movs = qAll(
             COALESCE(CONCAT(u.nombre,' ',u.apellido), 'Sistema') AS quien,
             $valor AS valor
        FROM movimientos_inventario m
-       JOIN productos pr ON pr.id = m.producto_id
+       JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
        JOIN sucursales su ON su.id = m.sucursal_id
        LEFT JOIN usuarios u ON u.id = m.usuario_id
       WHERE $where
@@ -184,7 +185,7 @@ if (export_solicitado()) {
                 COALESCE(CONCAT(u.nombre,' ',u.apellido), 'Sistema') AS quien,
                 $valor AS valor
            FROM movimientos_inventario m
-           JOIN productos pr ON pr.id = m.producto_id
+           JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
            JOIN sucursales su ON su.id = m.sucursal_id
            LEFT JOIN usuarios u ON u.id = m.usuario_id
           WHERE $where

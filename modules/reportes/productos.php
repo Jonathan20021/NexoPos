@@ -65,15 +65,15 @@ foreach (qAll(
 $sinVenta = qAll(
     "SELECT p.id, p.nombre, p.codigo, COALESCE(c.nombre,'Sin categoría') categoria,
             COALESCE((SELECT SUM(s.cantidad) FROM inventario_stock s WHERE s.producto_id = p.id AND $scopeS),0) AS existencia,
-            p.precio_compra,
+            " . mon_sql_precio('p.precio_compra') . " AS precio_compra,
             (SELECT MAX(v2.fecha) FROM venta_detalles vd2 JOIN ventas v2 ON v2.id = vd2.venta_id
               WHERE vd2.producto_id = p.id AND " . rep_estados_venta('v2') . ") AS ultima_venta
-       FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
+       FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id" . mon_sql_join('p', 'mo') . "
       WHERE p.activo = 1 AND p.tipo = 'producto'
         AND p.id NOT IN (
             SELECT DISTINCT vd.producto_id FROM venta_detalles vd JOIN ventas v ON v.id = vd.venta_id
              WHERE vd.producto_id IS NOT NULL AND " . rep_estados_venta() . " AND v.fecha BETWEEN ? AND ? AND $scope)
-      ORDER BY existencia * p.precio_compra DESC LIMIT 25",
+      ORDER BY existencia * " . mon_sql_precio('p.precio_compra') . " DESC LIMIT 25",
     array_merge($scopeSP, [$p['ini'], $p['fin']], $scopeP)
 );
 

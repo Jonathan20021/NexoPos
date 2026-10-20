@@ -93,8 +93,9 @@ function api_ficha(array $p, ?int $sid): array
         'unidad'        => ($ref['unidad'] ?? '') ?: 'u',
         'tipo'          => $p['tipo'],
         'activo'        => (int) $p['activo'],
-        'precio_venta'  => (float) $p['precio_venta'],
-        'precio_compra' => (float) $p['precio_compra'],
+        // En pesos: el catálogo puede estar en dólares y el teléfono enseña lo que cobra la caja.
+        'precio_venta'  => mon_precio_base($p),
+        'precio_compra' => mon_costo_base($p),
         'stock_minimo'  => (float) $p['stock_minimo'],
         'stock'         => $stock,
         'imagen'        => $p['imagen'] ? url($p['imagen']) : null,
@@ -161,7 +162,7 @@ if ($accion === 'mover') {
         $nuevo = txReintentable(function () use ($productoId, $sid, $delta, $tipo, $p, $motivo) {
             return ajustarStock(
                 $productoId, $sid, $delta, $tipo, 'escaner', null,
-                (float) $p['precio_compra'],
+                mon_costo_base($p),   // el kardex valora en pesos
                 $motivo !== '' ? $motivo : ('Escáner de almacén · ' . ($tipo === 'salida' ? 'salida' : 'entrada'))
             );
         });

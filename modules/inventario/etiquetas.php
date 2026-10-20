@@ -59,8 +59,9 @@ if (($_REQUEST['vista'] ?? '') === 'hoja') {
     $ids = array_keys($pedido);
     $marcas = implode(',', array_fill(0, count($ids), '?'));
     $rows = qAll(
-        "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, m.nombre AS marca
-           FROM productos p LEFT JOIN marcas m ON m.id = p.marca_id
+        // La etiqueta lleva el precio que cobra la caja: en pesos aunque el catálogo esté en dólares.
+        "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, " . mon_sql_precio('p.precio_venta') . " AS precio_venta, m.nombre AS marca
+           FROM productos p LEFT JOIN marcas m ON m.id = p.marca_id" . mon_sql_join('p', 'mo') . "
           WHERE p.id IN ($marcas) AND p.codigo_barras IS NOT NULL AND p.codigo_barras <> ''
           ORDER BY p.nombre",
         $ids
@@ -236,10 +237,10 @@ $stockExpr = $sid === null
 $TOPE = 300;
 $total = (int) qVal("SELECT COUNT(*) FROM productos p $where", $params);
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, m.nombre AS marca,
+    "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, " . mon_sql_precio('p.precio_venta') . " AS precio_venta, m.nombre AS marca,
             u.abreviatura AS unidad, $stockExpr AS stock
        FROM productos p
-       LEFT JOIN marcas m ON m.id = p.marca_id
+       LEFT JOIN marcas m ON m.id = p.marca_id" . mon_sql_join('p', 'mo') . "
        LEFT JOIN unidades u ON u.id = p.unidad_id
      $where ORDER BY p.nombre LIMIT $TOPE",
     $params

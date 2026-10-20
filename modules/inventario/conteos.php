@@ -58,8 +58,8 @@ if (isPost()) {
 
                 q(
                     "INSERT INTO conteo_detalles (conteo_id, producto_id, stock_teorico, costo_unitario)
-                     SELECT ?, p.id, COALESCE(s.cantidad,0), p.precio_compra
-                       FROM productos p
+                     SELECT ?, p.id, COALESCE(s.cantidad,0), " . mon_sql_precio('p.precio_compra') . "
+                       FROM productos p" . mon_sql_join('p', 'mo') . "
                        LEFT JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
                       WHERE $where",
                     array_merge([$id, $sucursalId], $categoriaId ? [$categoriaId] : [])

@@ -61,8 +61,8 @@ $devol = qAll(
     array_merge([$p['ini'], $p['fin']], $ids)
 );
 $inventario = qAll(
-    "SELECT s.sucursal_id, COALESCE(SUM(s.cantidad * pr.precio_compra),0) v
-       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+    "SELECT s.sucursal_id, COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) v
+       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr', 'mo') . "
       WHERE s.sucursal_id IN ($ph) GROUP BY s.sucursal_id",
     $ids
 );

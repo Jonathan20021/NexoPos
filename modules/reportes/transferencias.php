@@ -41,9 +41,9 @@ $trf = qAll(
        LEFT JOIN usuarios ur ON ur.id = t.recibida_por
        LEFT JOIN (SELECT td.transferencia_id,
                          SUM(td.cantidad) AS unidades,
-                         SUM(td.cantidad * pr.precio_compra) AS valor
+                         SUM(td.cantidad * " . mon_sql_precio('pr.precio_compra', 'mo') . ") AS valor
                     FROM transferencia_detalles td
-                    JOIN productos pr ON pr.id = td.producto_id
+                    JOIN productos pr ON pr.id = td.producto_id" . mon_sql_join('pr', 'mo') . "
                    GROUP BY td.transferencia_id) d ON d.transferencia_id = t.id
       WHERE $where
       ORDER BY t.fecha DESC, t.id DESC",

@@ -241,6 +241,22 @@ function mon_costo_base($producto, ?int $monedaId = null): float
 }
 
 /**
+ * El camino de vuelta: un costo en pesos (el de una compra o una liquidación)
+ * pasado a la moneda en que está el producto, para guardarlo en
+ * `productos.precio_compra`. Sin esto un producto en dólares acaba con el
+ * costo en pesos escrito como si fueran dólares, y su margen se dispara.
+ *
+ * @param float|null $tasa la tasa pactada en el documento, si es de la misma moneda
+ */
+function mon_costo_a_producto(float $montoBase, ?int $monedaId, ?float $tasa = null): float
+{
+    if (!$monedaId || !mon_disponible()) return round($montoBase, 2);
+    $m = moneda($monedaId);
+    if ((int) $m['es_base'] === 1) return round($montoBase, 2);
+    return round($montoBase / max(0.000001, $tasa ?: (float) $m['tasa']), 2);
+}
+
+/**
  * La moneda que una persona escribió en un archivo o un formulario: «USD»,
  * «US$», «dólares», «RD$», «DOP», «pesos»… Devuelve el id que se guarda en
  * productos.moneda_id: null para la moneda base (pesos, como guarda todo el

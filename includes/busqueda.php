@@ -94,11 +94,12 @@ function buscar_global(string $q, int $tope = BUSQUEDA_TOPE): array
     if (can('productos.ver')) {
         [$wStock, $pStock] = sucursalScope('s.sucursal_id');
         $rows = qAll(
-            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.activo,
+            // El precio del catálogo puede estar en dólares: se enseña en pesos.
+            "SELECT p.id, p.codigo, p.nombre, " . mon_sql_precio('p.precio_venta') . " AS precio_venta, p.activo,
                     COALESCE(c.nombre,'Sin categoría') AS categoria,
                     COALESCE((SELECT SUM(s.cantidad) FROM inventario_stock s
                                WHERE s.producto_id = p.id AND $wStock),0) AS existencia
-               FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
+               FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id" . mon_sql_join('p', 'mo') . "
               WHERE p.codigo LIKE ? OR p.codigo_barras LIKE ? OR p.nombre LIKE ?
               ORDER BY (p.codigo LIKE ?) DESC, p.activo DESC, p.nombre LIMIT $tope",
             array_merge($pStock, [$like, $like, $like, $exacto])

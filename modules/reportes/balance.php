@@ -22,8 +22,9 @@ $efectivo = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM cuentas_financier
 $bancos   = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM cuentas_financieras WHERE activo = 1 AND tipo <> 'efectivo'");
 $cxc      = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM clientes WHERE balance > 0");
 $inventario = (float) qVal(
-    "SELECT COALESCE(SUM(s.cantidad * pr.precio_compra),0)
-       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+    // En pesos: el catálogo puede estar en dólares.
+    "SELECT COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0)
+       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr', 'mo') . "
       WHERE $scopeS",
     $scopeSP
 );

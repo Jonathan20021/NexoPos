@@ -1272,10 +1272,12 @@ function cockpit_simular(array $f, array $cfg): array
     $desde = date('Y-m-d', strtotime($hasta . ' -' . ($diasBase - 1) . ' days'));
     [$w, $p] = cockpit_where($f, [$desde, $hasta]);
     [$wa, $pa] = cockpit_sim_alcance((string) ($cfg['alcance'] ?? 'todos'), $cfg['objetivo'] ?? null);
+    // La lista en pesos, como las ventas: el catálogo puede estar en dólares.
     $rows = qAll(
-        "SELECT vd.producto_id k_prod, MAX(pr.codigo) codigo, MAX(pr.nombre) nombre, MAX(pr.precio_venta) lista,
+        "SELECT vd.producto_id k_prod, MAX(pr.codigo) codigo, MAX(pr.nombre) nombre,
+                MAX(" . mon_sql_precio('pr.precio_venta', 'mo_sim') . ") lista,
                 SUM(vd.cantidad) qty, SUM({$x['ns']}) ns, SUM({$x['costo']}) costo
-           " . cockpit_from() . " WHERE $w AND $wa AND vd.es_muestra = 0 AND vd.producto_id IS NOT NULL
+           " . cockpit_from() . mon_sql_join('pr', 'mo_sim') . " WHERE $w AND $wa AND vd.es_muestra = 0 AND vd.producto_id IS NOT NULL
           GROUP BY k_prod HAVING SUM(vd.cantidad) > 0 ORDER BY SUM({$x['ns']}) DESC",
         array_merge($p, $pa)
     );

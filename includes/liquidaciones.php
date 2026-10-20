@@ -160,10 +160,14 @@ function liq_cargar(int $id): ?array
     if (!$liq) return null;
 
     $liq['detalles'] = qAll(
-        "SELECT d.*, p.codigo AS sku, p.nombre AS producto, p.precio_venta, p.precio_compra AS costo_actual,
+        // Precio y costo del catálogo en pesos, como el costo real que calcula
+        // la liquidación: el producto puede estar en dólares.
+        "SELECT d.*, p.codigo AS sku, p.nombre AS producto,
+                " . mon_sql_precio('p.precio_venta') . " AS precio_venta,
+                " . mon_sql_precio('p.precio_compra') . " AS costo_actual,
                 p.controla_lote, p.regulado
            FROM liquidacion_detalles d
-           JOIN productos p ON p.id = d.producto_id
+           JOIN productos p ON p.id = d.producto_id" . mon_sql_join('p', 'mo') . "
           WHERE d.liquidacion_id = ?
           ORDER BY p.nombre",
         [$id]
@@ -351,7 +355,10 @@ function liq_aplicar(int $id, int $usuarioId): array
 
             // El costo que tenía el producto ANTES. Sin esto, anular no puede
             // devolver el catálogo a como estaba.
-            $costoAnterior = (float) qVal("SELECT precio_compra FROM productos WHERE id = ? FOR UPDATE", [$pid]);
+            // Se guarda tal cual, en la moneda del producto, porque es lo que anular repone.
+            $prodAntes = qOne("SELECT precio_compra" . (mon_p39() ? ', moneda_id' : '') . " FROM productos WHERE id = ? FOR UPDATE", [$pid]);
+            $costoAnterior = (float) ($prodAntes['precio_compra'] ?? 0);
+            $monProd = !empty($prodAntes['moneda_id']) ? (int) $prodAntes['moneda_id'] : null;
 
             if ($esEntrada) {
                 $lote = null;
@@ -373,7 +380,10 @@ function liq_aplicar(int $id, int $usuarioId): array
             // ventas ya emitidas conservan el suyo (venta_detalles.costo_unitario
             // está congelado): recostear el pasado reescribiría márgenes ya
             // reportados.
-            dbUpdate('productos', ['precio_compra' => round($costoFinal, 2)], 'id = ?', [$pid]);
+            // El costo final está en pesos; el catálogo lo guarda en la moneda del
+            // producto. Si es la misma de la liquidación, con la tasa del embarque.
+            $tasaLiq = $monProd !== null && (int) ($liq['moneda_id'] ?? 0) === $monProd ? (float) $liq['tasa_cambio'] : null;
+            dbUpdate('productos', ['precio_compra' => mon_costo_a_producto($costoFinal, $monProd, $tasaLiq)], 'id = ?', [$pid]);
             dbUpdate('liquidacion_detalles', [
                 'prorrateo'      => $l['prorrateo'],
                 'costo_final'    => $costoFinal,

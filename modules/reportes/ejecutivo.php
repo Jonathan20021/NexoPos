@@ -219,8 +219,9 @@ if (can('crm.ver')) {
 /* ---------- Salud financiera ---------- */
 $cxc = qOne("SELECT COUNT(*) n, COALESCE(SUM(balance),0) t FROM clientes WHERE balance > 0") ?: ['n' => 0, 't' => 0];
 $inventario = (float) qVal(
-    "SELECT COALESCE(SUM(s.cantidad * p.precio_compra),0) FROM inventario_stock s
-       JOIN productos p ON p.id = s.producto_id AND p.activo = 1 WHERE " . rep_scope('s.sucursal_id')[0],
+    // En pesos: el catálogo puede estar en dólares.
+    "SELECT COALESCE(SUM(s.cantidad * " . mon_sql_precio('p.precio_compra') . "),0) FROM inventario_stock s
+       JOIN productos p ON p.id = s.producto_id AND p.activo = 1" . mon_sql_join('p', 'mo') . " WHERE " . rep_scope('s.sucursal_id')[0],
     rep_scope('s.sucursal_id')[1]
 );
 $efectivo = (float) qVal("SELECT COALESCE(SUM(balance),0) FROM cuentas_financieras WHERE activo = 1");

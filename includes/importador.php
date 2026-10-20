@@ -746,7 +746,9 @@ function imp_analizar_ventas(array $filas, array $mapa, array $opts): array
         $tiendas[imp_slug($t['codigo'])] = (int) $t['id'];
     }
     $productos = [];
-    foreach (qAll("SELECT id, codigo, codigo_barras, nombre, precio_compra FROM productos") as $p) {
+    // El costo en pesos: el catálogo puede estar en dólares y la venta se registra en pesos.
+    foreach (qAll("SELECT p.id, p.codigo, p.codigo_barras, p.nombre, " . mon_sql_precio('p.precio_compra') . " AS precio_compra
+                     FROM productos p" . mon_sql_join('p', 'mo')) as $p) {
         $productos['c:' . imp_slug($p['codigo'])] = $p;
         if ($p['codigo_barras']) $productos['b:' . trim((string) $p['codigo_barras'])] = $p;
         $productos['n:' . imp_slug($p['nombre'])] = $p;
@@ -1186,7 +1188,8 @@ function imp_analizar_existencias(array $filas, array $mapa, array $opts): array
             // El conteo valora la diferencia con este costo. Si el archivo no lo
             // trae, se usa el del catálogo: dejarlo en cero valoraría en cero un
             // ajuste que sí mueve dinero.
-            foreach (qAll("SELECT id, precio_compra FROM productos WHERE id IN ($ph)", $tanda) as $r) {
+            foreach (qAll("SELECT p.id, " . mon_sql_precio('p.precio_compra') . " AS precio_compra
+                             FROM productos p" . mon_sql_join('p', 'mo') . " WHERE p.id IN ($ph)", $tanda) as $r) {
                 $costoCatalogo[(int) $r['id']] = (float) $r['precio_compra'];
             }
         }
