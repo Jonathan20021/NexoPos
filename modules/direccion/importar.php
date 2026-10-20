@@ -101,6 +101,9 @@ if (isPost()) {
             'crear_productos'       => post('crear_productos') === '1',
             'cotejar_por_nombre'    => post('cotejar_por_nombre') === '1',
             'liquidacion_id'        => postInt('liquidacion_id'),
+            // Moneda de los precios de todo el archivo (productos). La base va
+            // como null: así guarda el sistema los precios en pesos.
+            'moneda_id'             => ($mid = postInt('moneda_id')) && function_exists('moneda') && (int) moneda($mid)['es_base'] !== 1 ? $mid : null,
             'descripcion'           => trim((string) post('descripcion')),
         ];
 
@@ -178,6 +181,27 @@ if (isPost()) {
         if (!empty($_SESSION[IMP_SESION]['path'])) @unlink($_SESSION[IMP_SESION]['path']);
         unset($_SESSION[IMP_SESION]);
         flash('info', 'Carga descartada. No se escribió nada.');
+        redirect('modules/direccion/importar.php');
+    }
+
+    // Lo ya cargado: declarar en qué moneda estaban sus precios. No convierte el
+    // número: lo que dice «29» pasa a leerse «US$29» y el POS lo cobra en pesos.
+    if ($accion === 'moneda_lote') {
+        try {
+            require_perm('productos.editar');
+            $por = post('por') === 'marca' ? 'marca' : 'lote';
+            $id = $por === 'marca' ? postInt('marca_id') : postInt('lote_id');
+            $mid = postInt('moneda_id') ?: null;
+            $n = mon_asignar_productos($mid, $por, $id);
+            $mon = $mid ? moneda($mid) : monedaBase();
+            $donde = $por === 'marca' ? 'de la marca «' . (string) qVal("SELECT nombre FROM marcas WHERE id = ?", [$id]) . '»' : 'del lote #' . $id;
+            audit('productos', 'editar', "Moneda de los precios $donde: {$mon['codigo']} ($n productos)", ['tabla' => 'productos']);
+            flash('success', $n ? number_format($n) . " producto(s) $donde quedan con sus precios en {$mon['codigo']} ({$mon['simbolo']})."
+                . ((int) $mon['es_base'] === 1 ? '' : ' El POS los cobra en pesos a la tasa de venta de ' . number_format((float) $mon['tasa'], 2) . '.')
+                : "Los productos $donde ya estaban en {$mon['codigo']}.");
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
         redirect('modules/direccion/importar.php');
     }
 
@@ -407,6 +431,17 @@ layout_start('Cargar datos', 'Catálogo, existencias, embarques e histórico —
             <span>Actualizar los productos que ya existan<br>
               <span class="text-xs text-slate-500">Actualiza precios y datos, pero <strong>nunca pisa el nombre</strong> que ya tenías ni borra lo que el archivo no trae.</span></span>
           </label>
+          <?php if (function_exists('mon_p39') && mon_p39() && mon_hayExtranjeras()): ?>
+          <div class="sm:col-span-2 xl:col-span-1">
+            <label class="label" for="imp_moneda">Los precios del archivo están en</label>
+            <select id="imp_moneda" name="moneda_id" class="select">
+              <?php foreach (monedas() as $mm): ?>
+                <option value="<?= (int) $mm['id'] ?>" <?= (int) ($opts['moneda_id'] ?? 0) === (int) $mm['id'] || (empty($opts['moneda_id']) && (int) $mm['es_base'] === 1) ? 'selected' : '' ?>><?= e($mm['codigo'] . ' · ' . $mm['simbolo'] . ' · ' . $mm['nombre']) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <p class="text-xs text-slate-500 mt-1">Costo y precio se guardan tal cual en esa moneda y la caja los cobra en pesos a la tasa de venta. Si el archivo trae una columna de moneda, manda la de cada fila.</p>
+          </div>
+          <?php endif; ?>
 
         <?php elseif ($tipo === 'existencias'): ?>
           <div>
@@ -590,8 +625,9 @@ layout_start('Cargar datos', 'Catálogo, existencias, embarques e histórico —
                         <td class="font-mono text-sm"><?= e($d['codigo'] ?: '(automático)') ?></td>
                         <td class="font-medium text-slate-700"><?= e($d['nombre']) ?></td>
                         <td class="text-slate-500"><?= e($d['categoria'] ?: '—') ?></td>
-                        <td class="text-right tabular-nums text-slate-500"><?= money($d['precio_compra'], false) ?></td>
-                        <td class="text-right tabular-nums font-semibold"><?= money($d['precio_venta'], false) ?></td>
+                        <?php $simb = !empty($d['moneda_id']) ? moneda((int) $d['moneda_id'])['simbolo'] . ' ' : ''; ?>
+                        <td class="text-right tabular-nums text-slate-500"><?= e($simb) ?><?= money($d['precio_compra'], false) ?></td>
+                        <td class="text-right tabular-nums font-semibold"><?= e($simb) ?><?= money($d['precio_venta'], false) ?></td>
                         <td><?= $d['existente_id'] ? badge('actualiza', 'slate') : badge('nuevo', 'emerald') ?></td>
                       </tr>
                     <?php endforeach; ?>
@@ -680,6 +716,59 @@ layout_start('Cargar datos', 'Catálogo, existencias, embarques e histórico —
     <?= csrf_field() ?><input type="hidden" name="accion" value="descartar">
   </form>
 
+<?php endif; ?>
+
+<?php
+// Lo que ya se cargó con los precios en otra moneda (p. ej. un catálogo en
+// dólares que entró como si fueran pesos): se corrige aquí, por lote o por marca.
+if (function_exists('mon_p39') && mon_p39() && mon_hayExtranjeras() && can('productos.editar')):
+  $lotesProd = qAll("SELECT i.id, i.archivo, i.created_at, COUNT(p.id) n, SUM(p.moneda_id IS NOT NULL) ext
+                       FROM importaciones i JOIN productos p ON p.importacion_id = i.id
+                      WHERE i.tipo = 'productos' AND i.estado <> 'revertida'
+                      GROUP BY i.id, i.archivo, i.created_at ORDER BY i.id DESC LIMIT 30");
+  $marcasProd = qAll("SELECT m.id, m.nombre, COUNT(p.id) n, SUM(p.moneda_id IS NOT NULL) ext
+                        FROM marcas m JOIN productos p ON p.marca_id = m.id AND p.activo = 1
+                       GROUP BY m.id, m.nombre ORDER BY m.nombre");
+  $monExt = array_values(array_filter(monedas(), fn($m) => (int) $m['es_base'] !== 1));
+?>
+<div class="card p-5 mt-5" x-data="{por: <?= $lotesProd ? "'lote'" : "'marca'" ?>}">
+  <h3 class="font-bold text-slate-800">¿Cargaste precios en otra moneda?</h3>
+  <p class="text-sm text-slate-500 mt-0.5 mb-4">Si un catálogo en dólares entró como si fueran pesos (el sistema muestra RD$ 29 donde es US$ 29), dile aquí en qué moneda estaban.
+    El número no cambia: pasa a leerse en esa moneda y la caja lo cobra en pesos a la tasa de venta. Vale para el costo y el precio.</p>
+  <form method="post" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end"
+        data-confirmar="¿Cambiar la moneda de los precios de esos productos? Desde ese momento la caja los cobra convertidos a pesos." onsubmit="return confirm(this.dataset.confirmar)">
+    <?= csrf_field() ?><input type="hidden" name="accion" value="moneda_lote">
+    <fieldset class="flex gap-4 text-sm text-slate-700 md:col-span-4">
+      <legend class="sr-only">Qué productos</legend>
+      <label class="flex items-center gap-2"><input type="radio" name="por" value="lote" x-model="por" <?= $lotesProd ? '' : 'disabled' ?>> Los de un lote de carga</label>
+      <label class="flex items-center gap-2"><input type="radio" name="por" value="marca" x-model="por"> Todos los de una marca</label>
+    </fieldset>
+    <div class="md:col-span-2" x-show="por === 'lote'">
+      <label class="label" for="ml_lote">Lote</label>
+      <select id="ml_lote" name="lote_id" class="select" :disabled="por !== 'lote'">
+        <?php foreach ($lotesProd as $l): ?>
+          <option value="<?= (int) $l['id'] ?>">#<?= (int) $l['id'] ?> · <?= e($l['archivo'] ?: 'sin archivo') ?> · <?= number_format((int) $l['n']) ?> productos<?= (int) $l['ext'] ? ' (' . number_format((int) $l['ext']) . ' ya en otra moneda)' : '' ?> · <?= e(fechaCorta($l['created_at'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="md:col-span-2" x-show="por === 'marca'" x-cloak>
+      <label class="label" for="ml_marca">Marca</label>
+      <select id="ml_marca" name="marca_id" class="select" :disabled="por !== 'marca'">
+        <?php foreach ($marcasProd as $m): ?>
+          <option value="<?= (int) $m['id'] ?>"><?= e($m['nombre']) ?> · <?= number_format((int) $m['n']) ?> productos<?= (int) $m['ext'] ? ' (' . number_format((int) $m['ext']) . ' ya en otra moneda)' : '' ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div>
+      <label class="label" for="ml_moneda">Sus precios están en</label>
+      <select id="ml_moneda" name="moneda_id" class="select">
+        <?php foreach ($monExt as $mm): ?><option value="<?= (int) $mm['id'] ?>"><?= e($mm['codigo'] . ' · ' . $mm['simbolo'] . ' (tasa de venta ' . number_format((float) $mm['tasa'], 2) . ')') ?></option><?php endforeach; ?>
+        <option value="<?= (int) monedaBase()['id'] ?>"><?= e(monedaBase()['codigo'] . ' · ' . monedaBase()['simbolo'] . ' (deshacer: eran pesos)') ?></option>
+      </select>
+    </div>
+    <div><button class="btn btn-primary w-full"><?= icon('coins', 'w-4 h-4') ?> Aplicar</button></div>
+  </form>
+</div>
 <?php endif; ?>
 
 <!-- Historial de lotes -->

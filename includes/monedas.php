@@ -240,6 +240,49 @@ function mon_costo_base($producto, ?int $monedaId = null): float
     return mon_precio_base((float) $producto, $monedaId);
 }
 
+/**
+ * La moneda que una persona escribió en un archivo o un formulario: «USD»,
+ * «US$», «dólares», «RD$», «DOP», «pesos»… Devuelve el id que se guarda en
+ * productos.moneda_id: null para la moneda base (pesos, como guarda todo el
+ * sistema) y false si no se reconoce. Solo monedas activas.
+ *
+ * @return int|null|false
+ */
+function mon_resolver(string $texto)
+{
+    $t = mb_strtolower(trim($texto));
+    if ($t === '') return null;
+    $t = strtr($t, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u']);
+    $sinons = ['dolar' => 'USD', 'dolares' => 'USD', 'dollar' => 'USD', 'dollars' => 'USD', 'us dollar' => 'USD', 'usd$' => 'USD', '$us' => 'USD', 'u$s' => 'USD',
+               'euro' => 'EUR', 'euros' => 'EUR',
+               'peso' => 'DOP', 'pesos' => 'DOP', 'peso dominicano' => 'DOP', 'pesos dominicanos' => 'DOP', 'rd' => 'DOP', 'rds' => 'DOP', 'rd $' => 'DOP'];
+    $t = $sinons[$t] ?? $t;
+    foreach (monedas() as $m) {
+        foreach ([$m['codigo'], $m['simbolo'], $m['nombre']] as $v) {
+            if ($v !== null && $v !== '' && mb_strtolower(trim((string) $v)) === mb_strtolower($t)) {
+                return (int) $m['es_base'] === 1 ? null : (int) $m['id'];
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Declara en qué moneda están los precios de productos YA CARGADOS: los de un
+ * lote de carga masiva o los de una marca. No convierte nada: el número que
+ * hay en precio_venta y precio_compra se queda, y pasa a leerse en esa moneda
+ * (a partir de ahí, el POS lo convierte al vender). La moneda base guarda NULL.
+ * @return int productos actualizados
+ */
+function mon_asignar_productos(?int $monedaId, string $por, int $id): int
+{
+    if (!mon_p39()) throw new RuntimeException('Falta la migración de moneda por producto (database/migracion_moneda_producto_p39.sql).');
+    if ($monedaId !== null && (int) moneda($monedaId)['es_base'] === 1) $monedaId = null;
+    $col = ['lote' => 'importacion_id', 'marca' => 'marca_id'][$por] ?? null;
+    if (!$col || $id <= 0) throw new RuntimeException('Indica el lote de carga o la marca.');
+    return q("UPDATE productos SET moneda_id = ? WHERE $col = ? AND NOT (moneda_id <=> ?)", [$monedaId, $id, $monedaId])->rowCount();
+}
+
 /** ¿Este producto está en una moneda que no es el peso? */
 function mon_producto_extranjero(array $producto): bool
 {

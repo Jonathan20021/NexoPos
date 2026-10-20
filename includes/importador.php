@@ -317,6 +317,9 @@ function imp_campos(string $tipo): array
             'tienda'        => ['label' => 'Tienda (marca comercial)', 'req' => false, 'alias' => ['tienda', 'marca comercial', 'store', 'concepto']],
             'precio_compra' => ['label' => 'Costo / precio de compra', 'req' => false, 'alias' => ['costo', 'precio compra', 'precio de compra', 'cost', 'costo unitario', 'fob', 'compra']],
             'precio_venta'  => ['label' => 'Precio de venta',     'req' => false, 'alias' => ['precio', 'precio venta', 'precio de venta', 'pvp', 'price', 'venta', 'precio publico', 'precio público']],
+            // En qué moneda vienen el costo y el precio de ESA fila (USD, US$,
+            // dólares, RD$…). Sin la columna, vale la moneda elegida para todo el archivo.
+            'moneda'        => ['label' => 'Moneda de los precios', 'req' => false, 'alias' => ['moneda', 'currency', 'divisa', 'moneda precio', 'moneda del precio', 'curr', 'ccy']],
             'itbis_aplica'  => ['label' => 'Aplica ITBIS',        'req' => false, 'alias' => ['itbis', 'itbis aplica', 'gravado', 'impuesto', 'tax', 'iva']],
             'stock_minimo'  => ['label' => 'Stock mínimo',        'req' => false, 'alias' => ['stock minimo', 'stock mínimo', 'minimo', 'mínimo', 'min', 'reorden', 'punto de reorden']],
             'pais_origen'   => ['label' => 'País de origen',      'req' => false, 'alias' => ['pais', 'país', 'pais origen', 'país de origen', 'origen', 'country', 'made in']],
@@ -996,6 +999,18 @@ function imp_analizar_productos(array $filas, array $mapa, array $opts): array
 
         $compra = imp_num(imp_val($fila, $mapa, 'precio_compra'));
         $venta  = imp_num(imp_val($fila, $mapa, 'precio_venta'));
+        // La moneda de esos precios: la de la fila si el archivo la trae, si no
+        // la elegida para todo el archivo. null = pesos (como guarda el sistema).
+        $monedaTxt = imp_val($fila, $mapa, 'moneda');
+        $monedaId = $opts['moneda_id'] ?? null;
+        if ($monedaTxt !== '' && function_exists('mon_resolver')) {
+            $r = mon_resolver($monedaTxt);
+            if ($r === false) {
+                $errores[] = ['fila' => $linea, 'motivo' => 'La moneda «' . $monedaTxt . '» no existe o no está activa (Administración → Monedas).'];
+                continue;
+            }
+            $monedaId = $r;
+        }
         if ($venta < 0 || $compra < 0) {
             $errores[] = ['fila' => $linea, 'motivo' => 'Precio negativo.'];
             continue;
@@ -1029,6 +1044,7 @@ function imp_analizar_productos(array $filas, array $mapa, array $opts): array
             'tienda_id'     => $tieId,
             'precio_compra' => round($compra, 2),
             'precio_venta'  => round($venta, 2),
+            'moneda_id'     => $monedaId,
             'itbis_aplica'  => imp_bool(imp_val($fila, $mapa, 'itbis_aplica'), true) ? 1 : 0,
             'stock_minimo'  => max(0, imp_num(imp_val($fila, $mapa, 'stock_minimo'))),
             'pais_origen'   => mb_substr(imp_val($fila, $mapa, 'pais_origen'), 0, 60),
@@ -1646,6 +1662,11 @@ function imp_grabar_producto(array $d, int $impId, int $uid, array $opts): array
     if ($d['tienda_id'])            $datos['tienda_id'] = $d['tienda_id'];
     if ($d['precio_compra'] > 0)    $datos['precio_compra'] = $d['precio_compra'];
     if ($d['precio_venta'] > 0)     $datos['precio_venta'] = $d['precio_venta'];
+    // La moneda describe ESOS precios: solo se escribe si la fila trajo alguno.
+    // Un archivo sin precios que solo completa datos no cambia la moneda de nadie.
+    if (($d['precio_compra'] > 0 || $d['precio_venta'] > 0) && function_exists('mon_p39') && mon_p39()) {
+        $datos['moneda_id'] = $d['moneda_id'] ?? null;
+    }
     if ($d['stock_minimo'] > 0)     $datos['stock_minimo'] = $d['stock_minimo'];
     if ($d['pais_origen'] !== '')   $datos['pais_origen'] = $d['pais_origen'];
     if ($d['fabricante'] !== '')    $datos['fabricante'] = $d['fabricante'];
