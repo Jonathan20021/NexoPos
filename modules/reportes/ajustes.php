@@ -108,7 +108,7 @@ $porMotivo = qAll(
                  WHEN m.motivo REGEXP '^Conteo [A-Z0-9-]+$' THEN 'Conteo físico, sin explicar'
                  WHEN m.motivo LIKE 'Conteo % · %'
                       THEN TRIM(SUBSTRING(m.motivo, LOCATE(' · ', m.motivo) + 3))
-                 ELSE TRIM(m.motivo) END AS motivo,
+                 ELSE TRIM(m.motivo) END AS causa,
             COUNT(*) n,
             COALESCE(SUM(CASE WHEN m.cantidad < 0 THEN -m.cantidad ELSE 0 END), 0) u_faltan,
             COALESCE(SUM(CASE WHEN m.cantidad > 0 THEN  m.cantidad ELSE 0 END), 0) u_aparecen,
@@ -116,7 +116,9 @@ $porMotivo = qAll(
        FROM movimientos_inventario m
        JOIN productos pr ON pr.id = m.producto_id" . mon_sql_join('pr', 'mo') . "
       WHERE $where
-      GROUP BY motivo
+      -- «causa», no «motivo»: en un GROUP BY el nombre de la columna le gana al
+      -- alias, y agrupaba por la nota cruda — cada conteo en su propia fila.
+      GROUP BY causa
       ORDER BY SUM(ABS(m.cantidad)) DESC
       LIMIT 20",
     $par
@@ -271,10 +273,10 @@ echo rep_abrir('Ajustes y mermas de inventario', $p, ['sucursal' => true]);
       <?php
       $fm = [];
       foreach ($porMotivo as $m) {
-          $sos = $m['motivo'] === 'SIN EXPLICACIÓN';
+          $sos = $m['causa'] === 'SIN EXPLICACIÓN';
           $fm[] = [
               '<span class="text-sm ' . ($sos ? 'text-rose-600 font-semibold' : 'text-slate-700') . '">'
-                  . e($m['motivo']) . '</span>'
+                  . e($m['causa']) . '</span>'
                   . '<span class="block text-xs text-slate-400">' . number_format($m['n']) . ' movimiento(s)</span>',
               '<span class="text-rose-600 font-medium">' . ($m['u_faltan'] > 0 ? '−' . qty($m['u_faltan']) : '—') . '</span>',
               '<span class="text-sky-600 font-medium">' . ($m['u_aparecen'] > 0 ? '+' . qty($m['u_aparecen']) : '—') . '</span>',
