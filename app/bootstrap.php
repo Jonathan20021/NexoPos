@@ -73,6 +73,7 @@ require_once dirname(__DIR__) . '/includes/graficos.php';     // gráficos inter
 require_once dirname(__DIR__) . '/includes/export.php';
 require_once dirname(__DIR__) . '/includes/uploads.php';
 require_once dirname(__DIR__) . '/includes/backup.php';
+require_once dirname(__DIR__) . '/includes/actualizador.php';
 if (is_file($autoload)) {
     require_once dirname(__DIR__) . '/includes/excel.php';
     require_once dirname(__DIR__) . '/includes/pdf.php';

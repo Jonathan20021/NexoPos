@@ -127,6 +127,8 @@ function nav_groups(): array
             ['Auditoría / Logs', 'list', url('modules/admin/auditoria.php'), 'auditoria.ver'],
             ['Integridad de datos', 'shield', url('modules/admin/integridad.php'), 'configuracion.ver'],
             ['Respaldo', 'download', url('modules/admin/respaldo.php'), 'configuracion.ver'],
+            // Permiso fuera del catálogo: ningún rol lo tiene, solo el super administrador.
+            ['Actualizar base de datos', 'pulse', url('modules/admin/actualizar_bd.php'), 'sistema.actualizar_bd'],
         ]],
     ];
 }

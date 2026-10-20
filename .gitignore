@@ -67,3 +67,6 @@ desktop.ini
 # actualizar porque pisaría las que ya existen allí.
 vendor/dompdf/dompdf/lib/fonts/*.ufm.json
 vendor/dompdf/dompdf/lib/fonts/installed-fonts.json
+
+# Respaldos que guarda el actualizador de la base antes de tocar nada (datos reales).
+/storage/respaldos/

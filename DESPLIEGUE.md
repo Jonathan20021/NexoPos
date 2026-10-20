@@ -57,11 +57,15 @@ Corpus Christi, que el sistema sembraba un día antes).
 
 1. **Respaldo** de la base (cPanel → *Copias de seguridad*, o Administración → Respaldo).
 2. **Primero el código**: cPanel → *Git Version Control* → **Update From Remote**.
-3. **Después la base**: phpMyAdmin → la base → **Importar** → ese archivo, con el juego de
-   caracteres en **utf-8**. O por consola:
-   `mysql -u USUARIO -p NOMBRE_BASE < database/actualizacion_produccion_2026_10.sql`
+3. **Después la base, desde el propio sistema**: entra como super administrador. Arriba
+   aparece el aviso «La base de datos necesita actualizarse» → **Actualizar ahora**, o
+   **Administración → Actualizar base de datos** → **Respaldar y actualizar ahora**.
+   El botón guarda primero un respaldo completo en `storage/respaldos/` (se puede
+   descargar desde esa misma pantalla), aplica el archivo y enseña la verificación.
+   - Sin el sistema, por phpMyAdmin: la base → **Importar** → ese archivo, en **utf-8**.
+   - O por consola: `mysql -u USUARIO -p NOMBRE_BASE < database/actualizacion_produccion_2026_10.sql`
 4. La primera tabla que imprime son los **requisitos** (migraciones anteriores): si alguna
-   dice `FALTA`, aplica ese archivo y vuelve a importar este. La última tabla debe decir
+   dice `FALTA`, aplica ese archivo y vuelve a pulsar. La última tabla debe decir
    **`OK` en todas las filas**.
 5. Comprueba el despliegue: `php database/verificar_despliegue.php https://nexo.kyrosrd.com`
    debe responder con la build sellada en `assets/version.txt`.
@@ -77,12 +81,17 @@ Corpus Christi, que el sistema sembraba un día antes).
      el día anterior). El script no toca asistencia ya calculada.
 
 Es idempotente y no destructivo: no toca precios, ventas ni datos existentes, y se puede
-volver a correr sin riesgo. El dólar pasa a automático **solo la primera vez**; si después
+volver a correr sin riesgo (en la pantalla, «Volver a aplicar»). El dólar pasa a automático **solo la primera vez**; si después
 alguien lo pone a mano, repetir la importación no se lo cambia.
 
 > **Cron recomendado** (opcional): la tasa se descarga cada 4 horas mientras alguien use el
 > sistema. Para que también se actualice de madrugada, usa el cron de marketing, que ya
 > llama a la descarga (ver más abajo «URLs sin extensión .php» para la forma de la URL).
+
+> **Próximas entregas.** El actualizador (`includes/actualizador.php`) aplica los archivos
+> que lista `act_paquetes()`. Para una entrega nueva: el archivo consolidado en `database/`,
+> una entrada más en `act_paquetes()` con sus comprobaciones, y el aviso aparece solo.
+> Solo el super administrador lo ve (permiso `sistema.actualizar_bd`, fuera del catálogo).
 
 Las migraciones posteriores se aplican aparte, en orden:
 

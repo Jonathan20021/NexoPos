@@ -313,3 +313,16 @@ tailwind.config = {
         </div>
 
         <?php render_flashes(); ?>
+
+        <?php // Tras «Update From Remote» la base puede ir por detrás del código: se avisa
+              // al único que puede ponerla al día, en cualquier pantalla menos la suya.
+        if (is_super() && basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')) !== 'actualizar_bd.php' && act_pendiente()): ?>
+          <div class="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center gap-3 border-amber-200 bg-amber-50">
+            <span class="text-amber-500 shrink-0"><?= icon('alert', 'w-5 h-5') ?></span>
+            <p class="text-sm text-amber-900 flex-1">
+              <strong>La base de datos necesita actualizarse</strong> para el código que se acaba de subir.
+              Algunas funciones nuevas no aparecerán hasta entonces.
+            </p>
+            <a href="<?= e(url('modules/admin/actualizar_bd.php')) ?>" class="btn btn-primary btn-sm shrink-0"><?= icon('pulse', 'w-4 h-4') ?> Actualizar ahora</a>
+          </div>
+        <?php endif; ?>
