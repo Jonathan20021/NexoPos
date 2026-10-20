@@ -48,6 +48,42 @@ que haga falta, sobre una instalación vieja o sobre una recién instalada, y nu
 modifica datos existentes. Sustituye a las migraciones sueltas `migracion_notificaciones_p3.sql`
 y `migracion_concurrencia_p4.sql` (que siguen ahí por historial, pero con este archivo basta).
 
+### Entrega de octubre 2026 — Promotion Cockpit y catálogo en dólares
+
+Para esta entrega hay **un solo archivo**: `database/actualizacion_produccion_2026_10.sql`.
+Reúne, en orden, la P39 de moneda del producto, la P39 del Promotion Cockpit, la P40
+(cockpit configurable), la P41 (tasa del dólar automática) y la P42 (corrige Viernes Santo y
+Corpus Christi, que el sistema sembraba un día antes).
+
+1. **Respaldo** de la base (cPanel → *Copias de seguridad*, o Administración → Respaldo).
+2. **Primero el código**: cPanel → *Git Version Control* → **Update From Remote**.
+3. **Después la base**: phpMyAdmin → la base → **Importar** → ese archivo, con el juego de
+   caracteres en **utf-8**. O por consola:
+   `mysql -u USUARIO -p NOMBRE_BASE < database/actualizacion_produccion_2026_10.sql`
+4. La primera tabla que imprime son los **requisitos** (migraciones anteriores): si alguna
+   dice `FALTA`, aplica ese archivo y vuelve a importar este. La última tabla debe decir
+   **`OK` en todas las filas**.
+5. Comprueba el despliegue: `php database/verificar_despliegue.php https://nexo.kyrosrd.com`
+   debe responder con la build sellada en `assets/version.txt`.
+6. En el sistema:
+   - **Administración → Monedas**: el dólar queda con la **tasa de venta automática**
+     (sigue al mercado). Revisa la tasa y, si se quiere cobrar por encima del mercado,
+     pon el margen. Para volver a la tasa a mano hay un botón en la misma tarjeta.
+   - **Importar**: si se cargaron productos en dólares como si fueran pesos, en
+     *«¿Cargaste precios en otra moneda?»* se corrige por lote de importación o por marca.
+   - **Marketing → Promotion Cockpit → Configuración**: catálogos, canales y metas.
+   - **RR.HH. → Asistencia**: si la P42 dice que movió feriados, recalcula los periodos de
+     esas fechas (Viernes Santo 3-abr-2026 y Corpus Christi 4-jun-2026 se habían guardado
+     el día anterior). El script no toca asistencia ya calculada.
+
+Es idempotente y no destructivo: no toca precios, ventas ni datos existentes, y se puede
+volver a correr sin riesgo. El dólar pasa a automático **solo la primera vez**; si después
+alguien lo pone a mano, repetir la importación no se lo cambia.
+
+> **Cron recomendado** (opcional): la tasa se descarga cada 4 horas mientras alguien use el
+> sistema. Para que también se actualice de madrugada, usa el cron de marketing, que ya
+> llama a la descarga (ver más abajo «URLs sin extensión .php» para la forma de la URL).
+
 Las migraciones posteriores se aplican aparte, en orden:
 
 | Archivo | Qué añade |

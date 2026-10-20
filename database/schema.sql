@@ -252,6 +252,7 @@ CREATE TABLE productos (
   tipo ENUM('producto','servicio') NOT NULL DEFAULT 'producto',
   precio_compra DECIMAL(12,2) NOT NULL DEFAULT 0,
   precio_venta DECIMAL(12,2) NOT NULL DEFAULT 0,
+  moneda_id INT UNSIGNED NULL,             -- moneda de los dos precios (NULL = RD$). P39
   itbis_aplica TINYINT(1) NOT NULL DEFAULT 1,
   stock_minimo DECIMAL(12,3) NOT NULL DEFAULT 0,
   imagen VARCHAR(255) NULL,
@@ -283,6 +284,7 @@ CREATE TABLE productos (
   KEY idx_p_nombre (nombre),
   KEY idx_p_activo_nombre (activo, nombre),
   KEY idx_p_tienda (tienda_id, activo),
+  KEY idx_prod_moneda (moneda_id),
   CONSTRAINT chk_producto_valores_no_negativos CHECK (precio_compra >= 0 AND precio_venta >= 0 AND stock_minimo >= 0),
   CONSTRAINT fk_p_tienda FOREIGN KEY (tienda_id) REFERENCES tiendas(id) ON DELETE SET NULL,
   CONSTRAINT fk_p_categoria FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE SET NULL,
@@ -1386,7 +1388,16 @@ CREATE TABLE monedas (
   codigo     VARCHAR(3)   NOT NULL,
   nombre     VARCHAR(60)  NOT NULL,
   simbolo    VARCHAR(6)   NOT NULL,
-  tasa       DECIMAL(14,6) NOT NULL DEFAULT 1,   -- pesos por 1 unidad
+  tasa       DECIMAL(14,6) NOT NULL DEFAULT 1,   -- pesos por 1 unidad: la TASA DE VENTA, la que cobra la caja
+  -- P39: la tasa de mercado es solo referencia; se descarga sola (docs/CXP-MONEDAS-COTIZACIONES.md)
+  tasa_mercado        DECIMAL(14,6) NULL,
+  tasa_mercado_at     DATETIME NULL,
+  tasa_mercado_fuente VARCHAR(40) NULL,
+  auto_actualizar     TINYINT(1) NOT NULL DEFAULT 0,   -- descargar la tasa de mercado
+  -- P41: con venta_auto la tasa de venta sigue al mercado (+ venta_margen %)
+  venta_auto          TINYINT(1) NOT NULL DEFAULT 0,
+  venta_margen        DECIMAL(6,3) NOT NULL DEFAULT 0,
+  tasa_revisada_at    DATETIME NULL,                   -- última vez que se confirmó la tasa de venta
   es_base    TINYINT(1)   NOT NULL DEFAULT 0,
   activo     TINYINT(1)   NOT NULL DEFAULT 1,
   updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1394,10 +1405,27 @@ CREATE TABLE monedas (
   UNIQUE KEY uq_moneda_codigo (codigo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO monedas (codigo, nombre, simbolo, tasa, es_base, activo) VALUES
-  ('DOP', 'Peso dominicano', 'RD$', 1.000000, 1, 1),
-  ('USD', 'Dólar estadounidense', 'US$', 60.000000, 0, 1),
-  ('EUR', 'Euro', '€', 65.000000, 0, 0);
+INSERT INTO monedas (codigo, nombre, simbolo, tasa, es_base, activo, auto_actualizar, venta_auto, tasa_revisada_at) VALUES
+  ('DOP', 'Peso dominicano', 'RD$', 1.000000, 1, 1, 0, 0, NULL),
+  ('USD', 'Dólar estadounidense', 'US$', 60.000000, 0, 1, 1, 1, NOW()),
+  ('EUR', 'Euro', '€', 65.000000, 0, 0, 0, 0, NOW());
+
+-- Historial de las tasas (P39): cada cambio de la de venta o de la de mercado.
+DROP TABLE IF EXISTS monedas_historial;
+CREATE TABLE monedas_historial (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  moneda_id   INT UNSIGNED NOT NULL,
+  tasa        DECIMAL(14,6) NOT NULL,
+  origen      ENUM('manual','automatica') NOT NULL DEFAULT 'manual',
+  campo       ENUM('venta','mercado') NOT NULL DEFAULT 'venta',
+  fuente      VARCHAR(40) NULL,
+  usuario_id  INT UNSIGNED NULL,
+  nota        VARCHAR(255) NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_mh_moneda (moneda_id, campo, created_at),
+  CONSTRAINT fk_mh_moneda FOREIGN KEY (moneda_id) REFERENCES monedas(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Pagos a proveedores. `monto` es SIEMPRE lo que salió del banco, en pesos.
 DROP TABLE IF EXISTS pagos_proveedores;
