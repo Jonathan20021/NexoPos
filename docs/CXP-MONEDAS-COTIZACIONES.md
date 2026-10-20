@@ -184,6 +184,26 @@ enseña la equivalencia mientras se escribe, y el Excel exporta las dos monedas 
 de «Precio compra / Precio venta / Moneda» tal como se cargaron, que es lo que el
 importador vuelve a leer.
 
+Al editar un producto, **cambiar la moneda no cambia los números**: si se cargó en pesos
+por error y los números ya eran dólares, basta con cambiar la moneda. Si de verdad
+estaban en la otra moneda, el formulario ofrece «Convertir RD$ → US$» con la tasa del
+día.
+
+### 2g. Cobrar en dólares en el POS
+
+En efectivo, el cajero elige si recibe **RD$ o US$**. En dólares, el POS convierte a
+la tasa de venta, da el cambio en pesos y avisa si falta. La venta, la caja y la DGII
+siguen en pesos; el pago queda anotado en `ventas.notas` («Pago en efectivo: US$ 50.00
+a tasa 60.00 = RD$ 3,000.00; cambio RD$ 1,562.76.») y se imprime en el ticket, para
+que al cuadrar se sepa por qué hay dólares en el cajón. La conversión la hace el
+servidor con su tasa (`pos_nota_pago_moneda()`), no el navegador.
+
+### Pruebas
+
+`php pruebas/monedas.php` cubre la ida y la vuelta de los precios, las dos monedas de
+la lista, `mon_resolver()`, la tasa automática y la nota del pago en dólares. Escribe
+dentro de una transacción que deshace al terminar.
+
 ## 3. Cotizaciones
 
 Documento previo a la factura, con vigencia, PDF de marca y envío por correo.

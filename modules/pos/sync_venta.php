@@ -69,6 +69,8 @@ try {
         'uuid'           => $in['uuid'],
         'fecha'          => $in['fecha'] ?? null,
         'ncf'            => $in['ncf'] ?? null,
+        // Efectivo cobrado en dólares: solo deja nota en la venta.
+        'pago_moneda'    => is_array($in['pago_moneda'] ?? null) ? $in['pago_moneda'] : null,
     ], [
         'sid' => $sid, 'uid' => $uid, 'sesion' => $sesion, 'puede_muestra' => can('ventas.muestra'),
         'terminal_id' => $terminalId,

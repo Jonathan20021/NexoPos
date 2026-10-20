@@ -235,10 +235,11 @@ function imp_leer_csv(string $path, int $limite = 0): array
     $primera = preg_replace('/^\xEF\xBB\xBF/', '', $primera);
 
     // El separador es el que más veces aparece fuera de comillas en la cabecera.
+    // Comillas y escape explícitos: son los de siempre, y PHP 8.4 avisa si se omiten.
     $sep = ',';
     $mejor = 0;
     foreach ([',', ';', "\t", '|'] as $cand) {
-        $n = count(str_getcsv($primera, $cand));
+        $n = count(str_getcsv($primera, $cand, '"', '\\'));
         if ($n > $mejor) { $mejor = $n; $sep = $cand; }
     }
 
@@ -251,10 +252,10 @@ function imp_leer_csv(string $path, int $limite = 0): array
         }, $fila);
     };
 
-    $headers = $normalizar(str_getcsv($primera, $sep));
+    $headers = $normalizar(str_getcsv($primera, $sep, '"', '\\'));
     $filas = [];
     $total = 0;
-    while (($fila = fgetcsv($fh, 0, $sep)) !== false) {
+    while (($fila = fgetcsv($fh, 0, $sep, '"', '\\')) !== false) {
         // Línea totalmente vacía: Excel las genera al final por docenas.
         if ($fila === [null] || (count($fila) === 1 && trim((string) $fila[0]) === '')) continue;
         $total++;

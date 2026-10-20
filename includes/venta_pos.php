@@ -47,6 +47,10 @@ function registrarVentaPOS(array $in, array $ctx): array
     $canal       = in_array($in['canal'] ?? '', canalesVenta(), true) ? $in['canal'] : 'Mostrador';
     $uuid        = preg_match('/^[a-f0-9-]{16,40}$/i', (string) ($in['uuid'] ?? '')) ? $in['uuid'] : null;
     $tasaItbis   = (float) setting('itbis_tasa', DEFAULT_ITBIS);
+    // Efectivo recibido en otra moneda (el cliente paga en dólares). No cambia
+    // ningún importe: la venta y la caja siguen en pesos. Solo se anota, para
+    // que al cuadrar se sepa por qué hay billetes verdes en el cajón.
+    $pagoMoneda  = is_array($in['pago_moneda'] ?? null) ? $in['pago_moneda'] : null;
 
     // Tienda (marca comercial) con la que se factura. Solo decide qué logo y qué
     // datos se imprimen; el emisor fiscal sigue siendo la empresa.
@@ -76,7 +80,7 @@ function registrarVentaPOS(array $in, array $ctx): array
     // abortar una transacción por interbloqueo o espera de bloqueo. Eso no es un
     // problema del negocio y no debe llegarle al cajero como «error»: se reintenta
     // y la venta entra. Los errores reales (stock, crédito, NCF) suben igual.
-    $resultado = txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados, $tiendaId, $descMotivo) {
+    $resultado = txReintentable(function () use ($cart, $sid, $uid, $sesion, $descuento, $clienteId, $comprobante, $metodoId, $tasaItbis, $puedeMuestra, $canal, $uuid, $fecha, $ncfOffline, $terminalId, $preciosPactados, $tiendaId, $descMotivo, $pagoMoneda) {
         // Idempotencia: si esta venta (por UUID) ya existe, devolverla sin duplicar.
         if ($uuid !== null) {
             $ya = qOne("SELECT id, numero, ncf, total FROM ventas WHERE uuid = ?", [$uuid]);
@@ -307,9 +311,12 @@ function registrarVentaPOS(array $in, array $ctx): array
             'canal_venta' => $canal, 'uuid' => $uuid,
             // Vacío cuando el comprobante es preimpreso; '31'/'32' cuando es electrónico.
             'ecf_tipo' => ecfENCFValido($ncf) ? substr($ncf, 1, 2) : null,
-            'notas' => $ncfDeSerieAnterior
-                ? 'Comprobante de la serie anterior, reservado por el terminal antes del corte a facturación electrónica.'
-                : null,
+            'notas' => implode(' ', array_filter([
+                $ncfDeSerieAnterior
+                    ? 'Comprobante de la serie anterior, reservado por el terminal antes del corte a facturación electrónica.'
+                    : null,
+                (int) $metodo['afecta_caja'] === 1 ? pos_nota_pago_moneda($pagoMoneda, $total) : null,
+            ])) ?: null,
         ]);
 
         // 4) Detalles, en el orden en que el cajero armó el carrito (así sale el ticket).
@@ -390,4 +397,30 @@ function registrarVentaPOS(array $in, array $ctx): array
     }
 
     return $resultado;
+}
+
+/**
+ * La nota de una venta cobrada con efectivo en otra moneda.
+ *
+ * Se convierte con la tasa de venta del servidor, no con la que manda el
+ * navegador: es la misma con la que se calcularon los precios. Devuelve null
+ * si no hay pago en otra moneda o no cuadra (moneda desconocida, monto vacío).
+ *
+ * @param array|null $pago ['moneda_id' => int, 'monto' => float]
+ */
+function pos_nota_pago_moneda(?array $pago, float $total): ?string
+{
+    if (!$pago || !function_exists('mon_disponible') || !mon_disponible()) return null;
+    $monto = round((float) ($pago['monto'] ?? 0), 2);
+    $id    = (int) ($pago['moneda_id'] ?? 0);
+    if ($monto <= 0 || $id <= 0) return null;
+    $m = moneda($id);
+    if ((int) $m['id'] !== $id || (int) $m['es_base'] === 1) return null;
+
+    $tasa   = (float) $m['tasa'];
+    $pesos  = mon_aBase($monto, $tasa);
+    $cambio = round($pesos - $total, 2);
+    return sprintf('Pago en efectivo: %s %s a tasa %s = %s%s.',
+        $m['simbolo'], number_format($monto, 2), number_format($tasa, 2), money($pesos),
+        $cambio > 0 ? '; cambio ' . money($cambio) : ($cambio < 0 ? '; faltaron ' . money(-$cambio) : ''));
 }

@@ -303,6 +303,10 @@ if (get('pdf') === '1' && function_exists('pdf_render')) {
       <?php foreach ($pagos as $p): ?>
         <div class="flex justify-between text-slate-500"><span><?= e($p['metodo']) ?></span><span><?= money($p['monto']) ?></span></div>
       <?php endforeach; ?>
+      <?php // Efectivo cobrado en dólares: la nota que dejó el POS al vender.
+      if (preg_match('/Pago en efectivo: .*?\.(?=\s|$)/u', (string) ($v['notas'] ?? ''), $pm)): ?>
+        <p class="text-[11px] text-slate-500 pt-0.5"><?= e($pm[0]) ?></p>
+      <?php endif; ?>
     </div>
 
     <!-- Desglose de impuestos -->

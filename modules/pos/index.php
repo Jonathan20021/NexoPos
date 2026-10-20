@@ -87,6 +87,9 @@ $categorias = qAll(
 $metodos = qAll("SELECT id, nombre, afecta_caja FROM metodos_pago WHERE activo=1 ORDER BY id");
 $clientes = qAll("SELECT id, nombre FROM clientes WHERE activo=1 ORDER BY nombre");
 $efectivoId = (int) (qVal("SELECT id FROM metodos_pago WHERE afecta_caja=1 AND activo=1 ORDER BY id LIMIT 1") ?: 1);
+// El cliente puede pagar el efectivo en dólares: se convierte a la tasa de venta
+// y el cambio se da en pesos. Solo si hay una moneda extranjera activa.
+$monRefPos = mon_referencia();
 $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amber','rose'=>'badge-rose','indigo'=>'badge-indigo','cyan'=>'badge-cyan','sky'=>'badge-sky','pink'=>'badge-pink','violet'=>'badge-violet','slate'=>'badge-slate'];
 ?>
 
@@ -299,6 +302,7 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
           <div class="rounded-xl bg-blue-600 text-white p-4 text-center">
             <p class="text-blue-100 text-sm">Total a cobrar</p>
             <p class="text-3xl font-extrabold" x-text="fmt(total)"></p>
+            <p x-show="monRef" class="text-blue-100 text-sm mt-0.5" x-text="monRef ? '≈ ' + monRef.simbolo + ' ' + num(total / monRef.tasa) + ' · tasa ' + num(monRef.tasa) : ''"></p>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -331,11 +335,23 @@ $badgeMap = ['blue'=>'badge-blue','emerald'=>'badge-emerald','amber'=>'badge-amb
             </div>
           </div>
           <div x-show="metodo_pago_id===<?= $efectivoId ?>">
-            <label class="label">Efectivo recibido</label>
-            <input type="number" step="0.01" x-model.number="recibido" class="input text-lg font-bold" placeholder="0.00">
-            <div class="flex justify-between mt-2 text-sm font-semibold" :class="cambio>0?'text-emerald-600':'text-slate-400'">
-              <span>Cambio</span><span x-text="fmt(cambio)"></span>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="label !mb-0" for="pos_recibido">Efectivo recibido</label>
+              <?php if ($monRefPos): ?>
+                <div class="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs font-semibold" role="group" aria-label="Moneda del efectivo">
+                  <button type="button" @click="recibeEn='base'; recibido=0" :class="recibeEn==='base' ? 'bg-blue-600 text-white' : 'text-slate-500'" class="px-2.5 py-1 rounded-md"><?= e(monedaBase()['simbolo']) ?></button>
+                  <button type="button" @click="recibeEn='ref'; recibido=0" :class="recibeEn==='ref' ? 'bg-blue-600 text-white' : 'text-slate-500'" class="px-2.5 py-1 rounded-md"><?= e($monRefPos['simbolo']) ?></button>
+                </div>
+              <?php endif; ?>
             </div>
+            <input type="number" step="0.01" id="pos_recibido" x-model.number="recibido" class="input text-lg font-bold"
+                   :placeholder="recibeEn==='ref' && monRef ? monRef.simbolo + ' 0.00' : '0.00'">
+            <p x-show="recibeEn==='ref' && monRef && recibido > 0" class="text-xs text-blue-600 font-medium mt-1.5"
+               x-text="monRef ? '= ' + fmt(recibidoBase) + ' a la tasa ' + num(monRef.tasa) : ''"></p>
+            <div class="flex justify-between mt-2 text-sm font-semibold" :class="cambio>0?'text-emerald-600':'text-slate-400'">
+              <span>Cambio <span x-show="recibeEn==='ref'" class="font-normal">(en <?= e(monedaBase()['simbolo']) ?>)</span></span><span x-text="fmt(cambio)"></span>
+            </div>
+            <p x-show="falta > 0" class="text-xs text-rose-600 font-semibold mt-1" x-text="'Faltan ' + fmt(falta)"></p>
           </div>
           <div x-show="!online" class="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm px-3 py-2.5">
             <?= icon('alert', 'w-4 h-4 mt-0.5 shrink-0') ?>
@@ -423,7 +439,8 @@ function pos() {
     productos: <?= json_encode($prodJs, JSON_UNESCAPED_UNICODE) ?>,
     search: '', cat: 0, cart: [], descuento: 0, descuento_motivo: 'manual',
     pay: false, comprobante: 'consumidor', cliente_id: 1,
-    metodo_pago_id: <?= $efectivoId ?>, recibido: 0,
+    metodo_pago_id: <?= $efectivoId ?>, recibido: 0, recibeEn: 'base',
+    monRef: <?= json_encode($monRefPos ? ['id' => (int) $monRefPos['id'], 'simbolo' => $monRefPos['simbolo'], 'tasa' => (float) $monRefPos['tasa']] : null) ?>,
     canal_venta: <?= json_encode(canalesVenta()[0]) ?>,
     tienda_id: <?= json_encode($tiendaId) ?>,
     tasa: <?= $tasa ?>,
@@ -479,6 +496,9 @@ function pos() {
         uuid: PosOffline.uuid(),
         fecha: this._ahora(),
         total: this.total,   // solo informativo (para la lista de errores); el servidor recalcula
+        // Efectivo en dólares: solo se anota en la venta; el servidor convierte con su tasa.
+        pago_moneda: (this.metodo_pago_id === <?= $efectivoId ?> && this.recibeEn === 'ref' && this.monRef && this.recibido > 0)
+          ? { moneda_id: this.monRef.id, monto: this.recibido } : null,
       };
       // Copia para el ticket provisional y para descontar stock local.
       var snap = {
@@ -498,7 +518,7 @@ function pos() {
         snap.ncf = r.ncf || null;   // NCF fiscal tomado de la reserva del terminal (offline)
         this.prov = snap;
         this.provisional = true;
-        this.cart = []; this.descuento = 0; this.descuento_motivo = 'manual'; this.recibido = 0;
+        this.cart = []; this.descuento = 0; this.descuento_motivo = 'manual'; this.recibido = 0; this.recibeEn = 'base';
         return;
       }
       // Error de negocio: se queda en el modal para corregir.
@@ -641,9 +661,13 @@ function pos() {
       return this.cart.reduce((s, i) => s + (!i.muestra && i.itbis ? i.precio * i.cant * this.tasa / 100 : 0), 0) * f;
     },
     get total() { return (this.subtotal - Math.min(this.descuento || 0, this.subtotal)) + this.itbis; },
-    get cambio() { return Math.max(0, (this.recibido || 0) - this.total); },
+    get recibidoBase() { return this.recibeEn === 'ref' && this.monRef ? Math.round((this.recibido || 0) * this.monRef.tasa * 100) / 100 : (this.recibido || 0); },
+    get cambio() { return Math.max(0, this.recibidoBase - this.total); },
+    // Solo se avisa si ya se escribió algo: un campo vacío no es «faltan».
+    get falta() { return this.recibido > 0 ? Math.max(0, Math.round((this.total - this.recibidoBase) * 100) / 100) : 0; },
+    num(n) { return (Number(n) || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
     fmt(n) { return '<?= $moneda ?> ' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
-    openPay() { if (this.cart.length === 0) return; this.recibido = 0; this.payError = ''; this.pay = true; },
+    openPay() { if (this.cart.length === 0) return; this.recibido = 0; this.recibeEn = 'base'; this.payError = ''; this.pay = true; },
   };
 }
 </script>

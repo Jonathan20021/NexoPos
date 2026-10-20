@@ -28,6 +28,7 @@ try {
         // que el cajero está viendo en pantalla.
         'tienda_id'      => postInt('tienda_id') ?: tienda_actual_id(),
         'uuid'           => post('uuid'),
+        'pago_moneda'    => json_decode(post('pago_moneda', 'null'), true),
     ], [
         'sid' => $sid, 'uid' => $uid, 'sesion' => $sesion, 'puede_muestra' => can('ventas.muestra'),
     ]);

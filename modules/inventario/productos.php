@@ -481,7 +481,7 @@ ob_start(); ?>
 <!-- Modal producto -->
 <div x-data="prodModal()"
      @prod:new.window="nuevo()"
-     @prod:edit.window="form=$event.detail; revisar(); open=true"
+     @prod:edit.window="form=$event.detail; monedaAntes=String(form.moneda_id || ''); revisar(); open=true"
      @keydown.escape.window="open=false">
   <div x-show="open" x-transition.opacity style="display:none" class="modal-overlay" @click.self="open=false">
     <div x-show="open" x-transition class="modal-panel bg-white rounded-2xl shadow-pop max-w-2xl" @click.stop>
@@ -552,14 +552,10 @@ ob_start(); ?>
           <?php endif; ?>
           <div><label class="label">Unidad</label><select name="unidad_id" x-model="form.unidad_id" class="select"><option value="">— Unidad —</option><?php foreach ($unidades as $u): ?><option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option><?php endforeach; ?></select></div>
           <div><label class="label">Tipo</label><select name="tipo" x-model="form.tipo" class="select"><option value="producto">Producto (controla stock)</option><option value="servicio">Servicio</option></select></div>
-          <div><label class="label">Precio de compra <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input">
-            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_compra)" x-text="otraMoneda(form.precio_compra)"></p></div>
-          <div><label class="label">Precio de venta * <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input">
-            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_venta)" x-text="otraMoneda(form.precio_venta)"></p></div>
           <?php if (mon_hayExtranjeras()): ?>
             <?php /* Solo aparece si hay monedas extranjeras activas: en una
                      instalación que solo vende en pesos, este campo sobra. */ ?>
-            <div>
+            <div class="sm:col-span-2">
               <label class="label">Moneda del precio</label>
               <select name="moneda_id" x-model="form.moneda_id" class="select">
                 <option value="">Pesos (<?= e(monedaBase()['simbolo']) ?>)</option>
@@ -570,8 +566,20 @@ ob_start(); ?>
                 <?php endforeach; ?>
               </select>
               <p class="text-xs text-slate-400 mt-1">Los precios se guardan en esta moneda y la caja cobra en pesos, con la tasa de venta vigente.</p>
+              <?php /* Cambiar la moneda NO cambia los números. Si estaban en la
+                       otra moneda, aquí se convierten; si ya eran de esta (se
+                       cargaron con la moneda equivocada), se dejan como están. */ ?>
+              <div x-show="puedeConvertir" class="mt-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-900 flex flex-wrap items-center gap-2">
+                <span class="flex-1 min-w-[12rem]">Los números no cambian solos. Si ya están en <strong x-text="simboloForm()"></strong>, déjalos; si estaban en <strong x-text="simboloDe(monedaAntes)"></strong>:</span>
+                <button type="button" @click="convertirPrecios()" class="btn btn-ghost btn-sm shrink-0"
+                        x-text="'Convertir ' + simboloDe(monedaAntes) + ' → ' + simboloForm()"></button>
+              </div>
             </div>
           <?php endif; ?>
+          <div><label class="label">Precio de compra <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input">
+            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_compra)" x-text="otraMoneda(form.precio_compra)"></p></div>
+          <div><label class="label">Precio de venta * <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input">
+            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_venta)" x-text="otraMoneda(form.precio_venta)"></p></div>
           <div><label class="label">Stock mínimo</label><input type="number" step="0.001" min="0" name="stock_minimo" x-model="form.stock_minimo" class="input"></div>
           <div class="flex flex-col justify-end gap-2 pb-1">
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="itbis_aplica" value="0"><input type="checkbox" name="itbis_aplica" value="1" :checked="form.itbis_aplica==1" class="rounded border-slate-300 text-blue-600"> Aplica ITBIS (18%)</label>
@@ -690,6 +698,21 @@ function prodModal() {
     simboloBase: <?= json_encode(monedaBase()['simbolo']) ?>,
     ref: <?= json_encode(($r = mon_referencia()) ? ['id' => (string) $r['id'], 'simbolo' => $r['simbolo'], 'tasa' => (float) $r['tasa']] : null) ?>,
     simboloForm() { return this.form.moneda_id ? (this.simbolos[String(this.form.moneda_id)] || '') : this.simboloBase; },
+    simboloDe(id) { return id ? (this.simbolos[String(id)] || '') : this.simboloBase; },
+    // Moneda en la que estaban los precios al abrir el formulario (o tras convertir).
+    monedaAntes: '',
+    get puedeConvertir() {
+      return String(this.form.moneda_id || '') !== this.monedaAntes
+        && (parseFloat(this.form.precio_compra || 0) > 0 || parseFloat(this.form.precio_venta || 0) > 0);
+    },
+    convertirPrecios() {
+      const desde = this.monedaAntes ? this.tasaDe(this.monedaAntes) : 1;
+      const hacia = this.form.moneda_id ? this.tasaDe(this.form.moneda_id) : 1;
+      const r = v => Math.round(parseFloat(v || 0) * desde / hacia * 100) / 100;
+      this.form.precio_compra = r(this.form.precio_compra);
+      this.form.precio_venta  = r(this.form.precio_venta);
+      this.monedaAntes = String(this.form.moneda_id || '');
+    },
     otraMoneda(valor) {
       const v = parseFloat(valor || 0);
       if (!this.ref || !(v > 0)) return '';
@@ -711,6 +734,7 @@ function prodModal() {
     },
 
     nuevo() {
+      this.monedaAntes = '';
       this.form = {
         id: 0, codigo: <?= json_encode($sigCodigo) ?>, codigo_barras: '', nombre: '', descripcion: '',
         // Si se está filtrando por una tienda, el producto nuevo nace en esa marca:
