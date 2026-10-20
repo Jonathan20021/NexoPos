@@ -61,3 +61,9 @@ desktop.ini
 
 # El emparejamiento del reloj lleva nombres de personas reales.
 /storage/biotime_emparejamiento.csv
+
+# Caché de fuentes que dompdf genera al crear el primer PDF. Cada servidor
+# tiene la suya: versionarla hace que «Update From Remote» se niegue a
+# actualizar porque pisaría las que ya existen allí.
+vendor/dompdf/dompdf/lib/fonts/*.ufm.json
+vendor/dompdf/dompdf/lib/fonts/installed-fonts.json
