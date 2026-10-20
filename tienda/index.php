@@ -5,6 +5,9 @@
  */
 require_once dirname(__DIR__) . '/app/bootstrap.php';
 require_once __DIR__ . '/_shell.php';
+// El catálogo puede tener precios en otra moneda (P39 de monedas): sin la
+// columna, todo está en pesos y mon_precio_base() devuelve el número tal cual.
+$colMoneda = function_exists('mon_p39') && mon_p39() ? ', p.moneda_id' : '';
 
 $emp = tienda_empresa();
 if (empty($emp['tienda_activa'])) {
@@ -74,7 +77,7 @@ if (isPost() && post('accion') === 'pedido') {
 
         // $filtroMarca tiene que entrar en el closure: sin él la consulta del
         // producto terminaba en «AND » y TODO pedido en línea fallaba con un 1064.
-        $creado = txReintentable(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis, $filtroMarca) {
+        $creado = txReintentable(function () use ($carrito, $sucursalId, $nombre, $telefono, $email, $documento, $notas, $metodo, $tasaItbis, $filtroMarca, $colMoneda) {
             $subtotal = 0; $itbisTotal = 0; $lineas = [];
             foreach ($carrito as $item) {
                 $pid  = (int) ($item['id'] ?? 0);
@@ -84,7 +87,7 @@ if (isPost() && post('accion') === 'pedido') {
 
                 // El precio NUNCA se toma del navegador: se relee de la base.
                 $p = qOne(
-                    "SELECT p.id, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id,
+                    "SELECT p.id, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id$colMoneda,
                             COALESCE(s.cantidad, 0) AS stock
                        FROM productos p
                        LEFT JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
@@ -96,8 +99,11 @@ if (isPost() && post('accion') === 'pedido') {
                     throw new RuntimeException('No hay suficiente inventario de «' . $p['nombre'] . '». Disponible: ' . qty($p['stock']) . '.');
                 }
 
+                // A pesos ANTES de la promoción, como en el POS: un producto con la
+                // lista en dólares no puede cobrarse «RD$29» en la tienda en línea.
+                $lista = mon_precio_base($p);
                 // Precio con promoción vigente para la tienda (recalculado en el servidor).
-                $promo = aplicarPromocion((float) $p['precio_venta'], $p, 'tienda');
+                $promo = aplicarPromocion($lista, $p, 'tienda');
                 $precioUnit = $promo['precio'];
                 $base  = round($precioUnit * $cant, 2);
                 $itbis = $p['itbis_aplica'] ? round($base * $tasaItbis / 100, 2) : 0.0;
@@ -105,7 +111,7 @@ if (isPost() && post('accion') === 'pedido') {
                 $lineas[] = ['pid' => $pid, 'desc' => $p['nombre'], 'cant' => $cant,
                              'precio' => $precioUnit, 'itbis' => $itbis, 'sub' => $base,
                              // Rastro para el Promotion Cockpit: viaja a la venta al facturar.
-                             'lista' => round((float) $p['precio_venta'], 2), 'promo' => $promo['promo'] ? (int) $promo['promo']['id'] : null];
+                             'lista' => round($lista, 2), 'promo' => $promo['promo'] ? (int) $promo['promo']['id'] : null];
             }
             if (!$lineas) throw new RuntimeException('Tu carrito está vacío.');
 
@@ -157,7 +163,7 @@ if ($categoriaId)   { $cond[] = "p.categoria_id = ?"; $params[] = $categoriaId; 
 $where = implode(' AND ', $cond);
 
 $productos = qAll(
-    "SELECT p.id, p.nombre, p.codigo, p.imagen, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id,
+    "SELECT p.id, p.nombre, p.codigo, p.imagen, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id$colMoneda,
             s.cantidad AS stock, c.nombre AS categoria
        FROM productos p
        JOIN inventario_stock s ON s.producto_id = p.id AND s.sucursal_id = ?
@@ -169,6 +175,8 @@ $productos = qAll(
 // Precio efectivo con promoción vigente (tienda). Se añade a cada fila para usarlo
 // tanto en las tarjetas como en el carrito de Alpine.
 foreach ($productos as &$__p) {
+    // Todo en pesos: la tarjeta, el precio tachado y el carrito.
+    $__p['precio_venta'] = mon_precio_base($__p);
     $__pr = aplicarPromocion((float) $__p['precio_venta'], $__p, 'tienda');
     $__p['precio_efectivo'] = $__pr['precio'];
     $__p['promo_etiqueta']  = $__pr['promo'] ? $__pr['etiqueta'] : '';

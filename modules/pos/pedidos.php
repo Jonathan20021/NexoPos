@@ -131,7 +131,10 @@ if (isPost()) {
                 $subtotal = 0.0; $itbisTotal = 0.0; $costoTotal = 0.0; $lineas = [];
                 foreach ($detalles as $d) {
                     if (!$d['producto_id']) throw new RuntimeException('El producto «' . $d['descripcion'] . '» ya no existe en el catálogo.');
-                    $p = qOne("SELECT id, nombre, precio_compra, tipo FROM productos WHERE id = ? AND activo = 1", [$d['producto_id']]);
+                    $p = qOne("SELECT id, nombre, precio_compra, tipo" . (function_exists('mon_p39') && mon_p39() ? ', moneda_id' : '')
+                              . " FROM productos WHERE id = ? AND activo = 1", [$d['producto_id']]);
+                    // El costo del catálogo puede estar en dólares: la venta lo congela en pesos.
+                    $costoUnit = mon_costo_base($p);
                     if (!$p) throw new RuntimeException('El producto «' . $d['descripcion'] . '» ya no está activo.');
 
                     $cant = (float) $d['cantidad'];
@@ -143,10 +146,10 @@ if (isPost()) {
                     }
                     $subtotal   += (float) $d['subtotal'];
                     $itbisTotal += (float) $d['itbis'];
-                    $costoTotal += (float) $p['precio_compra'] * $cant;
+                    $costoTotal += $costoUnit * $cant;
                     $lineas[] = [
                         'pid' => (int) $p['id'], 'nombre' => $p['nombre'], 'tipo' => $p['tipo'], 'cant' => $cant,
-                        'precio' => (float) $d['precio_unitario'], 'costo' => (float) $p['precio_compra'],
+                        'precio' => (float) $d['precio_unitario'], 'costo' => $costoUnit,
                         'base' => (float) $d['subtotal'], 'itbis' => (float) $d['itbis'],
                         // Lo que la tienda guardó al crear el pedido (NULL en pedidos viejos).
                         'lista' => isset($d['precio_lista']) ? (float) $d['precio_lista'] : null,
