@@ -1462,11 +1462,13 @@ function notif_gen_tasa_cambio(): void
     if (!function_exists('mon_p39') || !mon_p39()) {
         notif_sync('tasa_desfase', []);
         notif_sync('tasa_rancia', []);
+        notif_sync('tasa_auto', []);
         return;
     }
 
     $desfase = [];
     $rancia  = [];
+    $atraso  = [];
     foreach (monedas() as $m) {
         if ((int) $m['es_base'] === 1) continue;
         $id    = (int) $m['id'];
@@ -1491,6 +1493,20 @@ function notif_gen_tasa_cambio(): void
             ];
         }
 
+        // En automático no hay tasa que revisar a mano; lo que puede pasar es
+        // que las fuentes dejen de responder y la caja siga con una tasa vieja.
+        if (!empty($d['atraso'])) {
+            $atraso[] = [
+                'clave' => 'tasa_auto:' . $m['codigo'], 'categoria' => 'finanzas', 'prioridad' => 'alta',
+                'titulo' => 'La tasa automatica del ' . $m['codigo'] . ' no se ha podido actualizar',
+                'mensaje' => 'Desde ' . ($d['at'] ? fechaCorta($d['at']) : 'el principio') . ' no responde ninguna fuente. '
+                           . number_format($nProd) . ' producto(s) se siguen cobrando a ' . number_format($d['venta'], 2)
+                           . '. Descargala de nuevo o ponla a mano en Monedas.',
+                'url' => 'modules/admin/monedas.php', 'icono' => 'alert',
+                'color' => 'rose', 'permiso' => 'monedas.gestionar',
+            ];
+        }
+
         if ($d['rancia']) {
             $rancia[] = [
                 'clave' => 'tasa_rancia:' . $m['codigo'], 'categoria' => 'finanzas',
@@ -1505,4 +1521,5 @@ function notif_gen_tasa_cambio(): void
     }
     notif_sync('tasa_desfase', $desfase);
     notif_sync('tasa_rancia', $rancia);
+    notif_sync('tasa_auto', $atraso);
 }

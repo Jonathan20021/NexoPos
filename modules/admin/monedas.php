@@ -2,10 +2,12 @@
 /**
  * Monedas y tasa de cambio.
  *
- * La tasa se escribe a mano a propósito: no hay ninguna API oficial gratuita del
- * Banco Central que se pueda consultar sin permiso, y una tasa sacada de una web
- * cualquiera puede descuadrar una contabilidad. Quien la teclea sabe a qué tasa
- * está comprando de verdad.
+ * La tasa de venta se puede llevar de dos formas, moneda por moneda:
+ *   · a mano: quien la teclea sabe a qué tasa está comprando de verdad, y el
+ *     precio de góndola no se mueve hasta que alguien lo decide;
+ *   · automática (P41): sigue a la tasa de mercado que se descarga sola, más un
+ *     margen opcional. Es lo que quiere quien tiene el catálogo en dólares y
+ *     cobra al dólar del día.
  *
  * Cambiar la tasa NO reescribe el pasado: cada compra y cada cotización guardan
  * la tasa con la que se hicieron. Lo que se cambia aquí es la que se propone en
@@ -82,6 +84,41 @@ if (isPost()) {
         redirect('modules/admin/monedas.php');
     }
 
+    // Tasa de venta automática: la pone el mercado (más el margen).
+    if ($accion === 'venta_auto') {
+        $m = moneda(postInt('id'));
+        try {
+            if (!mon_p41()) throw new RuntimeException('Falta aplicar database/migracion_tasa_automatica_p41.sql.');
+            if ((int) $m['es_base'] === 1) throw new RuntimeException('La moneda base siempre vale 1.');
+            $auto   = postInt('venta_auto') ? 1 : 0;
+            $margen = round(postNum('venta_margen'), 3);
+            if ($margen < -20 || $margen > 20) throw new RuntimeException('El margen sobre el mercado debe estar entre -20 % y +20 %.');
+
+            // Para seguir al mercado hay que descargarlo: se enciende también.
+            $datos = ['venta_auto' => $auto, 'venta_margen' => $margen];
+            if ($auto) $datos['auto_actualizar'] = 1;
+            dbUpdate('monedas', $datos, 'id = ?', [(int) $m['id']]);
+            monedas(true, true);
+            audit('monedas', 'editar', 'Tasa de venta de ' . $m['codigo'] . ': ' . ($auto ? 'automática' : 'a mano')
+                  . ($auto ? sprintf(' (mercado %+.2f%%)', $margen) : ''), ['tabla' => 'monedas', 'registro_id' => (int) $m['id']]);
+
+            $msg = $auto ? 'La tasa de venta de ' . $m['codigo'] . ' ahora se actualiza sola.' : 'La tasa de venta de ' . $m['codigo'] . ' vuelve a ser a mano.';
+            if ($auto) {
+                // Se aplica en el acto: esperar al próximo tick dejaría la caja
+                // cobrando con la tasa vieja unas horas más.
+                $r = mon_refrescar_mercado();
+                $nueva = (float) moneda((int) $m['id'])['tasa'];
+                $msg .= $r['actualizadas'] > 0
+                    ? ' Tasa de venta: ' . number_format($nueva, 2) . '.'
+                    : ' No se pudo descargar ahora (' . implode('; ', $r['detalle']) . '); se reintentará sola.';
+            }
+            flash('success', $msg);
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+        redirect('modules/admin/monedas.php');
+    }
+
     if ($accion === 'activar') {
         $id = postInt('id');
         $m  = moneda($id);
@@ -151,7 +188,42 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
           <p class="text-2xl font-bold text-blue-700">1.00</p>
           <p class="text-xs text-blue-600 mt-1">Es la referencia. No se cambia.</p>
         </div>
-      <?php else: ?>
+      <?php else: $autoV = mon_venta_auto($m); ?>
+        <?php if ($autoV): ?>
+          <?php /* En automático la tasa no se teclea: se enseña, con de dónde sale. */ ?>
+          <div class="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+            <p class="text-[11px] uppercase tracking-wider font-bold text-emerald-700">Tasa de venta · automática</p>
+            <p class="text-2xl font-bold text-slate-800 mt-1">
+              <span class="text-sm font-semibold text-slate-500"><?= e($base['simbolo']) ?></span>
+              <?= e(number_format((float) $m['tasa'], 2)) ?>
+            </p>
+            <p class="text-xs text-emerald-800 mt-1">
+              Sigue al mercado<?= (float) $m['venta_margen'] != 0 ? ' ' . e(sprintf('%+.2f %%', (float) $m['venta_margen'])) : '' ?>.
+              Se revisa cada <?= (int) MON_REFRESCO_HORAS_AUTO ?> horas.
+            </p>
+          </div>
+          <form method="post" class="mt-3 space-y-2">
+            <?= csrf_field() ?>
+            <input type="hidden" name="accion" value="venta_auto">
+            <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
+            <input type="hidden" name="venta_auto" value="1">
+            <label class="label" for="mg_<?= (int) $m['id'] ?>">Margen sobre el mercado (%)</label>
+            <div class="flex gap-2">
+              <input type="number" step="0.01" min="-20" max="20" id="mg_<?= (int) $m['id'] ?>" name="venta_margen"
+                     value="<?= e(rtrim(rtrim(number_format((float) $m['venta_margen'], 3, '.', ''), '0'), '.')) ?>" class="input">
+              <button class="btn btn-ghost btn-sm shrink-0"><?= icon('save', 'w-3.5 h-3.5') ?> Guardar</button>
+            </div>
+            <p class="text-[11px] text-slate-400">Ej.: 1.5 cobra el dólar un 1.5 % por encima del mercado para cubrir la reposición.</p>
+          </form>
+          <form method="post" class="mt-2" data-confirmar="<?= e('¿Volver a poner la tasa del ' . $m['codigo'] . ' a mano? Dejará de seguir al mercado.') ?>" onsubmit="return confirm(this.dataset.confirmar)">
+            <?= csrf_field() ?>
+            <input type="hidden" name="accion" value="venta_auto">
+            <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
+            <input type="hidden" name="venta_auto" value="0">
+            <input type="hidden" name="venta_margen" value="<?= e((string) (float) $m['venta_margen']) ?>">
+            <button class="text-xs font-semibold text-slate-500 hover:text-slate-800">Poner la tasa a mano</button>
+          </form>
+        <?php else: ?>
         <form method="post" class="space-y-3">
           <?= csrf_field() ?>
           <input type="hidden" name="accion" value="tasa">
@@ -167,6 +239,19 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
           </div>
           <button class="btn btn-primary w-full btn-sm"><?= icon('save', 'w-3.5 h-3.5') ?> Guardar tasa</button>
         </form>
+        <?php if (mon_p41()): ?>
+          <form method="post" class="mt-2">
+            <?= csrf_field() ?>
+            <input type="hidden" name="accion" value="venta_auto">
+            <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
+            <input type="hidden" name="venta_auto" value="1">
+            <input type="hidden" name="venta_margen" value="<?= e((string) (float) ($m['venta_margen'] ?? 0)) ?>">
+            <button class="btn btn-ghost btn-sm w-full justify-center"><?= icon('history', 'w-3.5 h-3.5') ?> Que se actualice sola con el mercado</button>
+          </form>
+        <?php elseif (mon_p39()): ?>
+          <p class="text-[11px] text-slate-400 mt-2">Para que la tasa se actualice sola, aplica <code>database/migracion_tasa_automatica_p41.sql</code>.</p>
+        <?php endif; ?>
+        <?php endif; ?>
 
         <p class="text-xs text-slate-400 mt-3">
           Actualizada <?= e(tiempoRelativo($m['updated_at'])) ?>.
@@ -180,6 +265,7 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
           <div class="mt-4 pt-4 border-t border-slate-100">
             <div class="flex items-center justify-between mb-2">
               <span class="text-[11px] uppercase tracking-wider font-bold text-slate-400">Tasa de mercado</span>
+              <?php if (!$autoV): ?>
               <form method="post" class="inline">
                 <?= csrf_field() ?>
                 <input type="hidden" name="accion" value="auto">
@@ -189,6 +275,7 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
                   <?= (int) $m['auto_actualizar'] ? 'automatica si' : 'automatica apagada' ?>
                 </button>
               </form>
+              <?php endif; ?>
             </div>
 
             <?php if ($d['hay']): ?>
@@ -213,6 +300,15 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
               <p class="text-sm text-slate-400">Sin descargar todavia.</p>
             <?php endif; ?>
 
+            <?php if (!empty($d['atraso'])): ?>
+              <div class="mt-2 rounded-lg bg-rose-50 border border-rose-200 p-2.5">
+                <p class="text-[11px] text-rose-900 leading-relaxed">
+                  La tasa automática no se ha podido descargar <?= $d['at'] ? 'desde ' . e(tiempoRelativo($d['at'])) : 'todavía' ?>.
+                  La caja sigue cobrando a <strong><?= e(number_format($d['venta'], 2)) ?></strong>.
+                </p>
+              </div>
+            <?php endif; ?>
+
             <?php if ($d['rancia']): ?>
               <div class="mt-2 rounded-lg bg-rose-50 border border-rose-200 p-2.5">
                 <p class="text-[11px] text-rose-900 leading-relaxed">
@@ -226,11 +322,13 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
                 <?= csrf_field() ?><input type="hidden" name="accion" value="refrescar">
                 <button class="btn btn-ghost btn-sm w-full justify-center"><?= icon('history', 'w-3.5 h-3.5') ?> Descargar</button>
               </form>
+              <?php if (!$autoV): ?>
               <form method="post" class="flex-1">
                 <?= csrf_field() ?><input type="hidden" name="accion" value="confirmar">
                 <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
                 <button class="btn btn-ghost btn-sm w-full justify-center" title="Dejar la tasa como esta y reiniciar el aviso"><?= icon('check', 'w-3.5 h-3.5') ?> Esta bien</button>
               </form>
+              <?php endif; ?>
             </div>
 
             <?php if ($nProd > 0): ?>

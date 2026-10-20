@@ -152,6 +152,38 @@ Se descarga con el mismo enganche que las notificaciones y el marketing
 (`mon_tick_si_toca()` en la barra superior), sin cron. Timeout corto: detrás de esa
 llamada hay alguien esperando a que cargue una página.
 
+Entre dos intentos pasan al menos `MON_REINTENTO_MIN` minutos, acierten o fallen
+(turno atómico en `sistema_estado`, como el barrido de notificaciones). Antes, con las
+fuentes caídas, cada carga de página volvía a probarlas y esperaba sus timeouts.
+`modules/marketing/cron.php` también llama al tick, para quien tenga cron.
+
+### 2e. Tasa de venta automática (P41)
+
+`database/migracion_tasa_automatica_p41.sql` añade `monedas.venta_auto` y
+`monedas.venta_margen`, y deja el **dólar en automático**. Con `venta_auto = 1`, cada
+descarga pone la tasa de venta en `mercado × (1 + venta_margen / 100)`, redondeada a
+2 decimales (`mon_aplicar_venta_auto()`), y la anota en `monedas_historial` como
+`automatica`. Se descarga cada `MON_REFRESCO_HORAS_AUTO` horas en vez de cada 12.
+
+Es lo contrario de la regla de la sección 2c, y por eso es por moneda y reversible:
+en *Administración → Monedas* se elige «Que se actualice sola con el mercado» o
+«Poner la tasa a mano». El margen (−20 % a +20 %) sirve para cobrar el dólar algo por
+encima del mercado y cubrir la reposición.
+
+En automático no hay aviso de desfase ni de tasa rancia —la venta sigue al mercado por
+definición—; en su lugar la campana avisa si en `MON_AUTO_ATRASO_HORAS` horas ninguna
+fuente ha respondido, porque entonces la caja sigue cobrando con la última tasa.
+Las ventas ya hechas no cambian: cada una congeló sus pesos.
+
+### 2f. Productos en las dos monedas
+
+La lista de productos enseña compra y venta en pesos y en la moneda de referencia
+(`mon_referencia()`: el dólar si está activo). El importe que se cargó es el exacto;
+el otro lleva «≈» porque sale de la tasa del día (`mon_dos_monedas()`). El formulario
+enseña la equivalencia mientras se escribe, y el Excel exporta las dos monedas además
+de «Precio compra / Precio venta / Moneda» tal como se cargaron, que es lo que el
+importador vuelve a leer.
+
 ## 3. Cotizaciones
 
 Documento previo a la factura, con vigencia, PDF de marca y envío por correo.

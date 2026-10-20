@@ -221,18 +221,52 @@ $where = 'WHERE ' . implode(' AND ', $cond);
 if (export_solicitado()) {
     $selTienda  = $hayTiendas ? ', t.nombre AS tienda' : '';
     $joinTienda = $hayTiendas ? ' LEFT JOIN tiendas t ON t.id = p.tienda_id' : '';
-    $rows = qAll("SELECT p.codigo, p.codigo_barras, p.nombre, c.nombre AS categoria, m.nombre AS marca$selTienda, p.precio_compra, p.precio_venta, p.stock_minimo, $stockExpr AS stock FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id LEFT JOIN marcas m ON m.id=p.marca_id$joinTienda $where ORDER BY p.nombre", $params);
+    $selMon = mon_p39() ? ', p.moneda_id' : '';
+    $rows = qAll("SELECT p.codigo, p.codigo_barras, p.nombre, c.nombre AS categoria, m.nombre AS marca$selTienda, p.precio_compra, p.precio_venta$selMon, p.stock_minimo, $stockExpr AS stock FROM productos p LEFT JOIN categorias c ON c.id=p.categoria_id LEFT JOIN marcas m ON m.id=p.marca_id$joinTienda $where ORDER BY p.nombre", $params);
+    // «Precio compra/venta» + «Moneda» son lo que se cargó, tal cual: el
+    // importador los vuelve a leer. Las columnas en las dos monedas son para
+    // leer, y llevan nombres que el importador no confunde con los precios.
+    $ref = mon_referencia();
+    $simB = monedaBase()['simbolo'];
     $cabeceras = ['Código', 'Cód. barras', 'Nombre', 'Categoría', 'Marca'];
     if ($hayTiendas) $cabeceras[] = 'Tienda';
-    array_push($cabeceras, 'Precio compra', 'Precio venta', 'Stock mínimo', 'Stock actual');
-    export_tabla('productos', $cabeceras, array_map(function ($r) use ($hayTiendas) {
+    array_push($cabeceras, 'Precio compra', 'Precio venta', 'Moneda', "Compra $simB", "Venta $simB");
+    if ($ref) array_push($cabeceras, 'Compra ' . $ref['simbolo'], 'Venta ' . $ref['simbolo']);
+    array_push($cabeceras, 'Stock mínimo', 'Stock actual');
+    export_tabla('productos', $cabeceras, array_map(function ($r) use ($hayTiendas, $ref) {
         $fila = [$r['codigo'], $r['codigo_barras'], $r['nombre'], $r['categoria'], $r['marca']];
         if ($hayTiendas) $fila[] = $r['tienda'] ?? '';
-        return array_merge($fila, [$r['precio_compra'], $r['precio_venta'], $r['stock_minimo'], $r['stock']]);
+        $mon = !empty($r['moneda_id']) ? (int) $r['moneda_id'] : null;
+        $c = mon_dos_monedas((float) $r['precio_compra'], $mon);
+        $v = mon_dos_monedas((float) $r['precio_venta'], $mon);
+        $fila = array_merge($fila, [$r['precio_compra'], $r['precio_venta'], $mon ? moneda($mon)['codigo'] : monedaBase()['codigo'], $c['base'], $v['base']]);
+        if ($ref) array_push($fila, $c['ref'], $v['ref']);
+        return array_merge($fila, [$r['stock_minimo'], $r['stock']]);
     }, $rows));
 }
 
 $pg = paginar((int) qVal("SELECT COUNT(*) FROM productos p $where", $params), 25);
+
+// Los precios se enseñan en pesos y en la moneda de referencia (el dólar).
+$monRef = mon_referencia();
+
+/** Celda de precio: pesos arriba, dólares debajo; «≈» en el que sale de la tasa. */
+function prod_precio_dos_monedas(float $monto, ?int $monedaId): string
+{
+    $d   = mon_dos_monedas($monto, $monedaId);
+    $ref = $d['ref_moneda'];
+    $html = '<span class="block whitespace-nowrap">' . ($d['original'] !== 'base' ? '<span class="text-slate-400 font-normal">≈ </span>' : '')
+          . e(money($d['base'])) . '</span>';
+    if ($ref && $d['ref'] !== null) {
+        $titulo = $d['original'] === 'ref'
+            ? 'Precio cargado en ' . $ref['codigo'] . '. En caja se cobra en pesos a la tasa ' . number_format((float) $ref['tasa'], 2)
+            : 'Equivalente a la tasa de venta ' . number_format((float) $ref['tasa'], 2);
+        $html .= '<span class="block whitespace-nowrap text-[11px] ' . ($d['original'] === 'ref' ? 'font-semibold text-blue-700' : 'font-medium text-blue-500')
+               . '" title="' . e($titulo) . '">' . ($d['original'] !== 'ref' ? '≈ ' : '')
+               . e($ref['simbolo'] . ' ' . number_format($d['ref'], 2)) . '</span>';
+    }
+    return $html;
+}
 $productos = qAll(
     "SELECT p.*, c.nombre AS categoria, c.color AS cat_color, m.nombre AS marca, u.abreviatura AS unidad,
             $stockExpr AS stock
@@ -258,8 +292,8 @@ $salud = qOne(
             COALESCE(SUM(p.activo = 1), 0) AS activos,
             COALESCE(SUM(p.precio_venta <= 0 AND p.activo = 1), 0) AS sin_precio,
             COALESCE(SUM(p.tipo = 'producto' AND p.stock_minimo > 0 AND $stockExpr < p.stock_minimo), 0) AS bajo_minimo,
-            COALESCE(SUM($stockExpr * p.precio_compra), 0) AS valor
-       FROM productos p"
+            COALESCE(SUM($stockExpr * " . mon_sql_precio('p.precio_compra') . "), 0) AS valor
+       FROM productos p" . mon_sql_join('p', 'mo')
 ) ?: ['total' => 0, 'activos' => 0, 'sin_precio' => 0, 'bajo_minimo' => 0, 'valor' => 0];
 
 $urlEstado = function (string $estado) use ($q, $catFiltro): string {
@@ -332,7 +366,7 @@ ob_start(); ?>
   <?php else: ?>
     <div class="overflow-x-auto">
       <table class="data-table">
-        <thead><tr><th>Producto</th><th>Categoría</th><th class="text-right">Compra</th><th class="text-right">Venta</th><th class="text-center">Margen</th><th class="text-center">Stock</th><th>Estado</th><th class="text-right">Acciones</th></tr></thead>
+        <thead><tr><th>Producto</th><th>Categoría</th><th class="text-right">Compra<?= $monRef ? '<span class="block text-[10px] font-medium normal-case text-slate-400">' . e(monedaBase()['simbolo'] . ' / ' . $monRef['simbolo']) . '</span>' : '' ?></th><th class="text-right">Venta<?= $monRef ? '<span class="block text-[10px] font-medium normal-case text-slate-400">' . e(monedaBase()['simbolo'] . ' / ' . $monRef['simbolo']) . '</span>' : '' ?></th><th class="text-center">Margen</th><th class="text-center">Stock</th><th>Estado</th><th class="text-right">Acciones</th></tr></thead>
         <tbody>
           <?php foreach ($productos as $p):
             $margen = $p['precio_venta'] > 0 ? round((($p['precio_venta'] - $p['precio_compra']) / $p['precio_venta']) * 100) : 0;
@@ -387,18 +421,13 @@ ob_start(); ?>
                 </div>
               </td>
               <td><?= $p['categoria'] ? badge($p['categoria'], $p['cat_color']) : '<span class="text-slate-300">—</span>' ?></td>
-              <?php /* En pesos siempre: es la columna que se compara entre
-                       productos y la que cuadra con el total de la tarjeta.
-                       El importe en su moneda va debajo, en pequeño. */ ?>
-              <td class="text-right text-slate-500"><?= money(mon_costo_base($p)) ?></td>
-              <td class="text-right font-bold text-slate-800">
-                <?= money(mon_precio_base($p)) ?>
-                <?php if (mon_producto_extranjero($p)): $mp = moneda((int) $p['moneda_id']); ?>
-                  <span class="block text-[11px] font-medium text-blue-600" title="Precio de lista en <?= e($mp['codigo']) ?>, convertido a la tasa de venta <?= e(rtrim(rtrim(number_format((float) $mp['tasa'], 4, '.', ''), '0'), '.')) ?>">
-                    <?= e(mon_money((float) $p['precio_venta'], (int) $p['moneda_id'])) ?>
-                  </span>
-                <?php endif; ?>
-              </td>
+              <?php /* Pesos arriba: es la columna que se compara entre productos
+                       y la que cuadra con el total de la tarjeta. Debajo, el
+                       mismo importe en dólares. El que se cargó es el exacto;
+                       el otro lleva «≈» porque sale de la tasa de hoy. */
+                $monP = !empty($p['moneda_id']) ? (int) $p['moneda_id'] : null; ?>
+              <td class="text-right text-slate-500"><?= prod_precio_dos_monedas((float) $p['precio_compra'], $monP) ?></td>
+              <td class="text-right font-bold text-slate-800"><?= prod_precio_dos_monedas((float) $p['precio_venta'], $monP) ?></td>
               <td class="text-center"><span class="badge <?= $margen >= 30 ? 'badge-emerald' : ($margen >= 10 ? 'badge-amber' : 'badge-slate') ?>"><?= $margen ?>%</span></td>
               <td class="text-center"><span class="badge badge-<?= $stockBadge ?>"><?= qty($stock) ?> <?= e($p['unidad'] ?: 'u') ?></span></td>
               <td><?= $p['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
@@ -523,8 +552,10 @@ ob_start(); ?>
           <?php endif; ?>
           <div><label class="label">Unidad</label><select name="unidad_id" x-model="form.unidad_id" class="select"><option value="">— Unidad —</option><?php foreach ($unidades as $u): ?><option value="<?= (int) $u['id'] ?>"><?= e($u['nombre']) ?> (<?= e($u['abreviatura']) ?>)</option><?php endforeach; ?></select></div>
           <div><label class="label">Tipo</label><select name="tipo" x-model="form.tipo" class="select"><option value="producto">Producto (controla stock)</option><option value="servicio">Servicio</option></select></div>
-          <div><label class="label">Precio de compra</label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input"></div>
-          <div><label class="label">Precio de venta *</label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input"></div>
+          <div><label class="label">Precio de compra <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input">
+            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_compra)" x-text="otraMoneda(form.precio_compra)"></p></div>
+          <div><label class="label">Precio de venta * <span class="text-slate-400 font-normal" x-text="'(' + simboloForm() + ')'"></span></label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input">
+            <p class="text-xs text-blue-600 mt-1 font-medium" x-show="otraMoneda(form.precio_venta)" x-text="otraMoneda(form.precio_venta)"></p></div>
           <?php if (mon_hayExtranjeras()): ?>
             <?php /* Solo aparece si hay monedas extranjeras activas: en una
                      instalación que solo vende en pesos, este campo sobra. */ ?>
@@ -538,12 +569,7 @@ ob_start(); ?>
                   </option>
                 <?php endforeach; ?>
               </select>
-              <template x-if="form.moneda_id">
-                <p class="text-xs text-blue-600 mt-1.5 font-medium"
-                   x-text="'En caja se cobrará ' + <?= e(json_encode(monedaBase()['simbolo'])) ?> + ' ' +
-                           (parseFloat(form.precio_venta || 0) * tasaDe(form.moneda_id)).toLocaleString('es-DO',{minimumFractionDigits:2, maximumFractionDigits:2})"></p>
-              </template>
-              <p class="text-xs text-slate-400 mt-1">El precio se guarda en esta moneda y se convierte al vender, con la tasa de venta vigente.</p>
+              <p class="text-xs text-slate-400 mt-1">Los precios se guardan en esta moneda y la caja cobra en pesos, con la tasa de venta vigente.</p>
             </div>
           <?php endif; ?>
           <div><label class="label">Stock mínimo</label><input type="number" step="0.001" min="0" name="stock_minimo" x-model="form.stock_minimo" class="input"></div>
@@ -658,6 +684,21 @@ function prodModal() {
     // el servidor, con mon_precio_base().
     tasas: <?= json_encode(array_reduce(monedas(), function ($a, $m) { $a[(string) $m['id']] = (float) $m['tasa']; return $a; }, [])) ?>,
     tasaDe(id) { return this.tasas[String(id)] || 1; },
+    // Las dos monedas en el formulario: lo que se escribe va en la moneda
+    // elegida, y debajo se ve lo mismo en la otra (pesos ↔ dólares).
+    simbolos: <?= json_encode(array_reduce(monedas(), function ($a, $m) { $a[(string) $m['id']] = $m['simbolo']; return $a; }, [])) ?>,
+    simboloBase: <?= json_encode(monedaBase()['simbolo']) ?>,
+    ref: <?= json_encode(($r = mon_referencia()) ? ['id' => (string) $r['id'], 'simbolo' => $r['simbolo'], 'tasa' => (float) $r['tasa']] : null) ?>,
+    simboloForm() { return this.form.moneda_id ? (this.simbolos[String(this.form.moneda_id)] || '') : this.simboloBase; },
+    otraMoneda(valor) {
+      const v = parseFloat(valor || 0);
+      if (!this.ref || !(v > 0)) return '';
+      const f = n => n.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const base = this.form.moneda_id ? v * this.tasaDe(this.form.moneda_id) : v;
+      if (!this.form.moneda_id) return '≈ ' + this.ref.simbolo + ' ' + f(base / this.ref.tasa) + ' a la tasa ' + f(this.ref.tasa);
+      if (String(this.form.moneda_id) === this.ref.id) return '= ' + this.simboloBase + ' ' + f(base) + ' a la tasa ' + f(this.ref.tasa);
+      return '= ' + this.simboloBase + ' ' + f(base) + ' · ≈ ' + this.ref.simbolo + ' ' + f(base / this.ref.tasa);
+    },
     camaraOk: false,
     barras: { ok: true, msg: '' },
 

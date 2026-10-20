@@ -176,6 +176,12 @@ function mon_confirmarTasa(int $monedaId): void
 
 /** Cada cuántas horas se intenta refrescar la tasa de mercado. */
 const MON_REFRESCO_HORAS = 12;
+/** Con la tasa de venta automática se refresca más a menudo: es la que cobra. */
+const MON_REFRESCO_HORAS_AUTO = 4;
+/** Minutos entre dos intentos de descarga desde el tick (acierten o fallen). */
+const MON_REINTENTO_MIN = 30;
+/** Horas sin poder descargar antes de avisar de que la tasa automática se quedó quieta. */
+const MON_AUTO_ATRASO_HORAS = 36;
 /** Diferencia entre tasa de venta y mercado que dispara el aviso (%). */
 const MON_ALERTA_PCT = 3.0;
 /** Días sin que nadie confirme la tasa de venta antes de avisar. */
@@ -197,6 +203,69 @@ function mon_p39(): bool
         $ok = false;
     }
     return $ok;
+}
+
+/**
+ * ¿Está aplicada la P41? Con ella la tasa de venta puede seguir al mercado
+ * sola (`monedas.venta_auto`). Sin ella todo funciona como en la P39.
+ */
+function mon_p41(): bool
+{
+    static $ok = null;
+    if ($ok !== null) return $ok;
+    if (!mon_p39()) return $ok = false;
+    try {
+        $ok = (int) qVal("SELECT COUNT(*) FROM information_schema.COLUMNS
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'monedas'
+                             AND COLUMN_NAME = 'venta_auto'") === 1;
+    } catch (Throwable $e) {
+        $ok = false;
+    }
+    return $ok;
+}
+
+/** ¿La tasa de venta de esta moneda se pone sola a partir del mercado? */
+function mon_venta_auto(array $m): bool
+{
+    return mon_p41() && (int) ($m['venta_auto'] ?? 0) === 1 && (int) ($m['es_base'] ?? 0) !== 1;
+}
+
+/**
+ * La tasa de venta que sale de una tasa de mercado: mercado + el margen de la
+ * moneda. Se redondea a 2 decimales, que es como se anuncia una tasa: nadie
+ * cobra a 60.183742.
+ */
+function mon_venta_desde_mercado(array $m, float $mercado): float
+{
+    $margen = (float) ($m['venta_margen'] ?? 0);
+    return round($mercado * (1 + $margen / 100), 2);
+}
+
+/**
+ * Pone la tasa de venta a partir de la de mercado, si la moneda está en
+ * automático. Devuelve la tasa nueva, o null si no cambió nada.
+ *
+ * Aunque el número salga igual se sella `tasa_revisada_at`: la tasa SÍ se
+ * revisó, solo que la revisó el sistema, y el aviso de tasa rancia no tiene
+ * sentido para una moneda que se mira sola cada pocas horas.
+ */
+function mon_aplicar_venta_auto(int $monedaId, float $mercado, ?string $fuente = null): ?float
+{
+    $m = qOne("SELECT * FROM monedas WHERE id = ?", [$monedaId]);
+    if (!$m || !mon_venta_auto($m) || $mercado <= 0) return null;
+
+    $nueva = mon_venta_desde_mercado($m, $mercado);
+    $ahora = date('Y-m-d H:i:s');
+    if (abs($nueva - (float) $m['tasa']) < 0.005) {
+        dbUpdate('monedas', ['tasa_revisada_at' => $ahora], 'id = ?', [$monedaId]);
+        return null;
+    }
+    dbUpdate('monedas', ['tasa' => $nueva, 'tasa_revisada_at' => $ahora], 'id = ?', [$monedaId]);
+    monedas(true, true);
+    $margen = (float) $m['venta_margen'];
+    mon_historial_registrar($monedaId, $nueva, 'automatica', 'venta', $fuente,
+        'Mercado ' . number_format($mercado, 4) . ($margen != 0 ? sprintf(' %+.2f%%', $margen) : ''));
+    return $nueva;
 }
 
 /* ------------------------------------------------------------
@@ -238,6 +307,51 @@ function mon_costo_base($producto, ?int $monedaId = null): float
         );
     }
     return mon_precio_base((float) $producto, $monedaId);
+}
+
+/**
+ * La moneda extranjera de referencia para enseñar precios «en las dos
+ * monedas»: el dólar si está activo; si no, la primera extranjera activa.
+ * null si solo se trabaja en pesos.
+ */
+function mon_referencia(): ?array
+{
+    static $ref = false;
+    if ($ref !== false) return $ref;
+    if (!mon_disponible()) return $ref = null;
+    $extranjeras = array_values(array_filter(monedas(), fn($m) => (int) $m['es_base'] !== 1));
+    foreach ($extranjeras as $m) if ($m['codigo'] === 'USD') return $ref = $m;
+    return $ref = ($extranjeras[0] ?? null);
+}
+
+/**
+ * Un precio de catálogo en las dos monedas: pesos y la de referencia.
+ *
+ * El importe que se guardó (el de la moneda del producto) es el exacto; el
+ * otro sale de la tasa de venta vigente. `original` dice cuál es cuál, para
+ * que la pantalla pueda marcarlo.
+ *
+ * @return array{base:float, ref:?float, ref_moneda:?array, original:string}
+ *         original: 'base' | 'ref' | 'otra'
+ */
+function mon_dos_monedas(float $monto, ?int $monedaId): array
+{
+    $ref  = mon_referencia();
+    $base = mon_precio_base($monto, $monedaId);
+    $out  = ['base' => $base, 'ref' => null, 'ref_moneda' => $ref, 'original' => 'base'];
+    if (!$ref) return $out;
+
+    $mon = $monedaId ? moneda($monedaId) : null;
+    if ($mon && (int) $mon['es_base'] !== 1) {
+        if ((int) $mon['id'] === (int) $ref['id']) {
+            $out['ref'] = round($monto, 2);
+            $out['original'] = 'ref';
+            return $out;
+        }
+        $out['original'] = 'otra';
+    }
+    $out['ref'] = mon_desdeBase($base, (float) $ref['tasa']);
+    return $out;
 }
 
 /**
@@ -389,7 +503,8 @@ function mon_refrescar_mercado(): array
     if (!mon_p39()) return $r;
 
     $base = monedaBase();
-    foreach (qAll("SELECT * FROM monedas WHERE es_base = 0 AND auto_actualizar = 1") as $m) {
+    $cond = mon_p41() ? '(auto_actualizar = 1 OR venta_auto = 1)' : 'auto_actualizar = 1';
+    foreach (qAll("SELECT * FROM monedas WHERE es_base = 0 AND activo = 1 AND $cond") as $m) {
         // La referencia para el freno: lo último que se supo, y si no, la de venta.
         $ref = (float) ($m['tasa_mercado'] ?: $m['tasa']);
         $res = mon_tasa_remota((string) $m['codigo'], (string) $base['codigo'], $ref);
@@ -408,6 +523,9 @@ function mon_refrescar_mercado(): array
             mon_historial_registrar((int) $m['id'], $res['tasa'], 'automatica', 'mercado', $res['fuente']);
             $r['actualizadas']++;
             $r['detalle'][] = sprintf('%s: %s (%s)', $m['codigo'], number_format($res['tasa'], 4), $res['fuente']);
+            // Si la venta va en automático, la de cobrar sale de aquí mismo.
+            $venta = mon_aplicar_venta_auto((int) $m['id'], $res['tasa'], $res['fuente']);
+            if ($venta !== null) $r['detalle'][] = $m['codigo'] . ': tasa de venta → ' . number_format($venta, 2);
             monedas(true, true);
         } catch (Throwable $e) {
             $r['fallidas']++;
@@ -415,6 +533,28 @@ function mon_refrescar_mercado(): array
         }
     }
     return $r;
+}
+
+/**
+ * Reclama, de forma atómica, el turno de intentar la descarga. Mismo patrón que
+ * el barrido de notificaciones (sistema_estado). Si esa tabla no existe se deja
+ * pasar: es solo un freno.
+ */
+function mon_reclamar_intento(): bool
+{
+    try {
+        $st = q(
+            "INSERT INTO sistema_estado (clave, valor, updated_at)
+             VALUES ('monedas_descarga', UNIX_TIMESTAMP(), NOW())
+             ON DUPLICATE KEY UPDATE
+                valor      = IF(updated_at < (NOW() - INTERVAL ? MINUTE), UNIX_TIMESTAMP(), valor),
+                updated_at = IF(updated_at < (NOW() - INTERVAL ? MINUTE), NOW(), updated_at)",
+            [MON_REINTENTO_MIN, MON_REINTENTO_MIN]
+        );
+        return $st->rowCount() > 0;
+    } catch (Throwable $e) {
+        return true;
+    }
 }
 
 /**
@@ -426,13 +566,24 @@ function mon_tick_si_toca(): void
 {
     if (!mon_p39()) return;
     try {
-        $pendiente = qVal(
-            "SELECT COUNT(*) FROM monedas
-              WHERE es_base = 0 AND activo = 1 AND auto_actualizar = 1
-                AND (tasa_mercado_at IS NULL OR tasa_mercado_at < DATE_SUB(NOW(), INTERVAL ? HOUR))",
-            [MON_REFRESCO_HORAS]
-        );
+        // Una moneda con la venta en automático se refresca más a menudo:
+        // su tasa de mercado es la que cobra la caja. Los cortes se calculan
+        // en PHP porque `tasa_mercado_at` se escribe con la hora de PHP, y la
+        // del servidor de base de datos puede ir en otra zona horaria.
+        $corte     = date('Y-m-d H:i:s', time() - MON_REFRESCO_HORAS * 3600);
+        $corteAuto = date('Y-m-d H:i:s', time() - MON_REFRESCO_HORAS_AUTO * 3600);
+        $pendiente = mon_p41()
+            ? qVal("SELECT COUNT(*) FROM monedas
+                     WHERE es_base = 0 AND activo = 1 AND (auto_actualizar = 1 OR venta_auto = 1)
+                       AND (tasa_mercado_at IS NULL OR tasa_mercado_at < IF(venta_auto = 1, ?, ?))", [$corteAuto, $corte])
+            : qVal("SELECT COUNT(*) FROM monedas
+                     WHERE es_base = 0 AND activo = 1 AND auto_actualizar = 1
+                       AND (tasa_mercado_at IS NULL OR tasa_mercado_at < ?)", [$corte]);
         if (!$pendiente) return;
+        // Un intento cada MON_REINTENTO_MIN como mucho, entre todos los
+        // usuarios. Sin esto, con las fuentes caídas, CADA carga de página
+        // volvía a probarlas y esperaba sus timeouts (hasta ~24 s).
+        if (!mon_reclamar_intento()) return;
         mon_refrescar_mercado();
     } catch (Throwable $e) {
         if (APP_ENV !== 'production') error_log('[monedas] ' . $e->getMessage());
@@ -490,14 +641,23 @@ function mon_desfase(int $monedaId): array
     $revisada = $m['tasa_revisada_at'] ?? null;
     $dias = $revisada ? (int) floor((time() - strtotime((string) $revisada)) / 86400) : 0;
 
+    // En automático la venta sigue al mercado más su margen: compararlas no
+    // dice nada. Lo que sí importa es que la descarga se haya quedado quieta.
+    $auto = mon_venta_auto($m);
+    $at   = $m['tasa_mercado_at'] ?? null;
+    $atraso = $auto && (!$at || (time() - strtotime((string) $at)) > MON_AUTO_ATRASO_HORAS * 3600);
+
     return [
         'hay'     => $mercado !== null,
         'venta'   => $venta,
         'mercado' => $mercado,
         'pct'     => round($pct, 2),
-        'avisar'  => $mercado !== null && abs($pct) >= MON_ALERTA_PCT,
+        'avisar'  => !$auto && $mercado !== null && abs($pct) >= MON_ALERTA_PCT,
         'dias'    => $dias,
-        'rancia'  => $dias >= MON_ALERTA_DIAS,
+        'rancia'  => !$auto && $dias >= MON_ALERTA_DIAS,
+        'auto'    => $auto,
+        'margen'  => (float) ($m['venta_margen'] ?? 0),
+        'atraso'  => $atraso,
         'fuente'  => $m['tasa_mercado_fuente'] ?? null,
         'at'      => $m['tasa_mercado_at'] ?? null,
     ];

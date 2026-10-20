@@ -46,6 +46,10 @@ if ($resumen['enviados'] + $resumen['fallidos'] > 0) {
     echo "Promotion Cockpit · resúmenes enviados: {$resumen['enviados']}, fallidos: {$resumen['fallidos']}\n";
 }
 
+// La tasa del dólar: con la venta en automático, el cron la mantiene al día
+// aunque nadie abra el sistema de madrugada.
+mon_tick_si_toca();
+
 if (!mkt_disponible()) {
     exit("Marketing no disponible: falta aplicar database/migracion_marketing_p9.sql\n");
 }
