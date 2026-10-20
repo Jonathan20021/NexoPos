@@ -16,10 +16,10 @@ $vista = in_array(get('vista'), ['producto', 'categoria', 'sucursal', 'marca'], 
 /* ---------- Totales ---------- */
 $tot = qOne(
     "SELECT COALESCE(SUM(s.cantidad),0) unidades,
-            COALESCE(SUM(s.cantidad * pr.precio_compra),0) costo,
-            COALESCE(SUM(s.cantidad * pr.precio_venta),0) venta,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) costo,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_venta') . "),0) venta,
             COUNT(DISTINCT pr.id) productos
-       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "
       WHERE $scopeS",
     $scopeSP
 ) ?: ['unidades' => 0, 'costo' => 0, 'venta' => 0, 'productos' => 0];
@@ -59,11 +59,11 @@ $config = [
 $grupos = qAll(
     "SELECT $sel AS etiqueta,
             COALESCE(SUM(s.cantidad),0) unidades,
-            COALESCE(SUM(s.cantidad * pr.precio_compra),0) costo,
-            COALESCE(SUM(s.cantidad * pr.precio_venta),0) venta,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) costo,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_venta') . "),0) venta,
             COUNT(DISTINCT pr.id) productos
        FROM inventario_stock s
-       JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+       JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "
        $join
       WHERE $scopeS
       GROUP BY $group HAVING costo > 0 OR unidades > 0
@@ -73,18 +73,18 @@ $grupos = qAll(
 
 /* ---------- Detalle por producto ---------- */
 $pg = paginar((int) qVal(
-    "SELECT COUNT(DISTINCT pr.id) FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1 WHERE $scopeS",
+    "SELECT COUNT(DISTINCT pr.id) FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "WHERE $scopeS",
     $scopeSP
 ), 40);
 $detalle = qAll(
-    "SELECT pr.id, pr.codigo, pr.nombre, pr.precio_compra, pr.precio_venta, pr.stock_minimo,
+    "SELECT pr.id, pr.codigo, pr.nombre, " . mon_sql_precio('pr.precio_compra') . " AS precio_compra, " . mon_sql_precio('pr.precio_venta') . " AS precio_venta, pr.stock_minimo,
             COALESCE(c.nombre,'Sin categoría') AS categoria,
             COALESCE(SUM(s.cantidad),0) AS cantidad,
-            COALESCE(SUM(s.cantidad * pr.precio_compra),0) AS costo,
-            COALESCE(SUM(s.cantidad * pr.precio_venta),0) AS venta,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) AS costo,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_venta') . "),0) AS venta,
             (SELECT MAX(mi.created_at) FROM movimientos_inventario mi WHERE mi.producto_id = pr.id AND mi.tipo = 'venta') AS ultima_venta
        FROM inventario_stock s
-       JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+       JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "
        LEFT JOIN categorias c ON c.id = pr.categoria_id
       WHERE $scopeS
       GROUP BY pr.id
@@ -96,9 +96,9 @@ $detalle = qAll(
 /* ---------- Inventario sin rotación ---------- */
 $sinRotacion = qAll(
     "SELECT pr.nombre, pr.codigo, COALESCE(SUM(s.cantidad),0) cantidad,
-            COALESCE(SUM(s.cantidad * pr.precio_compra),0) costo,
+            COALESCE(SUM(s.cantidad * " . mon_sql_precio('pr.precio_compra') . "),0) costo,
             (SELECT MAX(mi.created_at) FROM movimientos_inventario mi WHERE mi.producto_id = pr.id AND mi.tipo = 'venta') AS ultima_venta
-       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "
       WHERE $scopeS
       GROUP BY pr.id
      HAVING cantidad > 0 AND (ultima_venta IS NULL OR ultima_venta < (NOW() - INTERVAL 90 DAY))
@@ -111,7 +111,7 @@ $capitalDormido = array_sum(array_column($sinRotacion, 'costo'));
 $quiebres = qOne(
     "SELECT SUM(CASE WHEN s.cantidad <= 0 THEN 1 ELSE 0 END) agotados,
             SUM(CASE WHEN s.cantidad > 0 AND pr.stock_minimo > 0 AND s.cantidad <= pr.stock_minimo THEN 1 ELSE 0 END) bajos
-       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1 AND pr.tipo = 'producto'
+       FROM inventario_stock s JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1 AND pr.tipo = 'producto'" . mon_sql_join('pr') . "
       WHERE $scopeS",
     $scopeSP
 ) ?: ['agotados' => 0, 'bajos' => 0];
@@ -119,10 +119,10 @@ $quiebres = qOne(
 if (export_solicitado()) {
     $todos = qAll(
         "SELECT pr.codigo, pr.nombre, COALESCE(c.nombre,'Sin categoría') categoria, su.nombre sucursal,
-                s.cantidad, pr.precio_compra, pr.precio_venta,
-                (s.cantidad * pr.precio_compra) costo, (s.cantidad * pr.precio_venta) venta
+                s.cantidad, " . mon_sql_precio('pr.precio_compra') . " AS precio_compra, " . mon_sql_precio('pr.precio_venta') . " AS precio_venta,
+                (s.cantidad * " . mon_sql_precio('pr.precio_compra') . ") costo, (s.cantidad * " . mon_sql_precio('pr.precio_venta') . ") venta
            FROM inventario_stock s
-           JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1
+           JOIN productos pr ON pr.id = s.producto_id AND pr.activo = 1" . mon_sql_join('pr') . "
            JOIN sucursales su ON su.id = s.sucursal_id
            LEFT JOIN categorias c ON c.id = pr.categoria_id
           WHERE $scopeS ORDER BY pr.nombre",

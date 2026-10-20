@@ -36,14 +36,16 @@ $marcaPos  = tienda_marca($tiendaId);
 
 $filtroTienda = $tiendaId ? "AND (p.tienda_id = " . $tiendaId . " OR p.tienda_id IS NULL)" : '';
 $productos = qAll(
-    "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
+    "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.moneda_id, p.itbis_aplica, p.categoria_id, p.marca_id, COALESCE(s.cantidad,0) AS stock, COALESCE(c.color,'slate') AS color
      FROM productos p LEFT JOIN inventario_stock s ON s.producto_id=p.id AND s.sucursal_id=?
      LEFT JOIN categorias c ON c.id=p.categoria_id
      WHERE p.activo=1 AND p.tipo='producto' $filtroTienda ORDER BY p.nombre", [$sid]
 );
 $prodJs = array_map(function ($p) {
-    // El precio mostrado ya trae la promoción vigente (el servidor la recalcula al vender).
-    $pr = aplicarPromocion((float) $p['precio_venta'], $p, 'pos');
+    // A pesos antes de la promoción, con la misma función que usa la venta: lo
+    // que se ve en el catálogo tiene que ser exactamente lo que va a cobrar la
+    // caja. Un producto en dólares mostraría si no su número sin convertir.
+    $pr = aplicarPromocion(mon_precio_base($p), $p, 'pos');
     return [
         'id' => (int) $p['id'], 'codigo' => $p['codigo'], 'nombre' => $p['nombre'],
         // El código de barras viaja al navegador: sin él, escanear en la caja no

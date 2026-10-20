@@ -307,6 +307,7 @@ function notif_generar(): void
     notif_gen_ponche();
     notif_gen_antiguedad();
     notif_gen_promociones();
+    notif_gen_tasa_cambio();
 }
 
 /**
@@ -1439,4 +1440,69 @@ function strftime_es(string $ym): string
               'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
     $t = strtotime($ym . '-01');
     return ($meses[(int) date('n', $t)] ?? '') . ' ' . date('Y', $t);
+}
+
+/**
+ * La tasa de venta del dolar, cuando se despega del mercado o se enmohece.
+ *
+ * El sistema cobra con una tasa FIJA que pone una persona, a proposito: el
+ * precio de gondola no puede cambiar cada manana. El precio de esa decision es
+ * que la tasa se olvida, y entonces se vende a 60 un producto que hoy cuesta
+ * 63 reponer. Esto lo saca a la luz sin tocar nada.
+ *
+ * Dos situaciones, que se resuelven distinto:
+ *   · Desfase  -> el mercado se movio y hay que decidir si se sigue.
+ *   · Rancia   -> nadie la mira hace semanas, que es peor que estar desfasada.
+ *
+ * Solo avisa si hay productos con el precio en esa moneda: sin catalogo en
+ * dolares, la tasa de venta no cobra nada y el aviso seria ruido.
+ */
+function notif_gen_tasa_cambio(): void
+{
+    if (!function_exists('mon_p39') || !mon_p39()) {
+        notif_sync('tasa_desfase', []);
+        notif_sync('tasa_rancia', []);
+        return;
+    }
+
+    $desfase = [];
+    $rancia  = [];
+    foreach (monedas() as $m) {
+        if ((int) $m['es_base'] === 1) continue;
+        $id    = (int) $m['id'];
+        $nProd = mon_productos_en_moneda($id);
+        if ($nProd === 0) continue;          // nada que cobrar en esa moneda
+
+        $d = mon_desfase($id);
+
+        if ($d['avisar']) {
+            $arriba = $d['pct'] > 0;
+            $desfase[] = [
+                'clave' => 'tasa_desfase:' . $m['codigo'], 'categoria' => 'finanzas',
+                'prioridad' => abs($d['pct']) >= 8 ? 'alta' : 'media',
+                'titulo' => 'El ' . $m['codigo'] . ' esta ' . number_format(abs($d['pct']), 1) . '% '
+                          . ($arriba ? 'por encima' : 'por debajo') . ' de tu tasa de venta',
+                'mensaje' => 'Vendes a ' . number_format($d['venta'], 2) . ' y el mercado esta en '
+                           . number_format((float) $d['mercado'], 2) . '. '
+                           . number_format($nProd) . ' producto(s) se cobran con tu tasa.'
+                           . ($arriba ? ' Reponerlos cuesta mas de lo que estas cobrando.' : ''),
+                'url' => 'modules/admin/monedas.php', 'icono' => 'coins',
+                'color' => $arriba ? 'amber' : 'sky', 'permiso' => 'monedas.gestionar',
+            ];
+        }
+
+        if ($d['rancia']) {
+            $rancia[] = [
+                'clave' => 'tasa_rancia:' . $m['codigo'], 'categoria' => 'finanzas',
+                'prioridad' => $d['dias'] >= 45 ? 'alta' : 'media',
+                'titulo' => 'Hace ' . (int) $d['dias'] . ' dias que nadie revisa la tasa del ' . $m['codigo'],
+                'mensaje' => number_format($nProd) . ' producto(s) se siguen cobrando a '
+                           . number_format($d['venta'], 2) . '. Confirmala o cambiala en Monedas.',
+                'url' => 'modules/admin/monedas.php', 'icono' => 'clock',
+                'color' => 'amber', 'permiso' => 'monedas.gestionar',
+            ];
+        }
+    }
+    notif_sync('tasa_desfase', $desfase);
+    notif_sync('tasa_rancia', $rancia);
 }

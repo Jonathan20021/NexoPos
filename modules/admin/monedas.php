@@ -47,6 +47,41 @@ if (isPost()) {
         redirect('modules/admin/monedas.php');
     }
 
+    // Descarga la tasa de mercado AHORA, sin esperar al tick de las 12 horas.
+    if ($accion === 'refrescar') {
+        $r = mon_refrescar_mercado();
+        if ($r['actualizadas'] > 0) {
+            audit('monedas', 'refrescar', mb_substr('Tasa de mercado descargada: ' . implode('; ', $r['detalle']), 0, 255));
+            flash('success', 'Tasa de mercado actualizada. ' . implode('; ', $r['detalle']));
+        } else {
+            flash('warning', 'No se pudo obtener la tasa. ' . ($r['detalle'] ? implode('; ', $r['detalle'])
+                : 'No hay ninguna moneda marcada para actualizacion automatica.'));
+        }
+        redirect('modules/admin/monedas.php');
+    }
+
+    // «La mire y sigue bien»: calla el aviso de tasa rancia sin cambiar nada.
+    if ($accion === 'confirmar') {
+        $m = moneda(postInt('id'));
+        mon_confirmarTasa((int) $m['id']);
+        audit('monedas', 'confirmar', 'Tasa de ' . $m['codigo'] . ' revisada sin cambios (' . number_format((float) $m['tasa'], 2) . ')',
+              ['tabla' => 'monedas', 'registro_id' => (int) $m['id']]);
+        flash('success', 'Tasa de ' . $m['codigo'] . ' confirmada. El aviso se reinicia.');
+        redirect('modules/admin/monedas.php');
+    }
+
+    // Enciende o apaga la descarga automatica de esa moneda.
+    if ($accion === 'auto') {
+        $m = moneda(postInt('id'));
+        if ((int) $m['es_base'] !== 1) {
+            dbUpdate('monedas', ['auto_actualizar' => postInt('auto')], 'id = ?', [(int) $m['id']]);
+            audit('monedas', 'editar', 'Descarga automatica de ' . $m['codigo'] . ': ' . (postInt('auto') ? 'encendida' : 'apagada'),
+                  ['tabla' => 'monedas', 'registro_id' => (int) $m['id']]);
+            flash('success', 'Actualizacion automatica de ' . $m['codigo'] . (postInt('auto') ? ' encendida.' : ' apagada.'));
+        }
+        redirect('modules/admin/monedas.php');
+    }
+
     if ($accion === 'activar') {
         $id = postInt('id');
         $m  = moneda($id);
@@ -136,6 +171,91 @@ layout_start('Monedas y tasa de cambio', 'La referencia con la que se convierte 
         <p class="text-xs text-slate-400 mt-3">
           Actualizada <?= e(tiempoRelativo($m['updated_at'])) ?>.
         </p>
+
+        <?php if (mon_p39()): $d = mon_desfase((int) $m['id']); $nProd = mon_productos_en_moneda((int) $m['id']); ?>
+          <?php /* ------- La tasa de mercado -------
+                   Es REFERENCIA, no cobra nada. Se separa visualmente de la de
+                   arriba a proposito: confundirlas seria cobrar a una tasa que
+                   nadie decidio. */ ?>
+          <div class="mt-4 pt-4 border-t border-slate-100">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[11px] uppercase tracking-wider font-bold text-slate-400">Tasa de mercado</span>
+              <form method="post" class="inline">
+                <?= csrf_field() ?>
+                <input type="hidden" name="accion" value="auto">
+                <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
+                <input type="hidden" name="auto" value="<?= (int) $m['auto_actualizar'] ? 0 : 1 ?>">
+                <button class="text-[11px] font-semibold <?= (int) $m['auto_actualizar'] ? 'text-emerald-600' : 'text-slate-400' ?> hover:underline">
+                  <?= (int) $m['auto_actualizar'] ? 'automatica si' : 'automatica apagada' ?>
+                </button>
+              </form>
+            </div>
+
+            <?php if ($d['hay']): ?>
+              <div class="flex items-baseline gap-2">
+                <span class="text-xl font-bold text-slate-700"><?= e(number_format((float) $d['mercado'], 2)) ?></span>
+                <span class="text-sm font-semibold <?= abs($d['pct']) < 0.01 ? 'text-slate-400' : ($d['pct'] > 0 ? 'text-amber-600' : 'text-sky-600') ?>">
+                  <?= $d['pct'] > 0 ? '+' : '' ?><?= e(number_format($d['pct'], 2)) ?>%
+                </span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-0.5">
+                <?= e($d['fuente'] ?: 'fuente desconocida') ?> &middot; <?= e(tiempoRelativo($d['at'])) ?>
+              </p>
+              <?php if ($d['avisar']): ?>
+                <div class="mt-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
+                  <p class="text-[11px] text-amber-900 leading-relaxed">
+                    El mercado esta <strong><?= e(number_format(abs($d['pct']), 1)) ?>% <?= $d['pct'] > 0 ? 'por encima' : 'por debajo' ?></strong>
+                    de tu tasa de venta<?= $nProd > 0 ? ', y tienes ' . number_format($nProd) . ' producto(s) con el precio en ' . e($m['codigo']) : '' ?>.
+                  </p>
+                </div>
+              <?php endif; ?>
+            <?php else: ?>
+              <p class="text-sm text-slate-400">Sin descargar todavia.</p>
+            <?php endif; ?>
+
+            <?php if ($d['rancia']): ?>
+              <div class="mt-2 rounded-lg bg-rose-50 border border-rose-200 p-2.5">
+                <p class="text-[11px] text-rose-900 leading-relaxed">
+                  Hace <strong><?= (int) $d['dias'] ?> dias</strong> que nadie revisa esta tasa.
+                </p>
+              </div>
+            <?php endif; ?>
+
+            <div class="flex gap-2 mt-3">
+              <form method="post" class="flex-1">
+                <?= csrf_field() ?><input type="hidden" name="accion" value="refrescar">
+                <button class="btn btn-ghost btn-sm w-full justify-center"><?= icon('history', 'w-3.5 h-3.5') ?> Descargar</button>
+              </form>
+              <form method="post" class="flex-1">
+                <?= csrf_field() ?><input type="hidden" name="accion" value="confirmar">
+                <input type="hidden" name="id" value="<?= (int) $m['id'] ?>">
+                <button class="btn btn-ghost btn-sm w-full justify-center" title="Dejar la tasa como esta y reiniciar el aviso"><?= icon('check', 'w-3.5 h-3.5') ?> Esta bien</button>
+              </form>
+            </div>
+
+            <?php if ($nProd > 0): ?>
+              <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">
+                <?= icon('box', 'w-3 h-3 inline -mt-0.5') ?>
+                <strong><?= e(number_format($nProd)) ?></strong> producto(s) tienen su precio en <?= e($m['codigo']) ?>.
+                El POS los cobra a <strong><?= e(number_format((float) $m['tasa'], 2)) ?></strong>.
+              </p>
+            <?php endif; ?>
+
+            <?php $hist = mon_historial((int) $m['id'], 'venta', 5); if (count($hist) > 1): ?>
+              <details class="mt-3">
+                <summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600">Historial de la tasa de venta</summary>
+                <ul class="mt-2 space-y-1">
+                  <?php foreach ($hist as $h): ?>
+                    <li class="text-[11px] text-slate-500 flex justify-between gap-2">
+                      <span><?= e(fechaCorta($h['created_at'])) ?><?= $h['nombre'] ? ' &middot; ' . e($h['nombre']) : '' ?></span>
+                      <span class="font-semibold text-slate-700"><?= e(number_format((float) $h['tasa'], 2)) ?></span>
+                    </li>
+                  <?php endforeach; ?>
+                </ul>
+              </details>
+            <?php endif; ?>
+          </div>
+        <?php endif; ?>
 
         <?php if ($uso): ?>
           <p class="text-xs text-slate-500 mt-2">

@@ -98,7 +98,7 @@ function registrarVentaPOS(array $in, array $ctx): array
             }
             $p = qOne(
                 "SELECT p.id, p.nombre, p.codigo, p.precio_venta, p.precio_compra, p.itbis_aplica, p.tipo,
-                        p.categoria_id, p.marca_id, p.tienda_id,
+                        p.categoria_id, p.marca_id, p.tienda_id, p.moneda_id,
                         p.ecf_indicador_facturacion, p.ecf_impuesto_adicional, u.ecf_codigo AS ecf_unidad
                    FROM productos p
                    LEFT JOIN unidades u ON u.id = p.unidad_id
@@ -111,9 +111,27 @@ function registrarVentaPOS(array $in, array $ctx): array
                 $stock = stockActual($pid, $sid);
                 if ($cant > $stock) throw new RuntimeException('Stock insuficiente de «' . $p['nombre'] . '» (disponible: ' . qty($stock) . ').');
             }
+            // A PESOS ANTES DE NADA.
+            //
+            // El catálogo puede tener precios en otra moneda —INGLOT los tiene
+            // en dólares—, pero la factura vive en pesos y aquí es donde se
+            // convierte, con la TASA DE VENTA, que es fija y la fija una
+            // persona. A partir de esta línea ya no hay monedas: lo que se
+            // calcula, se imprime y se guarda en `venta_detalles` son pesos, y
+            // quedan CONGELADOS. Reimprimir esta factura dentro de un año tiene
+            // que dar el mismo número aunque el dólar se haya ido al doble.
+            //
+            // Convertir primero también es lo correcto para las promociones: un
+            // descuento de «RD$100 menos» aplicado sobre 29 dólares sin
+            // convertir regalaría la mercancía.
+            $precioLista = mon_precio_base($p);
+            $costoUnit   = mon_costo_base($p);
+
             // Precio con promoción vigente (se calcula en el servidor). Una muestra
             // ignora la promoción: su precio es 0 de todos modos.
-            $promo = aplicarPromocion((float) $p['precio_venta'], $p, 'pos');
+            // Sobre el precio de lista YA EN PESOS (ver arriba): la promoción y el
+            // rastro del Promotion Cockpit trabajan en la moneda de la factura.
+            $promo = aplicarPromocion($precioLista, $p, 'pos');
             $precioReal = $promo['precio'];
             $precio = $esMuestra ? 0.0 : $precioReal;
             // Rastro para el Promotion Cockpit: qué promoción ganó. Una muestra
@@ -154,7 +172,7 @@ function registrarVentaPOS(array $in, array $ctx): array
                 : round($base * $tasaItbis / 100, 2);
             $subtotal   += $base;
             $itbisBruto += $itbis;
-            $costoTotal += (float) $p['precio_compra'] * $cant;
+            $costoTotal += $costoUnit * $cant;
             // Descripción propia de la línea.
             //
             // La pide el cotizador: un concepto libre («Instalación y montaje»)
@@ -170,11 +188,11 @@ function registrarVentaPOS(array $in, array $ctx): array
 
             $lineas[] = [
                 'pid' => $pid, 'nombre' => $nombreLinea, 'tipo' => $p['tipo'], 'cant' => $cant,
-                'precio' => $precio, 'costo' => (float) $p['precio_compra'], 'base' => $base, 'itbis' => $itbis,
+                'precio' => $precio, 'costo' => $costoUnit, 'base' => $base, 'itbis' => $itbis,
                 'es_muestra' => $esMuestra ? 1 : 0, 'precio_original' => $esMuestra ? $precioReal : 0.0,
                 // Precio de catálogo en el momento de vender: la diferencia contra
                 // `precio` es lo que costó la promoción (o la negociación).
-                'precio_lista' => round((float) $p['precio_venta'], 2), 'promocion_id' => $promocionId,
+                'precio_lista' => round($precioLista, 2), 'promocion_id' => $promocionId,
                 // Datos fiscales CONGELADOS. Si mañana el producto cambia de tasa
                 // o de unidad, el comprobante ya emitido debe seguir declarando lo
                 // que se declaró ese día; derivarlo por JOIN reescribiría el pasado.

@@ -16,6 +16,10 @@ mkt_tick_si_toca();
 ecfTickSiToca();
 // Resúmenes del Promotion Cockpit por correo (vistas guardadas con frecuencia).
 cockpit_resumen_tick_si_toca();
+// Y la tasa de mercado del dólar: se descarga como mucho cada MON_REFRESCO_HORAS.
+// Es solo la REFERENCIA que avisa cuando se separa de la tasa de venta; nunca
+// cambia lo que cobra el POS, que es una tasa fija que se toca a mano.
+mon_tick_si_toca();
 
 $notifs     = notif_listar(['limit' => 12]);
 $noLeidas   = notif_no_leidas();

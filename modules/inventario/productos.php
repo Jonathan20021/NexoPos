@@ -12,6 +12,10 @@ if (isPost()) {
         $nombre = trim(post('nombre'));
         $precioCompra = postNum('precio_compra');
         $precioVenta = postNum('precio_venta');
+        // Moneda del precio. Vacío = pesos, que es como se comporta el 99% del
+        // catálogo y como se comportaba TODO antes de la P39.
+        $monedaId = postInt('moneda_id') ?: null;
+        if ($monedaId !== null && (int) moneda($monedaId)['es_base'] === 1) $monedaId = null;
         $stockMinimo = postNum('stock_minimo');
         $categoriaId = postInt('categoria_id') ?: null;
         $marcaId = postInt('marca_id') ?: null;
@@ -54,6 +58,7 @@ if (isPost()) {
                 'tipo' => post('tipo') === 'servicio' ? 'servicio' : 'producto',
                 'precio_compra' => $precioCompra,
                 'precio_venta' => $precioVenta,
+                'moneda_id' => $monedaId,
                 'itbis_aplica' => postInt('itbis_aplica', 0) ? 1 : 0,
                 'stock_minimo' => $stockMinimo,
                 'activo' => postInt('activo', 0) ? 1 : 0,
@@ -382,8 +387,18 @@ ob_start(); ?>
                 </div>
               </td>
               <td><?= $p['categoria'] ? badge($p['categoria'], $p['cat_color']) : '<span class="text-slate-300">—</span>' ?></td>
-              <td class="text-right text-slate-500"><?= money($p['precio_compra']) ?></td>
-              <td class="text-right font-bold text-slate-800"><?= money($p['precio_venta']) ?></td>
+              <?php /* En pesos siempre: es la columna que se compara entre
+                       productos y la que cuadra con el total de la tarjeta.
+                       El importe en su moneda va debajo, en pequeño. */ ?>
+              <td class="text-right text-slate-500"><?= money(mon_costo_base($p)) ?></td>
+              <td class="text-right font-bold text-slate-800">
+                <?= money(mon_precio_base($p)) ?>
+                <?php if (mon_producto_extranjero($p)): $mp = moneda((int) $p['moneda_id']); ?>
+                  <span class="block text-[11px] font-medium text-blue-600" title="Precio de lista en <?= e($mp['codigo']) ?>, convertido a la tasa de venta <?= e(rtrim(rtrim(number_format((float) $mp['tasa'], 4, '.', ''), '0'), '.')) ?>">
+                    <?= e(mon_money((float) $p['precio_venta'], (int) $p['moneda_id'])) ?>
+                  </span>
+                <?php endif; ?>
+              </td>
               <td class="text-center"><span class="badge <?= $margen >= 30 ? 'badge-emerald' : ($margen >= 10 ? 'badge-amber' : 'badge-slate') ?>"><?= $margen ?>%</span></td>
               <td class="text-center"><span class="badge badge-<?= $stockBadge ?>"><?= qty($stock) ?> <?= e($p['unidad'] ?: 'u') ?></span></td>
               <td><?= $p['activo'] ? badge('Activo', 'emerald') : badge('Inactivo', 'slate') ?></td>
@@ -401,7 +416,7 @@ ob_start(); ?>
                     $edit = ['id'=>$p['id'],'codigo'=>$p['codigo'],'codigo_barras'=>$p['codigo_barras'],'nombre'=>$p['nombre'],
                              'descripcion'=>$p['descripcion'],'tienda_id'=>$p['tienda_id'] ?? '','categoria_id'=>$p['categoria_id'],'marca_id'=>$p['marca_id'],
                              'unidad_id'=>$p['unidad_id'],'tipo'=>$p['tipo'],'precio_compra'=>$p['precio_compra'],
-                             'precio_venta'=>$p['precio_venta'],'itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],
+                             'precio_venta'=>$p['precio_venta'],'moneda_id'=>$p['moneda_id'] ?? '','itbis_aplica'=>$p['itbis_aplica'],'stock_minimo'=>$p['stock_minimo'],
                              'imagen'=>$p['imagen'],'activo'=>$p['activo'],
                              'segmento'=>$p['segmento'] ?? '','linea'=>$p['linea'] ?? '','es_heroe'=>(int) ($p['es_heroe'] ?? 0)];
                     if (san_disponible()) {
@@ -510,6 +525,27 @@ ob_start(); ?>
           <div><label class="label">Tipo</label><select name="tipo" x-model="form.tipo" class="select"><option value="producto">Producto (controla stock)</option><option value="servicio">Servicio</option></select></div>
           <div><label class="label">Precio de compra</label><input type="number" step="0.01" min="0" name="precio_compra" x-model="form.precio_compra" class="input"></div>
           <div><label class="label">Precio de venta *</label><input type="number" step="0.01" min="0" name="precio_venta" x-model="form.precio_venta" required class="input"></div>
+          <?php if (mon_hayExtranjeras()): ?>
+            <?php /* Solo aparece si hay monedas extranjeras activas: en una
+                     instalación que solo vende en pesos, este campo sobra. */ ?>
+            <div>
+              <label class="label">Moneda del precio</label>
+              <select name="moneda_id" x-model="form.moneda_id" class="select">
+                <option value="">Pesos (<?= e(monedaBase()['simbolo']) ?>)</option>
+                <?php foreach (monedas() as $mm): if ((int) $mm['es_base'] === 1) continue; ?>
+                  <option value="<?= (int) $mm['id'] ?>" data-tasa="<?= e((string) $mm['tasa']) ?>">
+                    <?= e($mm['codigo']) ?> — <?= e($mm['nombre']) ?> (tasa <?= e(rtrim(rtrim(number_format((float) $mm['tasa'], 4, '.', ''), '0'), '.')) ?>)
+                  </option>
+                <?php endforeach; ?>
+              </select>
+              <template x-if="form.moneda_id">
+                <p class="text-xs text-blue-600 mt-1.5 font-medium"
+                   x-text="'En caja se cobrará ' + <?= e(json_encode(monedaBase()['simbolo'])) ?> + ' ' +
+                           (parseFloat(form.precio_venta || 0) * tasaDe(form.moneda_id)).toLocaleString('es-DO',{minimumFractionDigits:2, maximumFractionDigits:2})"></p>
+              </template>
+              <p class="text-xs text-slate-400 mt-1">El precio se guarda en esta moneda y se convierte al vender, con la tasa de venta vigente.</p>
+            </div>
+          <?php endif; ?>
           <div><label class="label">Stock mínimo</label><input type="number" step="0.001" min="0" name="stock_minimo" x-model="form.stock_minimo" class="input"></div>
           <div class="flex flex-col justify-end gap-2 pb-1">
             <label class="flex items-center gap-2 text-sm text-slate-600"><input type="hidden" name="itbis_aplica" value="0"><input type="checkbox" name="itbis_aplica" value="1" :checked="form.itbis_aplica==1" class="rounded border-slate-300 text-blue-600"> Aplica ITBIS (18%)</label>
@@ -617,6 +653,11 @@ function prodModal() {
   return {
     open: false,
     form: {},
+    // Tasas de las monedas activas, para pintar la equivalencia mientras se
+    // escribe. Es solo para que se vea: quien convierte de verdad al cobrar es
+    // el servidor, con mon_precio_base().
+    tasas: <?= json_encode(array_reduce(monedas(), function ($a, $m) { $a[(string) $m['id']] = (float) $m['tasa']; return $a; }, [])) ?>,
+    tasaDe(id) { return this.tasas[String(id)] || 1; },
     camaraOk: false,
     barras: { ok: true, msg: '' },
 
@@ -635,7 +676,7 @@ function prodModal() {
         // es lo que quiere quien acaba de filtrar para dar de alta su catálogo.
         tienda_id: <?= json_encode($tieFiltro > 0 ? (string) $tieFiltro : '') ?>,
         categoria_id: '', marca_id: '', unidad_id: '', tipo: 'producto',
-        precio_compra: 0, precio_venta: 0, itbis_aplica: 1, stock_minimo: 0, imagen: '', activo: 1,
+        precio_compra: 0, precio_venta: 0, moneda_id: '', itbis_aplica: 1, stock_minimo: 0, imagen: '', activo: 1,
         segmento: '', linea: '', es_heroe: 0,
         // Ficha sanitaria: un producto nace NO regulado; se marca a conciencia.
         regulado: 0, controla_lote: 0, registro_sanitario: '', registro_entidad: '',
