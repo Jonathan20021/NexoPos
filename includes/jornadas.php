@@ -73,7 +73,12 @@ function jorFeriadosRD(int $anio): array
     // Semana Santa: Viernes Santo es el domingo de Pascua menos dos días, y
     // Corpus Christi el jueves sesenta días después. Los dos son de fecha
     // móvil de verdad —dependen de la Pascua—, no del traslado al lunes.
-    $pascua = easter_date($anio);
+    //
+    // easter_days() y no easter_date(): easter_date() devuelve la medianoche
+    // en la zona del entorno (TZ, casi siempre UTC en un servidor), y al
+    // formatearla en Santo Domingo caía el sábado — Viernes Santo salía jueves.
+    // Se construye la fecha a mediodía local: ningún desfase la cambia de día.
+    $pascua = mktime(12, 0, 0, 3, 21 + easter_days($anio), $anio);
     $out[date('Y-m-d', $pascua - 2 * 86400)]  = 'Viernes Santo';
     $out[date('Y-m-d', $pascua + 60 * 86400)] = 'Corpus Christi';
 
